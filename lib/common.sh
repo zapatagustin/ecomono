@@ -76,10 +76,12 @@ copy_patched() {
 
 # ---- github release binary --------------------------------------------------
 # Latest release tag for OWNER/REPO via the public API (no auth, no jq).
+# Captures the response first, then parses with a bash regex — no pipe to
+# `grep -m1`/`head`, which would SIGPIPE curl and trip `set -o pipefail`.
 gh_latest_tag() {
-  local repo="$1"
-  curl -fsSL "https://api.github.com/repos/$repo/releases/latest" \
-    | grep -m1 '"tag_name"' | sed -E 's/.*"tag_name"[^"]*"([^"]+)".*/\1/'
+  local repo="$1" json
+  json="$(curl -fsSL "https://api.github.com/repos/$repo/releases/latest")" || return 1
+  [[ "$json" =~ \"tag_name\"[^\"]*\"([^\"]+)\" ]] && printf '%s\n' "${BASH_REMATCH[1]}"
 }
 
 # Fetch a flat Go-release tarball (BIN_$VERSION_linux_$ARCH.tar.gz) and install
@@ -93,10 +95,11 @@ install_gh_binary() {
   [ -n "$tag" ] || die "could not resolve latest release tag for $repo (set $ver_env=vX.Y.Z to pin)"
   ver="${tag#v}"
   url="https://github.com/$repo/releases/download/$tag/${bin}_${ver}_linux_${arch}.tar.gz"
-  tmp="$(mktemp -d)"; trap 'rm -rf "$tmp"' RETURN
+  tmp="$(mktemp -d)"
   info "$bin $tag ($arch)"
-  curl -fsSL "$url" -o "$tmp/a.tgz" || die "download failed: $url"
-  tar -xzf "$tmp/a.tgz" -C "$tmp"
-  [ -f "$tmp/$bin" ] || die "$bin not found in tarball (layout changed?)"
+  curl -fsSL "$url" -o "$tmp/a.tgz" || { rm -rf "$tmp"; die "download failed: $url"; }
+  tar -xzf "$tmp/a.tgz" -C "$tmp" || { rm -rf "$tmp"; die "extract failed: $bin"; }
+  [ -f "$tmp/$bin" ] || { rm -rf "$tmp"; die "$bin not found in tarball (layout changed?)"; }
   install -Dm755 "$tmp/$bin" "$BIN_DIR/$bin"
+  rm -rf "$tmp"
 }
