@@ -18,7 +18,7 @@
 
       # home-manager module: lays down the same config the install.sh script
       # does, the declarative way. Wire it into your host config with:
-      #   inputs.ecomono.url = "github:zapataagustin/ecomono";
+      #   inputs.ecomono.url = "github:zapatagustin/ecomono";
       #   imports = [ inputs.ecomono.homeModules.default ];
       homeModules.default =
         { config, pkgs, lib, ... }:

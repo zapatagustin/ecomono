@@ -30,7 +30,7 @@ if [ "$OS_ID" = nixos ]; then
 NixOS detected. This installer writes into ~/.claude and ~/.config/opencode,
 which home-manager owns — don't run it here. Instead consume the flake:
 
-  inputs.ecomono.url = "github:zapataagustin/ecomono";
+  inputs.ecomono.url = "github:zapatagustin/ecomono";
   # then import ecomono.homeModules.default in your home-manager config
 
 See the README "NixOS" section.

@@ -25,7 +25,7 @@ flake.nix        NixOS / home-manager module
 ## Install — Arch / Debian / generic Linux
 
 ```sh
-git clone https://github.com/zapataagustin/ecomono ~/.config/ecomono
+git clone https://github.com/zapatagustin/ecomono ~/.config/ecomono
 ~/.config/ecomono/install.sh
 ```
 
@@ -64,7 +64,7 @@ Don't run `install.sh` on NixOS (home-manager owns those paths). Consume the fla
 
 ```nix
 # flake.nix
-inputs.ecomono.url = "github:zapataagustin/ecomono";
+inputs.ecomono.url = "github:zapatagustin/ecomono";
 
 # home-manager config
 imports = [ inputs.ecomono.homeModules.default ];
@@ -75,7 +75,7 @@ registers plugins/MCP on activation. `settings.json` is left unmanaged (Claude C
 rewrites it at runtime) — seed it once:
 
 ```sh
-cp "$(nix eval --raw github:zapataagustin/ecomono#... 2>/dev/null || echo ~/.config/ecomono)/claude/settings.template.json" ~/.claude/settings.json
+cp "$(nix eval --raw github:zapatagustin/ecomono#... 2>/dev/null || echo ~/.config/ecomono)/claude/settings.template.json" ~/.claude/settings.json
 ```
 
 or just copy `claude/settings.template.json` from a checkout.
