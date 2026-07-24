@@ -1,0 +1,27 @@
+{
+  "$schema": "https://json.schemastore.org/package.json",
+  "name": "cyndaquill",
+  "version": "1.0.0",
+  "description": "OpenCode TUI plugin featuring Cyndaquill ASCII art on the home screen",
+  "type": "module",
+  "exports": {
+    "./tui": {
+      "import": "./tui.tsx",
+      "config": {
+        "enabled": true,
+        "flames": true
+      }
+    }
+  },
+  "engines": {
+    "opencode": ">=1.0.0"
+  },
+  "peerDependencies": {
+    "@opencode-ai/plugin": "*",
+    "@opentui/core": "*",
+    "@opentui/solid": "*",
+    "solid-js": "*"
+  },
+  "keywords": ["opencode", "plugin", "tui", "pokemon", "cyndaquill"],
+  "license": "MIT"
+}

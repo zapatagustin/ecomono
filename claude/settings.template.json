@@ -1,0 +1,100 @@
+{
+  "permissions": {
+    "deny": [
+      "Bash(rm -rf /)",
+      "Bash(sudo rm -rf /)",
+      "Bash(rm -rf ~)",
+      "Bash(sudo rm -rf ~)",
+      "Read(.env)",
+      "Read(.env.*)",
+      "Edit(.env)",
+      "Edit(.env.*)",
+      "Read(.ssh/*)",
+      "Edit(.ssh/*)",
+      "Read(.credentials/*)",
+      "Edit(.credentials/*)",
+      "Read(Library/Keychains/*)",
+      "Edit(Library/Keychains/*)",
+      "Read(.aws/credentials)",
+      "Edit(.aws/credentials)",
+      "Read(.config/gh/hosts.yml)",
+      "Edit(.config/gh/hosts.yml)",
+      "Read(**/*.pem)",
+      "Edit(**/*.pem)",
+      "Read(**/*.key)",
+      "Edit(**/*.key)",
+      "Read(**/secrets/*)",
+      "Edit(**/secrets/*)"
+    ],
+    "defaultMode": "bypassPermissions"
+  },
+  "model": "opus[1m]",
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "$HOME/.claude/hooks/check-diff-size.sh",
+            "if": "Bash(git push*)",
+            "statusMessage": "Checking diff size (review-4R gate)"
+          }
+        ]
+      },
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "$HOME/.claude/hooks/check-diff-size.sh",
+            "if": "Bash(gh pr create*)",
+            "statusMessage": "Checking diff size (review-4R gate)"
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"$HOME/.claude/hooks/ecomono-compress.js\"",
+            "timeout": 10
+          }
+        ]
+      }
+    ],
+    "SessionStart": [],
+    "SubagentStart": [],
+    "UserPromptSubmit": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "gentle-ai skill-registry refresh --quiet --no-gitignore --cwd \"${CLAUDE_PROJECT_DIR:-$PWD}\" || true"
+          }
+        ]
+      }
+    ]
+  },
+  "enabledPlugins": {
+    "engram@engram": true,
+    "superpowers@claude-plugins-official": true
+  },
+  "extraKnownMarketplaces": {
+    "engram": {
+      "source": {
+        "source": "github",
+        "repo": "Gentleman-Programming/engram"
+      }
+    }
+  },
+  "outputStyle": "Ecomono",
+  "effortLevel": "high",
+  "skipDangerousModePermissionPrompt": true,
+  "theme": "auto",
+  "preferredNotifChannel": "notifications_disabled"
+}

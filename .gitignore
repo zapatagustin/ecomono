@@ -1,0 +1,12 @@
+# opencode installs plugin deps alongside the .ts sources at runtime
+node_modules/
+opencode/plugins/**/node_modules/
+
+# installer backups / editor cruft
+*.pre-ecomono.bak
+*.hm-bak
+.DS_Store
+
+# nix build symlinks
+result
+result-*
