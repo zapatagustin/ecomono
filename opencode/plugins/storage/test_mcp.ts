@@ -53,8 +53,8 @@ function rpc(id: number, method: string, params?: any): Promise<any> {
 }
 
 const init = await rpc(1, "initialize", { protocolVersion: "2024-11-05", capabilities: {}, clientInfo: { name: "test", version: "1" } })
-assert(init.result?.serverInfo?.name === "engram", "initialize returns engram server info")
-assert(init.result?.instructions?.includes("Engram Persistent Memory"), "initialize carries memory protocol instructions")
+assert(init.result?.serverInfo?.name === "ecomono-memory", "initialize returns server info")
+assert(init.result?.instructions?.includes("ecomono-memory — Persistent Memory Protocol"), "initialize carries memory protocol instructions")
 await send({ jsonrpc: "2.0", method: "notifications/initialized" })
 
 const list = await rpc(2, "tools/list", {})

@@ -10,7 +10,7 @@
       forAll = f: nixpkgs.lib.genAttrs systems (s: f nixpkgs.legacyPackages.${s});
     in
     {
-      # gentle-ai — managed separately (engram removed, now native plugin)
+      # gentle-ai — managed separately (engram removed, now the native memory plugin)
       packages = forAll (pkgs: {
         gentle-ai = pkgs.callPackage ./nix/gentle-ai.nix { };
       });
@@ -39,7 +39,7 @@
           '';
         in
         {
-          # bun runs the native engram memory (opencode plugin + the bundled
+          # bun runs ecomono-memory (opencode plugin + the bundled
           # Claude Code MCP server).
           home.packages = [ pkgs.nodejs pkgs.bun gentle-ai ];
 
@@ -78,8 +78,8 @@
             "opencode/plugins/model-variants.ts".source = ./opencode/plugins/model-variants.ts;
             "opencode/plugins/skill-registry.ts".source = ./opencode/plugins/skill-registry.ts;
             "opencode/plugins/cave-compress.ts".source = ./opencode/plugins/cave-compress.ts;
-            "opencode/plugins/engram.ts".source = ./opencode/plugins/engram.ts;
-            # Native engram storage core (shared by the plugin + MCP server).
+            "opencode/plugins/memory.ts".source = ./opencode/plugins/memory.ts;
+            # ecomono-memory storage core (shared by the plugin + MCP server).
             "opencode/plugins/storage".source = ./opencode/plugins/storage;
             "opencode/tui-plugins".source = ./opencode/tui-plugins;
             "opencode/package.json".source = ./opencode/package.json;
@@ -102,11 +102,20 @@
                 "$claude" mcp add --scope user context7 -- npx -y --package=@upstash/context7-mcp@2.2.5 -- context7-mcp \
                   || echo "warning: could not register context7 mcp"
               fi
-              # engram memory: our native bun MCP server (self-contained bundle,
+              # Retire the old Gentleman-Programming engram plugin and the MCP
+              # entry earlier versions named "engram": both serve the same mem_*
+              # tools, so leaving them registered means two memory stores answer
+              # at once. Data survives — storage/db.ts imports ~/.engram/engram.db.
+              if "$claude" plugin list 2>/dev/null | grep -q engram; then
+                "$claude" plugin uninstall engram@engram >/dev/null 2>&1 || true
+                "$claude" plugin marketplace remove engram >/dev/null 2>&1 || true
+              fi
+              "$claude" mcp get engram >/dev/null 2>&1 && "$claude" mcp remove engram >/dev/null 2>&1 || true
+              # ecomono-memory: our native bun MCP server (self-contained bundle,
               # runs from the store with no node_modules).
-              if ! "$claude" mcp get engram >/dev/null 2>&1; then
-                "$claude" mcp add --scope user engram -- ${pkgs.bun}/bin/bun ${./opencode/plugins/storage/mcp-server.js} \
-                  || echo "warning: could not register engram mcp"
+              if ! "$claude" mcp get ecomono-memory >/dev/null 2>&1; then
+                "$claude" mcp add --scope user ecomono-memory -- ${pkgs.bun}/bin/bun ${./opencode/plugins/storage/mcp-server.js} \
+                  || echo "warning: could not register ecomono-memory mcp"
               fi
             fi
           '';

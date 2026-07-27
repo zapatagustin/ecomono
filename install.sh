@@ -95,13 +95,13 @@ pkg_hint() {
 if have node;     then info "node ✓";     else warn "node missing — $(pkg_hint nodejs)"; fi
 if have claude;   then info "claude ✓";   else warn "claude missing — npm i -g @anthropic-ai/claude-code"; fi
 if have opencode; then info "opencode ✓"; else warn "opencode missing — curl -fsSL https://opencode.ai/install | bash"; fi
-# bun runs the native engram memory (opencode plugin + Claude Code MCP server).
+# bun runs ecomono-memory (opencode plugin + Claude Code MCP server).
 BUN="$(command -v bun 2>/dev/null || { [ -x "$HOME/.bun/bin/bun" ] && echo "$HOME/.bun/bin/bun"; })"
-if [ -n "$BUN" ]; then info "bun ✓"; else warn "bun missing — curl -fsSL https://bun.sh/install | bash (needed for engram memory)"; fi
+if [ -n "$BUN" ]; then info "bun ✓"; else warn "bun missing — curl -fsSL https://bun.sh/install | bash (needed for ecomono-memory)"; fi
 
-# ---- 3b. engram memory deps (node_modules for the plugin + MCP server) ------
+# ---- 3b. ecomono-memory deps (node_modules for the plugin + MCP server) -----
 if [ -n "$BUN" ]; then
-  log "installing engram memory deps (bun install)"
+  log "installing ecomono-memory deps (bun install)"
   ( cd "$REPO/opencode" && "$BUN" install ) >/dev/null 2>&1 \
     || warn "bun install failed in opencode/ (retry: cd $REPO/opencode && bun install)"
 fi
@@ -127,16 +127,35 @@ elif have claude; then
       || warn "could not add context7 mcp (retry: claude mcp add --scope user context7 -- npx -y --package=@upstash/context7-mcp -- context7-mcp)"
   fi
 
-  # engram memory = our native bun MCP server (replaces the GP Go plugin).
-  # Self-contained bundle: runs with just bun, no node_modules.
-  ENGRAM_MCP="$REPO/opencode/plugins/storage/mcp-server.js"
+  # Retire the Gentleman-Programming engram plugin before registering ours: it
+  # serves the same mem_* tools from the old Go binary, so leaving it installed
+  # means two memory stores answering at once. Uninstalling is also the only way
+  # to clear "engram@engram" out of settings.json, which we seed once and never
+  # overwrite. Its data is not lost — storage/db.ts imports ~/.engram/engram.db
+  # on first run.
+  if claude plugin list 2>/dev/null | grep -q engram; then
+    log "retiring the old engram plugin (superseded by ecomono-memory)"
+    claude plugin uninstall engram@engram >/dev/null 2>&1 \
+      || warn "could not uninstall the engram plugin (retry: claude plugin uninstall engram@engram)"
+    claude plugin marketplace remove engram >/dev/null 2>&1 || true
+  fi
+  # Earlier ecomono versions registered this same bundle under the name "engram".
   if claude mcp get engram >/dev/null 2>&1; then
-    info "mcp engram ✓"
+    claude mcp remove engram >/dev/null 2>&1 \
+      && info "removed the old engram mcp entry (now ecomono-memory)" \
+      || warn "could not remove the old engram mcp (retry: claude mcp remove engram)"
+  fi
+
+  # ecomono-memory = our native bun MCP server. Self-contained bundle: runs with
+  # just bun, no node_modules.
+  MEMORY_MCP="$REPO/opencode/plugins/storage/mcp-server.js"
+  if claude mcp get ecomono-memory >/dev/null 2>&1; then
+    info "mcp ecomono-memory ✓"
   elif [ -n "$BUN" ]; then
-    claude mcp add --scope user engram -- "$BUN" "$ENGRAM_MCP" \
-      || warn "could not add engram mcp (retry: claude mcp add --scope user engram -- $BUN $ENGRAM_MCP)"
+    claude mcp add --scope user ecomono-memory -- "$BUN" "$MEMORY_MCP" \
+      || warn "could not add ecomono-memory mcp (retry: claude mcp add --scope user ecomono-memory -- $BUN $MEMORY_MCP)"
   else
-    warn "skipping engram mcp — bun not found (install bun, then: claude mcp add --scope user engram -- bun $ENGRAM_MCP)"
+    warn "skipping ecomono-memory mcp — bun not found (install bun, then: claude mcp add --scope user ecomono-memory -- bun $MEMORY_MCP)"
   fi
 else
   info "claude not on PATH — skipping plugin/mcp registration"

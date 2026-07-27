@@ -1,5 +1,5 @@
 /**
- * Engram — OpenCode plugin adapter
+ * ecomono-memory — OpenCode plugin adapter
  *
  * Native bun:sqlite persistent memory (no external Go binary). This file is the
  * OpenCode adapter: it wraps the shared mem_* tool registry (storage/tools.ts)
@@ -45,7 +45,7 @@ function textFromParts(parts: any[]): string {
 
 // ─── Plugin ──────────────────────────────────────────────────────────────────
 
-export const EngramPlugin: Plugin = async (input) => {
+export const MemoryPlugin: Plugin = async (input) => {
   const project = extractProjectName(input.directory || process.cwd())
 
   // Memory must never take down the editing session. A store we cannot open
@@ -55,7 +55,7 @@ export const EngramPlugin: Plugin = async (input) => {
   try {
     getDb() // initialize schema + run one-time legacy migration
   } catch (e) {
-    console.error("[engram] storage unavailable, memory disabled:", (e as Error).message)
+    console.error("[ecomono-memory] storage unavailable, memory disabled:", (e as Error).message)
     return {}
   }
 
@@ -85,7 +85,7 @@ export const EngramPlugin: Plugin = async (input) => {
         const text = textFromParts(out.parts)
         if (text) Prompts.savePrompt(inp.sessionID, text)
       } catch (e) {
-        console.error("[engram] prompt capture failed:", (e as Error).message)
+        console.error("[ecomono-memory] prompt capture failed:", (e as Error).message)
       }
     },
 
@@ -101,4 +101,4 @@ export const EngramPlugin: Plugin = async (input) => {
   }
 }
 
-export default EngramPlugin
+export default MemoryPlugin

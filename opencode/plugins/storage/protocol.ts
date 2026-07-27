@@ -1,12 +1,12 @@
 /**
- * The engram memory protocol, injected into the agent's context so it knows to
+ * The ecomono-memory protocol, injected into the agent's context so it knows to
  * use the mem_* tools. Shared by both adapters: the opencode plugin pushes it
  * into the system prompt; the MCP server hands it to Claude Code as the server
  * `instructions` on initialize.
  */
-export const MEMORY_INSTRUCTIONS = `## Engram Persistent Memory — Protocol
+export const MEMORY_INSTRUCTIONS = `## ecomono-memory — Persistent Memory Protocol
 
-You have access to Engram, a persistent memory system that survives across sessions and compactions.
+You have access to ecomono-memory, a persistent memory system that survives across sessions and compactions.
 
 ### WHEN TO SAVE (mandatory — not optional)
 

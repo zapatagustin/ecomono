@@ -1,7 +1,7 @@
 /**
- * Shared mem_* tool registry — the single definition of engram's tool surface.
+ * Shared mem_* tool registry — the single definition of the memory tool surface.
  *
- * Both adapters wrap this: the opencode plugin (engram.ts) and the stdio MCP
+ * Both adapters wrap this: the opencode plugin (memory.ts) and the stdio MCP
  * server for Claude Code (mcp-server.ts). Each entry pairs a Zod arg shape
  * (accepted by both opencode's tool() and the MCP SDK's server.tool()) with a
  * pure handler over the storage layer. Adapters JSON-stringify the return.

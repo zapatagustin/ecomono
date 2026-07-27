@@ -27862,9 +27862,9 @@ var registry2 = [
 var registryByName = Object.fromEntries(registry2.map((t) => [t.name, t]));
 
 // protocol.ts
-var MEMORY_INSTRUCTIONS = `## Engram Persistent Memory \u2014 Protocol
+var MEMORY_INSTRUCTIONS = `## ecomono-memory \u2014 Persistent Memory Protocol
 
-You have access to Engram, a persistent memory system that survives across sessions and compactions.
+You have access to ecomono-memory, a persistent memory system that survives across sessions and compactions.
 
 ### WHEN TO SAVE (mandatory \u2014 not optional)
 
@@ -27901,7 +27901,7 @@ Before ending a session or saying "done", call \`mem_session_summary\` with: Goa
 
 // mcp-server.ts
 getDb();
-var server = new McpServer({ name: "engram", version: "1.0.0" }, { instructions: MEMORY_INSTRUCTIONS });
+var server = new McpServer({ name: "ecomono-memory", version: "1.0.0" }, { instructions: MEMORY_INSTRUCTIONS });
 for (const t of registry2) {
   server.registerTool(t.name, { description: t.description, inputSchema: t.args }, async (args) => {
     try {
