@@ -4,12 +4,15 @@
 set -euo pipefail
 cd "$(dirname "$0")"
 
-# Same resolution as install.sh: bun is often installed outside PATH.
-BUN="$(command -v bun 2>/dev/null || { [ -x "$HOME/.bun/bin/bun" ] && echo "$HOME/.bun/bin/bun"; })"
-[ -n "$BUN" ] || { echo "error: bun not found (curl -fsSL https://bun.sh/install | bash)" >&2; exit 1; }
+. ./_bun.sh
 
 fail=0
 for t in test_*.ts; do
   "$BUN" run "$t" || { echo "FAIL: $t" >&2; fail=1; }
 done
+
+# test_mcp.ts exercises the committed bundle, which only proves anything if the
+# bundle still matches its sources.
+./check-bundle.sh || fail=1
+
 exit "$fail"
