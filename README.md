@@ -36,8 +36,8 @@ pre-existing real dir to `*.pre-ecomono.bak` before linking.
 
 It **fetches** `gentle-ai` (GitHub-release binary) into `~/.local/bin`, and
 **registers** the `superpowers` Claude plugin, the `context7` MCP server, and the
-native **engram** memory MCP server (a self-contained bun bundle — no external
-Go binary, replaces the old `engram@engram` plugin).
+native **ecomono-memory** MCP server (a self-contained bun bundle — no external
+Go binary, replaces the old `engram@engram` plugin, which it uninstalls).
 
 It **checks** — but does not install — `node`, `claude`, `opencode`, and `bun`,
 printing a distro-specific hint if any is missing (those belong to your package
@@ -57,7 +57,7 @@ manager).
 - `node` — `sudo pacman -S nodejs` / `sudo apt install nodejs`
 - `claude` — `npm i -g @anthropic-ai/claude-code`
 - `opencode` — `curl -fsSL https://opencode.ai/install | bash`
-- `bun` — `curl -fsSL https://bun.sh/install | bash` (runs the native engram memory)
+- `bun` — `curl -fsSL https://bun.sh/install | bash` (runs ecomono-memory)
 - `curl` + `tar` — to fetch the binaries
 
 Make sure `~/.local/bin` is on your `PATH`.

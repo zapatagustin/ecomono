@@ -16,7 +16,7 @@ HARD GATES:
 1. SDD Session Preflight must already be complete for this session. It must include execution mode, artifact store, chained PR strategy, and review budget. If missing, ask the exact orchestrator preflight prompt and STOP. Do not run verify in the same turn.
 2. `sdd-init` must already exist or be run after preflight, per the orchestrator init guard.
 3. Resolve the active change using the status contract. If `$ARGUMENTS` is missing or ambiguous, ask the user to choose and STOP. Do not guess.
-4. Produce structured status before acting. Use the resolved artifact store from session preflight; do not hardcode Engram.
+4. Produce structured status before acting. Use the resolved artifact store from session preflight; do not hardcode ecomono-memory.
 5. The active change must have tasks and implementation evidence. Missing specs/design may be handled gracefully by the verify skill, but missing tasks means there is nothing to verify.
 6. actionContext must be safe for verification. If status reports `workspace-planning`, STOP and explain that full workspace implementation verification is not supported in this slice.
 

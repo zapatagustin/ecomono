@@ -7,7 +7,7 @@ context: |
   Architecture: Single-source-of-truth config tree; symlinked read-only, runtime-mutated files copied.
   No main runtime or application code — this is an agent-config distribution repo.
   Conventions: Ecomono register (terse, direct), conventional commits, lazy-senior-dev build discipline.
-  Engram persistent memory active. OpenCode orchestrator + sub-agent SDD pipeline.
+  ecomono-memory (native bun:sqlite) active. OpenCode orchestrator + sub-agent SDD pipeline.
 
 testing:
   strict_tdd: false
@@ -15,8 +15,8 @@ testing:
     command: "opencode/plugins/storage/run-tests.sh"
     framework: "none — plain assert scripts run by bun"
   layers:
-    unit: { available: true, tool: "bun run opencode/plugins/storage/test_{storage,tools,conflicts,migration}.ts" }
-    integration: { available: true, tool: "bun run opencode/plugins/storage/test_mcp.ts" }
+    unit: { available: true, tool: "bun run opencode/plugins/storage/test_<name>.ts — storage, tools, conflicts, migration, degraded" }
+    integration: { available: true, tool: "bun run opencode/plugins/storage/test_<name>.ts — mcp (stdio round-trip), plugin (opencode adapter)" }
     e2e: { available: false, tool: "" }
   coverage:
     available: false

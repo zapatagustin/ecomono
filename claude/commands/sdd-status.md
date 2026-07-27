@@ -16,12 +16,12 @@ CONTEXT:
 
 TASK:
 
-1. If the `gentle-ai` binary is available, run `gentle-ai sdd-status [change] --cwd <repo> --json --instructions` and treat its JSON as authoritative — but only when the session artifact store is `openspec` or `hybrid`. When the session artifact store is `engram`, do NOT invoke the native dispatcher at all — it cannot see the change (it reads only `openspec/changes/`); resolve status entirely from Engram (`mem_search` + `mem_get_observation` on the change's topic keys) using the manual status schema in `~/.claude/skills/_shared/sdd-status-contract.md` (the same schema used when the binary is unavailable). The dispatcher is authoritative only for `openspec`/`hybrid`. If unavailable, read `~/.claude/skills/_shared/sdd-status-contract.md` and follow it.
+1. If the `gentle-ai` binary is available, run `gentle-ai sdd-status [change] --cwd <repo> --json --instructions` and treat its JSON as authoritative — but only when the session artifact store is `openspec` or `hybrid`. When the session artifact store is `ecomono-memory`, do NOT invoke the native dispatcher at all — it cannot see the change (it reads only `openspec/changes/`); resolve status entirely from ecomono-memory (`mem_search` + `mem_get_observation` on the change's topic keys) using the manual status schema in `~/.claude/skills/_shared/sdd-status-contract.md` (the same schema used when the binary is unavailable). The dispatcher is authoritative only for `openspec`/`hybrid`. If unavailable, read `~/.claude/skills/_shared/sdd-status-contract.md` and follow it.
 2. Resolve the active change:
    - If `$ARGUMENTS` is provided, validate that exact change in the selected artifact store.
    - If omitted and exactly one active change exists, select it and say how it was selected.
    - If omitted or ambiguous with multiple active changes, ask the user to choose and STOP. Do not guess.
-3. Inspect the selected artifact store from session preflight. Do not hardcode Engram.
+3. Inspect the selected artifact store from session preflight. Do not hardcode ecomono-memory.
 4. Return structured status with:
    - Active change selection and schemaName.
    - planningHome, changeRoot, artifactPaths, and contextFiles.

@@ -34,7 +34,7 @@ You are a sub-agent responsible for ONBOARDING. You guide the user through a com
 ## What You Receive
 
 From the orchestrator:
-- Artifact store mode (`engram | openspec | hybrid | none`)
+- Artifact store mode (`ecomono-memory | openspec | hybrid | none`)
 - Optional: a suggested improvement or area to focus on
 
 ## What to Do

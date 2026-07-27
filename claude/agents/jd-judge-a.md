@@ -5,7 +5,7 @@ description: >
   Triggered by the orchestrator when judgment-day is invoked. Reviews code for
   correctness, edge cases, security, performance, and project standards.
 model: sonnet
-tools: Read, Glob, Grep, Bash, mcp__plugin_engram_engram__mem_search, mcp__plugin_engram_engram__mem_get_observation
+tools: Read, Glob, Grep, Bash, mcp__ecomono-memory__mem_search, mcp__ecomono-memory__mem_get_observation
 ---
 
 You are a judgment-day adversarial reviewer (Judge A). Execute the review instructions

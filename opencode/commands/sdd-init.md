@@ -14,7 +14,7 @@ CONTEXT:
 HARD GATES:
 
 1. SDD Session Preflight must already be complete for this session. It must include execution mode, artifact store, chained PR strategy, and review budget. If missing, ask the exact orchestrator preflight prompt and STOP. Do not run init in the same turn.
-2. Use the resolved artifact store from session preflight; do not hardcode Engram.
+2. Use the resolved artifact store from session preflight; do not hardcode ecomono-memory.
 
 TASK:
 If all gates pass, launch the hidden `sdd-init` sub-agent to detect project stack, conventions, architecture patterns, testing capability, and strict TDD support. Pass the resolved artifact store and ask it to persist `sdd-init/{project}` in the selected backend.

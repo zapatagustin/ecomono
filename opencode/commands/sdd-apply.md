@@ -28,7 +28,7 @@ DEPENDENCY CHECK:
 TASK:
 If all gates pass, launch the hidden `sdd-apply` sub-agent with:
 
-- The resolved artifact store from session preflight; do not hardcode Engram.
+- The resolved artifact store from session preflight; do not hardcode ecomono-memory.
 - The structured status: schemaName, planningHome/changeRoot, artifactPaths/contextFiles, task progress, applyState, dependency states, and actionContext.
 - References to the spec, design, tasks, and any apply-progress artifacts.
 - The resolved delivery/chained PR strategy and review budget.

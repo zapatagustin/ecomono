@@ -75,10 +75,10 @@ SDD is the structured planning layer for substantial changes.
 
 ### Artifact Store Policy
 
-- `engram` — default when available; persistent memory across sessions
+- `ecomono-memory` — default when available; persistent memory across sessions
 - `openspec` — file-based artifacts; use only when user explicitly requests
 - `hybrid` — both backends; cross-session recovery + local files; more tokens per op
-- `none` — return results inline only; recommend enabling engram or openspec
+- `none` — return results inline only; recommend enabling ecomono-memory or openspec
 
 ### Commands
 
@@ -102,13 +102,13 @@ Meta-commands (type directly — orchestrator handles them, won't appear in auto
 
 ### Native SDD Dispatcher Guard
 
-Before routing, continuing, applying, verifying, or archiving an SDD change, **first determine this session's artifact store** from the cached Session Preflight / Artifact Store Mode choice. If the store is not yet established, resolve it before continuing — check `sdd-init/{project}` in Engram and treat the change as `engram`-backed when no OpenSpec store was selected. **Then scope the native dispatcher by artifact store.** The native dispatcher (`gentle-ai sdd-continue [change] --cwd <repo>` or `gentle-ai sdd-status [change] --cwd <repo> --json --instructions`) reads ONLY OpenSpec file artifacts under `openspec/changes/` and always emits `artifactStore: openspec`; it cannot observe Engram-backed changes. **When the session artifact store is `engram`, do NOT invoke the dispatcher at all** — it is blind to the change and its `blocked`, `Active OpenSpec change not found`, or `nextRecommended: sdd-new` output is meaningless; resolve status entirely from Engram (`mem_search` + `mem_get_observation` on the change's topic keys such as `sdd/{change-name}/tasks`) using the manual status schema. Only when the session artifact store is `openspec` or `hybrid` should you run the dispatcher when `gentle-ai` is available and treat its native status JSON as authoritative over prompt inference. Route only by `nextRecommended` and dependency states; never infer from free text. If `blockedReasons` is non-empty, do not proceed to apply, archive, or terminal work. If `nextRecommended` is `verify`, verification/remediation may run only to refresh evidence; if `nextRecommended` is `resolve-blockers`, report `blockedReasons` and stop; if `nextRecommended` is a planning token (`propose`, `spec`, `design`, or `tasks`), launch the corresponding planning phase. If the binary is unavailable, fall back to the existing prompt contract and manual status schema.
+Before routing, continuing, applying, verifying, or archiving an SDD change, **first determine this session's artifact store** from the cached Session Preflight / Artifact Store Mode choice. If the store is not yet established, resolve it before continuing — check `sdd-init/{project}` in ecomono-memory and treat the change as `ecomono-memory`-backed when no OpenSpec store was selected. **Then scope the native dispatcher by artifact store.** The native dispatcher (`gentle-ai sdd-continue [change] --cwd <repo>` or `gentle-ai sdd-status [change] --cwd <repo> --json --instructions`) reads ONLY OpenSpec file artifacts under `openspec/changes/` and always emits `artifactStore: openspec`; it cannot observe ecomono-memory-backed changes. **When the session artifact store is `ecomono-memory`, do NOT invoke the dispatcher at all** — it is blind to the change and its `blocked`, `Active OpenSpec change not found`, or `nextRecommended: sdd-new` output is meaningless; resolve status entirely from ecomono-memory (`mem_search` + `mem_get_observation` on the change's topic keys such as `sdd/{change-name}/tasks`) using the manual status schema. Only when the session artifact store is `openspec` or `hybrid` should you run the dispatcher when `gentle-ai` is available and treat its native status JSON as authoritative over prompt inference. Route only by `nextRecommended` and dependency states; never infer from free text. If `blockedReasons` is non-empty, do not proceed to apply, archive, or terminal work. If `nextRecommended` is `verify`, verification/remediation may run only to refresh evidence; if `nextRecommended` is `resolve-blockers`, report `blockedReasons` and stop; if `nextRecommended` is a planning token (`propose`, `spec`, `design`, or `tasks`), launch the corresponding planning phase. If the binary is unavailable, fall back to the existing prompt contract and manual status schema.
 
 ### SDD Init Guard (MANDATORY)
 
 Before executing ANY SDD command (`/sdd-new`, `/sdd-ff`, `/sdd-continue`, `/sdd-explore`, `/sdd-status`, `/sdd-apply`, `/sdd-verify`, `/sdd-archive`), check if `sdd-init` has been run for this project:
 
-1. Search Engram: `mem_search(query: "sdd-init/{project}", project: "{project}")`
+1. Search ecomono-memory: `mem_search(query: "sdd-init/{project}", project: "{project}")`
 2. If found → init was done, proceed normally
 3. If NOT found → run `sdd-init` FIRST (delegate to sdd-init sub-agent), THEN proceed with the requested command
 
@@ -150,7 +150,7 @@ In **Automatic** mode the orchestrator is the gatekeeper between phases. The gat
 
 **What the gatekeeper checks (every phase, against the Result Contract):**
 - **Contract conformance:** the phase returned `status`, `executive_summary`, `artifacts`, `next_recommended`, `risks`, and `skill_resolution`, and `status` indicates success (not partial, failed, or blocked).
-- **Artifact existence:** the declared artifact actually exists and is readable in the active backend — read it back (engram: `mem_search` + `mem_get_observation` on the topic key; openspec: read the file path). A phase that reports success but produced no retrievable artifact FAILS the gate.
+- **Artifact existence:** the declared artifact actually exists and is readable in the active backend — read it back (ecomono-memory: `mem_search` + `mem_get_observation` on the topic key; openspec: read the file path). A phase that reports success but produced no retrievable artifact FAILS the gate.
 - **No hallucination:** every file path, symbol, command, or artifact the phase claims it created or referenced must actually exist; spot-check the concrete claims. A referenced path that does not resolve FAILS the gate.
 - **No drift from inputs:** the output is consistent with the phase's required inputs per the Dependency Graph — spec stays within the proposal's scope, design answers the proposal, tasks cover spec and design, apply implements the tasks. Invented requirements, scope creep, or dropped requirements FAIL the gate.
 - **Routing coherence:** `next_recommended` follows the Dependency Graph and `risks` are within tolerance (no unaddressed CRITICAL).
@@ -164,17 +164,17 @@ In **Automatic** mode the orchestrator is the gatekeeper between phases. The gat
 
 **On gate FAIL:** re-run the same phase exactly once with corrective feedback that names the specific failures the gatekeeper found (do not blanket-retry). Re-run the gate on the new result. If it passes, continue the chain. If it fails again, STOP the automatic chain and surface a report to the user naming the phase, what the gatekeeper caught, both attempts, and the recommended fix. Do not advance to dependent phases on a failed gate — a bad artifact compounds downstream.
 
-The gatekeeper runs in addition to the Review Workload Guard and the Mandatory Delegation Triggers; it never relaxes them and never auto-marks anything reviewed in engram.
+The gatekeeper runs in addition to the Review Workload Guard and the Mandatory Delegation Triggers; it never relaxes them and never auto-marks anything reviewed in ecomono-memory.
 
 ### Artifact Store Mode
 
 When the user invokes `/sdd-new`, `/sdd-ff`, or `/sdd-continue` (or an equivalent natural-language request) for the first time in a session, ALSO ASK which artifact store they want for this change:
 
-- **`engram`**: Fast, no files created. Artifacts live in engram only. Best for solo work and quick iteration. Note: re-running a phase overwrites the previous version (no history).
+- **`ecomono-memory`**: Fast, no files created. Artifacts live in ecomono-memory only. Best for solo work and quick iteration. Note: re-running a phase overwrites the previous version (no history).
 - **`openspec`**: File-based. Creates `openspec/` directory with full artifact trail. Committable, shareable with team, full git history.
-- **`hybrid`**: Both — files for team sharing + engram for cross-session recovery. Higher token cost.
+- **`hybrid`**: Both — files for team sharing + ecomono-memory for cross-session recovery. Higher token cost.
 
-If the user doesn't specify, detect: if engram is available → default to `engram`. Otherwise → `none`.
+If the user doesn't specify, detect: if ecomono-memory is available → default to `ecomono-memory`. Otherwise → `none`.
 
 Cache the artifact store choice for the session. Pass it as `artifact_store.mode` to every sub-agent launch.
 
@@ -275,7 +275,7 @@ The orchestrator resolves skills from the registry ONCE (at session start or fir
 Orchestrator skill resolution (do once per session):
 
 1. `mem_search(query: "skill-registry", project: "{project}")` → `mem_get_observation(id)` for full registry content
-2. Fallback: read `.atl/skill-registry.md` if engram not available
+2. Fallback: read `.atl/skill-registry.md` if ecomono-memory not available
 3. Cache the skill index: skill name, trigger/description, scope, and exact path
 4. If no registry exists, warn user and proceed without project-specific standards
 
@@ -302,9 +302,9 @@ Sub-agents get a fresh context with NO memory. The orchestrator controls context
 
 #### Non-SDD Tasks (general delegation)
 
-- Read context: orchestrator searches engram (`mem_search`) for relevant prior context and passes it in the sub-agent prompt. Sub-agent does NOT search engram itself.
-- Write context: sub-agent MUST save significant discoveries, decisions, or bug fixes to engram via `mem_save` before returning. Sub-agent has full detail — save before returning, not after.
-- Always add to sub-agent prompt: `"If you make important discoveries, decisions, or fix bugs, save them to engram via mem_save with project: '{project}'."`
+- Read context: orchestrator searches ecomono-memory (`mem_search`) for relevant prior context and passes it in the sub-agent prompt. Sub-agent does NOT search ecomono-memory itself.
+- Write context: sub-agent MUST save significant discoveries, decisions, or bug fixes to ecomono-memory via `mem_save` before returning. Sub-agent has full detail — save before returning, not after.
+- Always add to sub-agent prompt: `"If you make important discoveries, decisions, or fix bugs, save them to ecomono-memory via mem_save with project: '{project}'."`
 - Skills: orchestrator resolves matching paths from the registry and injects them as `## Skills to load before work` in the sub-agent prompt. Sub-agents read those exact `SKILL.md` files before work.
 
 #### SDD Phases
@@ -346,7 +346,7 @@ When launching `sdd-apply` for a continuation batch (not the first batch):
 
 This prevents progress loss across batches. The sub-agent is responsible for read-merge-write, but the orchestrator MUST tell it that previous progress exists.
 
-#### Engram Topic Key Format
+#### ecomono-memory Topic Key Format
 
 | Artifact        | Topic Key                          |
 | --------------- | ---------------------------------- |
@@ -368,11 +368,11 @@ Sub-agents retrieve full content via two steps:
 
 ### State and Conventions
 
-Convention files under the agent's global skills directory (global) or `.agent/skills/_shared/` (workspace): `engram-convention.md`, `persistence-contract.md`, `openspec-convention.md`.
+Convention files under the agent's global skills directory (global) or `.agent/skills/_shared/` (workspace): `memory-convention.md`, `persistence-contract.md`, `openspec-convention.md`.
 
 ### Recovery Rule
 
-- `engram` → `mem_search(...)` → `mem_get_observation(...)`
+- `ecomono-memory` → `mem_search(...)` → `mem_get_observation(...)`
 - `openspec` → read `openspec/changes/*/state.yaml`
 - `none` → state not persisted — explain to user
 <!-- /gentle-ai:sdd-orchestrator -->

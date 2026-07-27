@@ -1,10 +1,10 @@
-# Engram Artifact Convention (reference documentation)
+# ecomono-memory Artifact Convention (reference documentation)
 
-NOTE: Critical engram calls (`mem_search`, `mem_save`, `mem_get_observation`) are inlined directly in each skill's SKILL.md. This document is supplementary reference — sub-agents do NOT need to read it to function.
+NOTE: Critical ecomono-memory calls (`mem_search`, `mem_save`, `mem_get_observation`) are inlined directly in each skill's SKILL.md. This document is supplementary reference — sub-agents do NOT need to read it to function.
 
 ## Naming Rules
 
-ALL SDD artifacts persisted to Engram MUST follow this deterministic naming:
+ALL SDD artifacts persisted to ecomono-memory MUST follow this deterministic naming:
 
 ```
 title:     sdd/{change-name}/{artifact-type}
@@ -12,10 +12,9 @@ topic_key: sdd/{change-name}/{artifact-type}
 type:      architecture
 project:   {detected or current project name}
 scope:     project
-capture_prompt: false
 ```
 
-Set `capture_prompt: false` when the Engram tool schema supports it; if an older schema rejects or does not expose the field, omit it rather than failing.
+Omit `capture_prompt`. The Go engram exposed it to keep automated writes out of prompt capture; the native `mem_save` schema has no such field, and prompt capture is driven by the host adapter instead.
 
 ### Artifact Types
 
@@ -41,8 +40,7 @@ mem_save(
   topic_key: "sdd/{change-name}/state",
   type: "architecture",
   project: "{project}",
-  capture_prompt: false,
-  content: "change: {change-name}\nphase: {last-phase}\nartifact_store: engram\nartifacts:\n  proposal: true\n  specs: true\n  design: false\n  tasks: false\ntasks_progress:\n  completed: []\n  pending: []\nlast_updated: {ISO date}"
+  content: "change: {change-name}\nphase: {last-phase}\nartifact_store: ecomono-memory\nartifacts:\n  proposal: true\n  specs: true\n  design: false\n  tasks: false\ntasks_progress:\n  completed: []\n  pending: []\nlast_updated: {ISO date}"
 )
 ```
 
@@ -50,7 +48,7 @@ Recovery: `mem_search("sdd/{change-name}/state")` → `mem_get_observation(id)` 
 
 ## Recovery Protocol (2 steps)
 
-Memory lifecycle rule (when Engram exposes lifecycle metadata/tooling):
+Memory lifecycle rule (when ecomono-memory exposes lifecycle metadata/tooling):
 - At session start or before architecture-sensitive work, call `mem_review` with action `list` for the current project when the tool is available.
 - If `mem_review` is unavailable, do not fail the task. Continue with normal `mem_context`/`mem_search`, and still apply lifecycle metadata from any returned observations when present.
 - `active` memories may be used normally.
@@ -92,7 +90,6 @@ mem_save(
   topic_key: "sdd/{change-name}/{artifact-type}",
   type: "architecture",
   project: "{project}",
-  capture_prompt: false,
   content: "{full markdown content}"
 )
 ```
@@ -104,12 +101,9 @@ mem_save(
   topic_key: "sdd/add-dark-mode/proposal",
   type: "architecture",
   project: "my-app",
-  capture_prompt: false,
   content: "## Proposal\n\nAdd dark mode toggle..."
 )
 ```
-
-`capture_prompt: false` is REQUIRED for SDD artifacts when the Engram tool schema supports it. Engram v1.15.3 captures user prompts by default for human/proactive saves, but SDD artifacts are automated pipeline outputs. Do not infer this from `type` because both SDD artifacts and human architecture decisions use `architecture`. If an older schema rejects or does not expose `capture_prompt`, omit it rather than failing.
 
 Update existing artifact (when you have the observation ID):
 ```
@@ -125,15 +119,15 @@ mem_search(query: "sdd/{change-name}/", project: "{project}")
 → Returns all artifacts for that change
 ```
 
-## Project Name Resolution (engram v1.11.0+)
+## Project Name Resolution
 
-Engram auto-detects the project name from the git remote at MCP startup. The `--project` flag and `ENGRAM_PROJECT` env var can override detection. All project names are normalized to lowercase and trimmed.
+The project name is detected from the git remote of the working directory, falling back to the repository root's basename and then to the directory name. There is no `--project` flag and no env override: the Go engram had both, the native implementation has neither. Pass `project` explicitly on a tool call to target a different one, or call `mem_current_project` to see what was detected.
 
-If the agent saves a memory under a project name that doesn't match existing observations, engram warns about potential name drift. Use `mem_merge_projects` (MCP tool) or `engram projects consolidate` (CLI) to merge variants.
+Saving under a name that does not match existing observations creates a second project rather than warning about drift. Use `mem_merge_projects` to fold one into the other; there is no CLI.
 
 ## Upsert Behavior
 
-Same `topic_key` + `project` + `scope` → UPDATE (overwrite), not INSERT. Previous content is lost — `revision_count` increments but old content is NOT saved. This is by design — engram is working memory, not an audit trail. For iteration history or team collaboration, use `openspec` or `hybrid` mode.
+Same `topic_key` + `project` + `scope` → UPDATE (overwrite), not INSERT. Previous content is lost and no revision history is kept. This is by design — memory is working state, not an audit trail. For iteration history or team collaboration, use `openspec` or `hybrid` mode.
 
 ## Why This Convention
 

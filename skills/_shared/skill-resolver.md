@@ -61,7 +61,7 @@ If a sub-agent reports anything other than `paths-injected`, the orchestrator MU
 
 ## Compaction Safety
 
-- The registry persists in Engram and `.atl/skill-registry.md`.
+- The registry persists in ecomono-memory and `.atl/skill-registry.md`.
 - Delegators can recover selected paths after compaction by re-reading the registry.
 - Sub-agents receive exact files to read, so skill meaning is not degraded by generated summaries.
 

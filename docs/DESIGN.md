@@ -18,10 +18,11 @@ copy.
 - **`install.sh` targets Arch/Debian/generic Linux; NixOS uses the flake.** The installer
   detects NixOS and refuses, pointing at the flake. Non-destructive and idempotent:
   pre-existing real dirs are backed up to `*.pre-ecomono.bak`.
-- **Binaries scope: fetch the hard ones, check the rest.** `engram` and `gentle-ai` are
-  static Go binaries from GitHub releases — the *same tarball* runs on every distro, so the
-  installer fetches them. `node`/`claude`/`opencode` come from the OS package manager or
-  upstream installers; the script only checks and hints.
+- **Binaries scope: fetch the hard ones, check the rest.** `gentle-ai` is a static Go
+  binary from GitHub releases — the *same tarball* runs on every distro, so the installer
+  fetches it. `node`/`claude`/`opencode` come from the OS package manager or upstream
+  installers; the script only checks and hints. Memory used to be fetched the same way
+  (the `engram` Go binary); it is now `ecomono-memory`, built from source in this repo.
 
 ## Skill topology
 
@@ -37,7 +38,7 @@ Three skill sets, deduplicated from the old NixOS layout (which copied `claude/s
 ## Portability notes
 
 - Only `opencode/tui.json` needs install-time patching (`/home/agustin` → `$HOME`): it's
-  JSON and can't expand env vars. `engram.ts`'s hardcoded fallback was fixed at source to
+  JSON and can't expand env vars. `memory.ts`'s hardcoded fallback was fixed at source to
   `${process.env.HOME}`.
 - `opencode/plugins/` stays a writable real dir — opencode installs `node_modules`
   alongside the plugin sources at runtime.

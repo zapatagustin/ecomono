@@ -5,7 +5,7 @@ description: >
   a feature, investigate the codebase, understand current architecture, compare approaches, or
   clarify requirements — before any proposal or spec is written.
 model: sonnet
-tools: Read, Grep, Glob, WebFetch, WebSearch, mcp__plugin_engram_engram__mem_search, mcp__plugin_engram_engram__mem_get_observation, mcp__plugin_engram_engram__mem_save
+tools: Read, Grep, Glob, WebFetch, WebSearch, mcp__ecomono-memory__mem_search, mcp__ecomono-memory__mem_get_observation, mcp__ecomono-memory__mem_save
 ---
 
 You are the SDD **explore** executor. Do this phase's work yourself. Do NOT delegate further.
@@ -30,14 +30,14 @@ Execute all steps from the skill directly in this context window:
 
 Do NOT create or modify project files — your job is investigation only, not implementation.
 
-## Engram Save (mandatory when tied to a named change)
+## ecomono-memory Save (mandatory when tied to a named change)
 
 After completing work, call `mem_save` with:
 - title: `"sdd/{change-name}/explore"` (or `"sdd/explore/{topic-slug}"` if standalone)
 - topic_key: `"sdd/{change-name}/explore"`
 - type: `"architecture"`
 - project: `{project-name from context}`
-- capture_prompt: `false` when the Engram tool schema supports it; if an older schema rejects or does not expose the field, omit it rather than failing.
+- capture_prompt: `false` when the ecomono-memory tool schema supports it; if an older schema rejects or does not expose the field, omit it rather than failing.
 
 ## Result Contract
 

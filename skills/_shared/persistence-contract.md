@@ -2,22 +2,22 @@
 
 ## Mode Resolution
 
-The orchestrator passes `artifact_store.mode` with one of: `engram | openspec | hybrid | none`.
+The orchestrator passes `artifact_store.mode` with one of: `ecomono-memory | openspec | hybrid | none`.
 
 The orchestrator ASKs the user which mode they want when `/sdd-new`, `/sdd-ff`, or `/sdd-continue` is invoked for the first time in a session. The choice is cached for the session.
 
-Default (if user doesn't specify): if Engram is available → `engram`. Otherwise → `none`.
+Default (if user doesn't specify): if ecomono-memory is available → `ecomono-memory`. Otherwise → `none`.
 
 ## Mode Roles
 
-- **`engram`**: Working memory between sessions. Upserts overwrite — no iteration history. Local only, not shareable.
+- **`ecomono-memory`**: Working memory between sessions. Upserts overwrite — no iteration history. Local only, not shareable.
 - **`openspec`**: Source of truth. Files in repo, git history, team-shareable, full audit trail.
-- **`hybrid`**: Both — files for team + engram for recovery. Higher token cost.
+- **`hybrid`**: Both — files for team + ecomono-memory for recovery. Higher token cost.
 - **`none`**: Ephemeral. Lost when conversation ends.
 
 ### Mode Comparison
 
-| Capability | `engram` | `openspec` | `hybrid` | `none` |
+| Capability | `ecomono-memory` | `openspec` | `hybrid` | `none` |
 |------------|----------|------------|----------|--------|
 | Cross-session recovery | ✅ | ❌ (needs git) | ✅ | ❌ |
 | Compaction survival | ✅ | ❌ | ✅ | ❌ |
@@ -26,28 +26,28 @@ Default (if user doesn't specify): if Engram is available → `engram`. Otherwis
 | Audit trail (archive) | Partial (report only) | ✅ (full folder) | ✅ (both) | ❌ |
 | Project files created | Never | Yes | Yes | Never |
 
-### `engram` mode limitation
+### `ecomono-memory` mode limitation
 
-Engram uses `topic_key`-based upserts. Re-running a phase for the same change **overwrites** the previous version — no revision history is kept. The archive phase saves a summary report, not the full artifact folder. For iteration history or team collaboration, use `openspec` or `hybrid`.
+ecomono-memory uses `topic_key`-based upserts. Re-running a phase for the same change **overwrites** the previous version — no revision history is kept. The archive phase saves a summary report, not the full artifact folder. For iteration history or team collaboration, use `openspec` or `hybrid`.
 
 ## Behavior Per Mode
 
 | Mode | Read from | Write to | Project files |
 |------|-----------|----------|---------------|
-| `engram` | Engram | Engram | Never |
+| `ecomono-memory` | ecomono-memory | ecomono-memory | Never |
 | `openspec` | Filesystem | Filesystem | Yes |
-| `hybrid` | Engram (primary) + Filesystem (fallback) | Both | Yes |
+| `hybrid` | ecomono-memory (primary) + Filesystem (fallback) | Both | Yes |
 | `none` | Orchestrator prompt context | Nowhere | Never |
 
 ### Hybrid Mode
 
-Persists every artifact to BOTH Engram and OpenSpec simultaneously:
-- Engram: cross-session recovery, compaction survival, deterministic search
+Persists every artifact to BOTH ecomono-memory and OpenSpec simultaneously:
+- ecomono-memory: cross-session recovery, compaction survival, deterministic search
 - OpenSpec: human-readable files, version-controllable artifacts
 
-Write to Engram (per `engram-convention.md`) AND to filesystem (per `openspec-convention.md`) for every artifact.
+Write to ecomono-memory (per `memory-convention.md`) AND to filesystem (per `openspec-convention.md`) for every artifact.
 
-Read priority: Engram first; fall back to filesystem if Engram returns no results.
+Read priority: ecomono-memory first; fall back to filesystem if ecomono-memory returns no results.
 Write behavior: both writes MUST succeed for the operation to be complete.
 Token cost warning: hybrid consumes MORE tokens per operation. Use only when you need both cross-session persistence AND local file artifacts.
 
@@ -57,19 +57,18 @@ The orchestrator persists DAG state after each phase transition to enable SDD re
 
 | Mode | Persist State | Recover State |
 |------|--------------|---------------|
-| `engram` | `mem_save(topic_key: "sdd/{change-name}/state", capture_prompt: false*)` | `mem_search("sdd/*/state")` → `mem_get_observation(id)` |
+| `ecomono-memory` | `mem_save(topic_key: "sdd/{change-name}/state")` | `mem_search("sdd/*/state")` → `mem_get_observation(id)` |
 | `openspec` | Write `openspec/changes/{change-name}/state.yaml` | Read `openspec/changes/{change-name}/state.yaml` |
-| `hybrid` | Both: `mem_save` AND write `state.yaml` | Engram first; filesystem fallback |
+| `hybrid` | Both: `mem_save` AND write `state.yaml` | ecomono-memory first; filesystem fallback |
 | `none` | Not possible — warn user | Not possible |
 
-*For state automated artifacts, set `capture_prompt: false` when the Engram tool schema supports it; if an older schema rejects or does not expose the field, omit it rather than failing.
 
 ## Common Rules
 
 - `none` → do NOT create or modify any project files; return results inline only
-- `engram` → do NOT write any project files; persist to Engram and return observation IDs
+- `ecomono-memory` → do NOT write any project files; persist to ecomono-memory and return observation IDs
 - `openspec` → write files ONLY to paths defined in `openspec-convention.md`
-- `hybrid` → persist to BOTH Engram AND filesystem; follow both conventions
+- `hybrid` → persist to BOTH ecomono-memory AND filesystem; follow both conventions
 - NEVER force `openspec/` creation unless orchestrator explicitly passed `openspec` or `hybrid`
 - If unsure which mode to use, default to `none`
 
@@ -78,7 +77,7 @@ The orchestrator persists DAG state after each phase transition to enable SDD re
 Sub-agents launch with a fresh context and NO access to the orchestrator's instructions or memory protocol.
 
 Who reads, who writes:
-- Non-SDD (general task): orchestrator searches engram, passes summary in prompt; sub-agent saves discoveries via `mem_save`
+- Non-SDD (general task): orchestrator searches ecomono-memory, passes summary in prompt; sub-agent saves discoveries via `mem_save`
 - SDD (phase with dependencies): sub-agent reads artifacts directly from backend; sub-agent saves its artifact
 - SDD (phase without dependencies, e.g. explore): nobody reads; sub-agent saves its artifact
 
@@ -92,7 +91,7 @@ Why this split:
 Non-SDD:
 ```
 PERSISTENCE (MANDATORY):
-If you make important discoveries, decisions, or fix bugs, you MUST save them to engram before returning:
+If you make important discoveries, decisions, or fix bugs, you MUST save them to ecomono-memory before returning:
   mem_save(title: "{short description}", type: "{decision|bugfix|discovery|pattern}",
            project: "{project}", content: "{What, Why, Where, Learned}")
 Do NOT return without saving what you learned. This is how the team builds persistent knowledge across sessions.
@@ -100,7 +99,7 @@ Do NOT return without saving what you learned. This is how the team builds persi
 
 SDD (with dependencies):
 ```
-Artifact store mode: {engram|openspec|hybrid|none}
+Artifact store mode: {ecomono-memory|openspec|hybrid|none}
 Read these artifacts before starting (search returns truncated previews):
   mem_search(query: "sdd/{change-name}/{type}", project: "{project}") → get ID
   mem_get_observation(id: {id}) → full content (REQUIRED)
@@ -112,7 +111,6 @@ After completing your work, you MUST call:
     topic_key: "sdd/{change-name}/{artifact-type}",
     type: "architecture",
     project: "{project}",
-    capture_prompt: false,
     content: "{your full artifact markdown}"
   )
 If you return without calling mem_save, the next phase CANNOT find your artifact and the pipeline BREAKS.
@@ -120,7 +118,7 @@ If you return without calling mem_save, the next phase CANNOT find your artifact
 
 SDD (no dependencies):
 ```
-Artifact store mode: {engram|openspec|hybrid|none}
+Artifact store mode: {ecomono-memory|openspec|hybrid|none}
 
 PERSISTENCE (MANDATORY — do NOT skip):
 After completing your work, you MUST call:
@@ -129,13 +127,12 @@ After completing your work, you MUST call:
     topic_key: "sdd/{change-name}/{artifact-type}",
     type: "architecture",
     project: "{project}",
-    capture_prompt: false,
     content: "{your full artifact markdown}"
   )
 If you return without calling mem_save, the next phase CANNOT find your artifact and the pipeline BREAKS.
 ```
 
-For SDD artifacts, `capture_prompt: false` is explicit and mandatory when the Engram tool schema supports it. Engram v1.15.3 defaults `capture_prompt` to true for normal human/proactive saves, but automated pipeline artifacts must not capture the user's prompt. Do not infer this from `type` because SDD artifacts and real human architecture decisions both use `architecture`. If an older schema rejects or does not expose `capture_prompt`, omit it rather than failing.
+Do not pass `capture_prompt`. The Go engram took it so automated pipeline writes would not capture the user's prompt; the native `mem_save` schema has no such field, and prompt capture is the host adapter's job instead.
 
 ## Sub-Agent Response Ordering
 

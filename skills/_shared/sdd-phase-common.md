@@ -16,7 +16,7 @@ Executor boundary: every SDD phase agent is an EXECUTOR, not an orchestrator. Do
 
 NOTE: the preferred path is (1) — exact skill paths selected by the orchestrator. Paths (2) and (3) are fallbacks. Searching the registry is SKILL LOADING, not delegation. If `## Skills to load before work` is present, IGNORE redundant `SKILL: Load` instructions.
 
-## B. Artifact Retrieval (Engram Mode)
+## B. Artifact Retrieval (ecomono-memory Mode)
 
 **CRITICAL**: `mem_search` returns 300-char PREVIEWS, not full content. You MUST call `mem_get_observation(id)` for EVERY artifact. **Skipping this produces wrong output.**
 
@@ -38,7 +38,7 @@ Do NOT use search previews as source material.
 
 Every phase that produces an artifact MUST persist it. Skipping this BREAKS the pipeline — downstream phases will not find your output.
 
-### Engram mode
+### ecomono-memory mode
 
 ```
 mem_save(
@@ -52,7 +52,7 @@ mem_save(
 ```
 
 `topic_key` enables upserts — saving again updates, not duplicates.
-`capture_prompt: false` is mandatory for SDD artifacts because they are automated pipeline outputs, not human/proactive memory saves. Set it when the Engram tool schema supports it; if an older schema rejects or does not expose the field, omit it rather than failing.
+`capture_prompt: false` is mandatory for SDD artifacts because they are automated pipeline outputs, not human/proactive memory saves. Set it when the ecomono-memory tool schema supports it; if an older schema rejects or does not expose the field, omit it rather than failing.
 
 ### OpenSpec mode
 
@@ -68,7 +68,7 @@ Return result inline only. Do not write any files or call `mem_save`.
 
 ## D. Return Envelope
 
-> **CRITICAL — Response ordering**: Your FINAL output MUST be text (the return envelope), NOT a tool call. If you need to save to Engram (`mem_save`), do it BEFORE your final text response. Do NOT call `mem_session_summary` — that's for top-level agents only. **Why**: When a sub-agent's last action is a tool call, the parent agent receives only the tool result — your text response (the actual analysis) is lost.
+> **CRITICAL — Response ordering**: Your FINAL output MUST be text (the return envelope), NOT a tool call. If you need to save to ecomono-memory (`mem_save`), do it BEFORE your final text response. Do NOT call `mem_session_summary` — that's for top-level agents only. **Why**: When a sub-agent's last action is a tool call, the parent agent receives only the tool result — your text response (the actual analysis) is lost.
 
 Every phase MUST return a structured envelope to the orchestrator:
 
@@ -85,7 +85,7 @@ Example:
 ```markdown
 **Status**: success
 **Summary**: Proposal created for `{change-name}`. Defined scope, approach, and rollback plan.
-**Artifacts**: Engram `sdd/{change-name}/proposal` | `openspec/changes/{change-name}/proposal.md`
+**Artifacts**: ecomono-memory `sdd/{change-name}/proposal` | `openspec/changes/{change-name}/proposal.md`
 **Next**: sdd-spec or sdd-design
 **Risks**: None
 **Skill Resolution**: paths-injected — 3 skills (react-19, typescript, tailwind-4)
