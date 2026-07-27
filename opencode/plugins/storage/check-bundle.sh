@@ -14,8 +14,12 @@ cd "$(dirname "$0")"
 # looks like, and silently passing there would skip the one check guarding the
 # bundle. Only a copy that genuinely cannot install — the read-only nix store —
 # is allowed to skip.
-if [ ! -d ../../node_modules ] && ! "$BUN" install --cwd ../.. >/dev/null 2>&1; then
-  echo "skip: bundle check (cannot install deps — read-only copy?)"
+# --frozen-lockfile for two reasons: a verify step must never write to the tree
+# (a plain install rewrites bun.lock), and resolving `^` ranges freely would
+# bundle a different SDK build than the committed one and report that as source
+# staleness — which is exactly the false failure this check must not produce.
+if [ ! -d ../../node_modules ] && ! "$BUN" install --cwd ../.. --frozen-lockfile >/dev/null 2>&1; then
+  echo "skip: bundle check (cannot install locked deps — read-only copy?)"
   exit 0
 fi
 
