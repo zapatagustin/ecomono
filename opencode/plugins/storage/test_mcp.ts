@@ -10,7 +10,8 @@ import assert from "assert"
 
 const dataDir = mkdtempSync(join(tmpdir(), "ecomono-mcp-"))
 
-const proc = Bun.spawn(["bun", "run", join(import.meta.dir, "mcp-server.ts")], {
+// process.execPath, not "bun": bun is often installed outside PATH (~/.bun/bin).
+const proc = Bun.spawn([process.execPath, "run", join(import.meta.dir, "mcp-server.ts")], {
   cwd: dataDir,
   env: { ...process.env, ECOMONO_DATA_DIR: dataDir, ECOMONO_LEGACY_DB: join(tmpdir(), "no-legacy.db") },
   stdin: "pipe",

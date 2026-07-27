@@ -12,11 +12,11 @@ context: |
 testing:
   strict_tdd: false
   runner:
-    command: ""
-    framework: ""
+    command: "opencode/plugins/storage/run-tests.sh"
+    framework: "none — plain assert scripts run by bun"
   layers:
-    unit: { available: false, tool: "" }
-    integration: { available: false, tool: "" }
+    unit: { available: true, tool: "bun run opencode/plugins/storage/test_{storage,tools,conflicts,migration}.ts" }
+    integration: { available: true, tool: "bun run opencode/plugins/storage/test_mcp.ts" }
     e2e: { available: false, tool: "" }
   coverage:
     available: false
@@ -44,10 +44,10 @@ rules:
       - Follow existing code patterns
       - Config/symlink changes: verify idempotence
     tdd: false
-    test_command: ""
+    test_command: "opencode/plugins/storage/run-tests.sh"
   verify:
-    test_command: ""
-    build_command: ""
+    test_command: "opencode/plugins/storage/run-tests.sh"
+    build_command: "opencode/plugins/storage/build-bundle.sh"
     coverage_threshold: 0
   archive:
     - Warn before merging destructive deltas
