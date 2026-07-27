@@ -29,12 +29,12 @@ detect_os() {
   [ -e /etc/NIXOS ] && OS_ID=nixos
 }
 
-# Maps `uname -m` to the Go release arch tag used by engram/gentle-ai tarballs.
+# Maps `uname -m` to the Go release arch tag used by gentle-ai tarballs.
 arch_tag() {
   case "$(uname -m)" in
     x86_64|amd64)  echo amd64 ;;
     aarch64|arm64) echo arm64 ;;
-    *) die "unsupported CPU arch: $(uname -m) (engram/gentle-ai ship amd64/arm64 only)" ;;
+    *) die "unsupported CPU arch: $(uname -m) (gentle-ai ships amd64/arm64 only)" ;;
   esac
 }
 

@@ -3,7 +3,6 @@
   "theme": "gruvbox",
   "plugin": [
     "opencode-subagent-statusline",
-    "opencode-sdd-engram-manage",
     "/home/agustin/.config/opencode/tui-plugins/cyndaquill.tsx"
   ]
 }

@@ -62,4 +62,4 @@ Multiple skills can apply at once. Match by file context (extensions, paths) and
 
 Full SDD + Agent-Teams orchestration protocol — delegation triggers, gatekeeper, model assignments, sub-agent context protocol, SDD phase workflow, agent trigger rules — lives in `~/.claude/skills/_shared/sdd-orchestrator.md`. Read it in full BEFORE running any `/sdd-*` command or coordinating multi-agent delegation. It is NOT loaded every turn — pull it in only when orchestration actually starts.
 
-Engram memory protocol is injected at session start by the engram plugin (SessionStart hook) and restated in the engram MCP server instructions; it is always active. Do NOT duplicate it here.
+Engram memory protocol comes from the native engram MCP server (registered as `engram`; its `initialize` instructions carry the protocol on Claude Code, and the opencode plugin injects the same into the system prompt). It is always active. Do NOT duplicate it here.

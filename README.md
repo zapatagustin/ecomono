@@ -6,7 +6,7 @@ from any NixOS/home-manager setup. One repo, installable on **Arch**, **Debian**
 
 It ships the output style, agents, skills, commands, hooks, MCP wiring, and opencode
 plugins as plain files (markdown / JS / JSON), plus a POSIX installer that symlinks them
-into place and fetches the two custom binaries (`engram`, `gentle-ai`).
+into place and fetches the custom binary (`gentle-ai`).
 
 ## Layout
 
@@ -16,7 +16,7 @@ agent-skills/    Shared skills (ecomono*, find-skills, proxy-manager) → ~/.age
 claude/          CLAUDE.md, agents/, commands/, hooks/, output-styles/, themes/,
                  settings.template.json
 opencode/        AGENTS.md, opencode.json, tui.json, commands/, plugins/, tui-plugins/
-nix/             engram / gentle-ai package definitions (GitHub-release binaries)
+nix/             gentle-ai package definition (GitHub-release binary)
 lib/common.sh    installer helpers
 install.sh       Arch/Debian/generic-Linux installer
 flake.nix        NixOS / home-manager module
@@ -34,19 +34,22 @@ The installer is **idempotent** and **non-destructive**: it symlinks config into
 from the template **only if absent** (never clobbers the runtime file); backs up any
 pre-existing real dir to `*.pre-ecomono.bak` before linking.
 
-It **fetches** `engram` + `gentle-ai` (GitHub-release binaries) into `~/.local/bin`, and
-**registers** the `engram` + `superpowers` Claude plugins and the `context7` MCP server.
+It **fetches** `gentle-ai` (GitHub-release binary) into `~/.local/bin`, and
+**registers** the `superpowers` Claude plugin, the `context7` MCP server, and the
+native **engram** memory MCP server (a self-contained bun bundle — no external
+Go binary, replaces the old `engram@engram` plugin).
 
-It **checks** — but does not install — `node`, `claude`, and `opencode`, printing a
-distro-specific hint if any is missing (those belong to your package manager).
+It **checks** — but does not install — `node`, `claude`, `opencode`, and `bun`,
+printing a distro-specific hint if any is missing (those belong to your package
+manager).
 
 ### Env overrides
 
 | Var | Effect |
 |-----|--------|
 | `BIN_DIR` | binary install dir (default `~/.local/bin`) |
-| `ENGRAM_VERSION` / `GENTLE_AI_VERSION` | pin a release tag (default: latest) |
-| `ECOMONO_SKIP_BINARIES=1` | skip fetching engram/gentle-ai |
+| `GENTLE_AI_VERSION` | pin a release tag (default: latest) |
+| `ECOMONO_SKIP_BINARIES=1` | skip fetching gentle-ai |
 | `ECOMONO_SKIP_PLUGINS=1` | skip plugin/MCP registration |
 
 ### Prerequisites
@@ -54,6 +57,7 @@ distro-specific hint if any is missing (those belong to your package manager).
 - `node` — `sudo pacman -S nodejs` / `sudo apt install nodejs`
 - `claude` — `npm i -g @anthropic-ai/claude-code`
 - `opencode` — `curl -fsSL https://opencode.ai/install | bash`
+- `bun` — `curl -fsSL https://bun.sh/install | bash` (runs the native engram memory)
 - `curl` + `tar` — to fetch the binaries
 
 Make sure `~/.local/bin` is on your `PATH`.
@@ -70,7 +74,7 @@ inputs.ecomono.url = "github:zapatagustin/ecomono";
 imports = [ inputs.ecomono.homeModules.default ];
 ```
 
-The module manages the config declaratively, adds `nodejs` + `engram` + `gentle-ai`, and
+The module manages the config declaratively, adds `nodejs` + `gentle-ai`, and
 registers plugins/MCP on activation. `settings.json` is left unmanaged (Claude Code
 rewrites it at runtime) — seed it once:
 

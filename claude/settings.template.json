@@ -81,16 +81,7 @@
     ]
   },
   "enabledPlugins": {
-    "engram@engram": true,
     "superpowers@claude-plugins-official": true
-  },
-  "extraKnownMarketplaces": {
-    "engram": {
-      "source": {
-        "source": "github",
-        "repo": "Gentleman-Programming/engram"
-      }
-    }
   },
   "outputStyle": "Ecomono",
   "effortLevel": "high",

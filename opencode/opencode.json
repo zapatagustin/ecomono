@@ -263,26 +263,6 @@
       "type": "remote",
       "url": "https://mcp.context7.com/mcp"
     },
-    "engram": {
-      "command": [
-        "engram",
-        "mcp",
-        "--tools=agent"
-      ],
-      "type": "local"
-    }
-  },
-  "permission": {
-    "*": "allow",
-    "bash": {
-      "*": "allow",
-      "git commit *": "ask",
-      "git push": "ask",
-      "git push *": "ask",
-      "git push --force *": "ask",
-      "git rebase *": "ask",
-      "git reset --hard *": "ask"
-    },
     "read": {
       "*": "allow",
       "**/*.key": "deny",

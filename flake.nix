@@ -10,9 +10,8 @@
       forAll = f: nixpkgs.lib.genAttrs systems (s: f nixpkgs.legacyPackages.${s});
     in
     {
-      # The two custom Go binaries, so `nix run` / overlays can reach them too.
+      # gentle-ai — managed separately (engram removed, now native plugin)
       packages = forAll (pkgs: {
-        engram = pkgs.callPackage ./nix/engram.nix { };
         gentle-ai = pkgs.callPackage ./nix/gentle-ai.nix { };
       });
 
@@ -23,7 +22,6 @@
       homeModules.default =
         { config, pkgs, lib, ... }:
         let
-          engram = pkgs.callPackage ./nix/engram.nix { };
           gentle-ai = pkgs.callPackage ./nix/gentle-ai.nix { };
 
           homeDir = config.home.homeDirectory;
@@ -41,7 +39,9 @@
           '';
         in
         {
-          home.packages = [ pkgs.nodejs engram gentle-ai ];
+          # bun runs the native engram memory (opencode plugin + the bundled
+          # Claude Code MCP server).
+          home.packages = [ pkgs.nodejs pkgs.bun gentle-ai ];
 
           programs.claude-code = {
             enable = true;
@@ -79,6 +79,8 @@
             "opencode/plugins/skill-registry.ts".source = ./opencode/plugins/skill-registry.ts;
             "opencode/plugins/cave-compress.ts".source = ./opencode/plugins/cave-compress.ts;
             "opencode/plugins/engram.ts".source = ./opencode/plugins/engram.ts;
+            # Native engram storage core (shared by the plugin + MCP server).
+            "opencode/plugins/storage".source = ./opencode/plugins/storage;
             "opencode/tui-plugins".source = ./opencode/tui-plugins;
             "opencode/package.json".source = ./opencode/package.json;
           };
@@ -95,18 +97,17 @@
                   "$claude" plugin install "$name@$market" || echo "warning: could not install plugin $name"
                 fi
               }
-              ensurePlugin Gentleman-Programming/engram engram
               ensurePlugin anthropics/claude-plugins-official superpowers claude-plugins-official
               if ! "$claude" mcp get context7 >/dev/null 2>&1; then
                 "$claude" mcp add --scope user context7 -- npx -y --package=@upstash/context7-mcp@2.2.5 -- context7-mcp \
                   || echo "warning: could not register context7 mcp"
               fi
-            fi
-            # engram <= 0.1.1 ships #!/bin/bash hooks, absent on NixOS — patch them.
-            find "$HOME/.claude/plugins/cache/engram" -name '*.sh' \
-              -exec ${pkgs.gnused}/bin/sed -i '1s|^#!/bin/bash$|#!/usr/bin/env bash|' {} + 2>/dev/null || true
-            if ${engram}/bin/engram --help >/dev/null 2>&1 && ! grep -rqs engram "$HOME/.config/opencode"; then
-              ${engram}/bin/engram setup opencode || echo "warning: engram setup opencode failed"
+              # engram memory: our native bun MCP server (self-contained bundle,
+              # runs from the store with no node_modules).
+              if ! "$claude" mcp get engram >/dev/null 2>&1; then
+                "$claude" mcp add --scope user engram -- ${pkgs.bun}/bin/bun ${./opencode/plugins/storage/mcp-server.js} \
+                  || echo "warning: could not register engram mcp"
+              fi
             fi
           '';
         };

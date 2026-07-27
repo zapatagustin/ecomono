@@ -10,3 +10,6 @@ opencode/plugins/**/node_modules/
 # nix build symlinks
 result
 result-*
+
+# gentle-ai skill-registry hook output (regenerated every prompt)
+.atl/
