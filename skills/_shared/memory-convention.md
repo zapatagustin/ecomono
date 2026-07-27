@@ -14,7 +14,7 @@ project:   {detected or current project name}
 scope:     project
 ```
 
-Omit `capture_prompt`. The Go engram exposed it to keep automated writes out of prompt capture; the native `mem_save` schema has no such field, and prompt capture is driven by the host adapter instead.
+There is no `capture_prompt`. The Go engram took it on `mem_save` to keep automated pipeline writes from also recording the user's in-flight prompt; here prompt capture is the host adapter's job — one row per message, written independently of any save — so there is no save-time side effect left for a flag to switch off. Don't reintroduce it from older engram documentation.
 
 ### Artifact Types
 

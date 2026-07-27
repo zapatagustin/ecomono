@@ -42,7 +42,6 @@ Run this phase when the orchestrator/user asks to initialize SDD in a project. Y
 - In `hybrid` mode, write both openspec files and ecomono-memory observations.
 - Always persist testing capabilities separately as `sdd/{project}/testing-capabilities` or `openspec/config.yaml` `testing:`.
 - Always build `.atl/skill-registry.md`; also save `skill-registry` to ecomono-memory when available.
-- Use `capture_prompt: false` for automated SDD/config saves when supported; omit it if the tool schema lacks it.
 - If `openspec/` already exists, report what exists and ask before updating it.
 
 ## Decision Gates

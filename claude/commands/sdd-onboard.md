@@ -15,8 +15,7 @@ Guide the user through a complete SDD cycle using their actual codebase. This is
 
 ECOMONO-MEMORY PERSISTENCE (artifact store mode: ecomono-memory):
 Save onboarding progress as you go:
-  mem_save(title: "sdd-onboard/{project}", topic_key: "sdd-onboard/{project}", type: "architecture", project: "{project}", capture_prompt: false, content: "{onboarding state}")
-  Set capture_prompt: false when the ecomono-memory tool schema supports it; if an older schema rejects or does not expose the field, omit it rather than failing.
+  mem_save(title: "sdd-onboard/{project}", topic_key: "sdd-onboard/{project}", type: "architecture", project: "{project}", content: "{onboarding state}")
 topic_key enables upserts — re-running updates, not duplicates.
 
 Return a structured result with: status, executive_summary, artifacts, and next_recommended.

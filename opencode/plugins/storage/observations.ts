@@ -29,7 +29,6 @@ export function save(opts: {
   project?: string
   scope?: string
   topic_key?: string
-  capture_prompt?: boolean
 }): { id: number; sync_id: string } | null {
   const db = getDb()
   const project = opts.project || detectProject()

@@ -33,17 +33,14 @@
 mem_save title/topic_key: sdd-init/{project}
 type: architecture
 content: detected project context markdown
-capture_prompt: false when available
 
 mem_save title/topic_key: sdd/{project}/testing-capabilities
 type: config
 content: testing capabilities markdown
-capture_prompt: false when available
 
 mem_save title/topic_key: skill-registry
 type: config
 content: registry markdown
-capture_prompt: false when available
 ```
 
 ## OpenSpec Skeleton

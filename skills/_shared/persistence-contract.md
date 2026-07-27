@@ -132,7 +132,6 @@ After completing your work, you MUST call:
 If you return without calling mem_save, the next phase CANNOT find your artifact and the pipeline BREAKS.
 ```
 
-Do not pass `capture_prompt`. The Go engram took it so automated pipeline writes would not capture the user's prompt; the native `mem_save` schema has no such field, and prompt capture is the host adapter's job instead.
 
 ## Sub-Agent Response Ordering
 
