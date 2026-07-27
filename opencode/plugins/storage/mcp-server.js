@@ -27295,11 +27295,12 @@ function getDb() {
   if (db)
     return db;
   mkdirSync(DATA_DIR, { recursive: true });
-  db = new Database(DB_PATH);
-  db.run("PRAGMA journal_mode=WAL");
-  db.run("PRAGMA foreign_keys=ON");
-  initSchema(db);
-  migrateFromEngram(db);
+  const d = new Database(DB_PATH);
+  d.run("PRAGMA journal_mode=WAL");
+  d.run("PRAGMA foreign_keys=ON");
+  initSchema(d);
+  migrateFromEngram(d);
+  db = d;
   return db;
 }
 function initSchema(d) {

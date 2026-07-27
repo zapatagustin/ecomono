@@ -49,14 +49,26 @@ export const MemoryPlugin: Plugin = async (input) => {
   const project = extractProjectName(input.directory || process.cwd())
 
   // Memory must never take down the editing session. A store we cannot open
-  // (corrupt file, full disk, bad permissions) degrades to no memory at all:
-  // no tools and no protocol injection, since telling the agent to call mem_save
-  // when the tools are absent is worse than staying quiet about it.
+  // (corrupt file, full disk, bad permissions) degrades to mem_doctor and
+  // nothing else: no protocol injection, since telling the agent to call
+  // mem_save when saving is impossible is worse than staying quiet — but the
+  // one tool whose job is to report that memory is down has to survive the
+  // failure it reports on, or the only trace is a stderr line nobody sees.
   try {
     getDb() // initialize schema + run one-time legacy migration
   } catch (e) {
     console.error("[ecomono-memory] storage unavailable, memory disabled:", (e as Error).message)
-    return {}
+    const doctor = registry.find((t) => t.name === "mem_doctor")!
+    return {
+      tool: {
+        // Its own handler catches the same failure and answers ok:false.
+        mem_doctor: {
+          description: doctor.description,
+          args: doctor.args,
+          execute: async () => JSON.stringify(doctor.handler({})),
+        },
+      },
+    }
   }
 
   // Build OpenCode tool definitions from the shared registry. Inject the

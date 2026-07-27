@@ -20,11 +20,16 @@ let db: Database | null = null
 export function getDb(): Database {
   if (db) return db
   mkdirSync(DATA_DIR, { recursive: true })
-  db = new Database(DB_PATH)
-  db.run("PRAGMA journal_mode=WAL")
-  db.run("PRAGMA foreign_keys=ON")
-  initSchema(db)
-  migrateFromEngram(db)
+  const d = new Database(DB_PATH)
+  d.run("PRAGMA journal_mode=WAL")
+  d.run("PRAGMA foreign_keys=ON")
+  initSchema(d)
+  migrateFromEngram(d)
+  // Cache only a fully initialized handle. Assigning before initSchema would
+  // let a throw halfway through (disk fills mid CREATE TABLE) leave a
+  // half-built db that every later caller gets back from the `if (db)` above,
+  // turning the root cause into confusing "no such table" errors.
+  db = d
   return db
 }
 

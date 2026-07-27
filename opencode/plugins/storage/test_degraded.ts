@@ -23,4 +23,15 @@ assert(doc.integrity === "unreadable", `integrity flagged (got ${doc.integrity})
 assert(typeof doc.error === "string" && doc.error.length > 0, "error message surfaced")
 assert(doc.db_path.endsWith("memory.db"), "db_path still reported")
 
-console.log("✓ degraded: unopenable store reported via mem_doctor, not thrown")
+// The plugin must not swallow the diagnostic along with everything else: a
+// health check the agent cannot reach when the store is broken reports nothing.
+const { default: MemoryPlugin } = await import("../memory")
+const hooks: any = await MemoryPlugin({ directory: tmpdir() } as any)
+assert(Object.keys(hooks.tool ?? {}).length === 1, `degraded plugin exposes exactly one tool, got ${Object.keys(hooks.tool ?? {}).join(",") || "none"}`)
+assert(hooks.tool?.mem_doctor, "degraded plugin still exposes mem_doctor")
+const viaPlugin = JSON.parse(await hooks.tool.mem_doctor.execute({}))
+assert(viaPlugin.ok === false && viaPlugin.integrity === "unreadable", "mem_doctor reachable through the degraded plugin")
+// No protocol injection: instructing the agent to save when saving is impossible.
+assert(!hooks["experimental.chat.system.transform"], "degraded plugin injects no protocol")
+
+console.log("✓ degraded: unopenable store reported via mem_doctor (registry + plugin), not thrown")

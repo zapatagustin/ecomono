@@ -9,10 +9,13 @@ set -euo pipefail
 cd "$(dirname "$0")"
 . ./_bun.sh
 
-# Bundling needs the MCP SDK resolved from opencode/node_modules. The nix-store
-# copy is read-only and has none, so there it is a skip, not a failure.
-if [ ! -d ../../node_modules ]; then
-  echo "skip: bundle check (no node_modules — read-only copy?)"
+# Bundling needs the MCP SDK resolved from opencode/node_modules. Try to install
+# it rather than skipping on sight: "no node_modules" is also what a fresh clone
+# looks like, and silently passing there would skip the one check guarding the
+# bundle. Only a copy that genuinely cannot install — the read-only nix store —
+# is allowed to skip.
+if [ ! -d ../../node_modules ] && ! "$BUN" install --cwd ../.. >/dev/null 2>&1; then
+  echo "skip: bundle check (cannot install deps — read-only copy?)"
   exit 0
 fi
 
