@@ -27824,9 +27824,17 @@ var registry2 = [
   },
   {
     name: "mem_doctor",
-    description: "Health check: DB path and store counts.",
+    description: "Health check: SQLite integrity probe, DB path, and store counts.",
     args: {},
-    handler: () => ({ ok: true, db_path: dbPath(), ...stats() })
+    handler: () => {
+      try {
+        const row = getDb().query("PRAGMA quick_check").get();
+        const integrity = row?.quick_check ?? "unknown";
+        return { ok: integrity === "ok", integrity, db_path: dbPath(), ...stats() };
+      } catch (e) {
+        return { ok: false, integrity: "unreadable", error: e.message, db_path: dbPath() };
+      }
+    }
   },
   {
     name: "mem_judge",

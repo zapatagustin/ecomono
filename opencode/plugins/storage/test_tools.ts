@@ -43,6 +43,7 @@ assert((call("mem_suggest_topic_key", { title: "Auth Model!" }) as any).topic_ke
 
 const doc = call("mem_doctor") as any
 assert(doc.ok && doc.db_path.endsWith("memory.db") && doc.observations >= 1, "mem_doctor")
+assert(doc.integrity === "ok", `mem_doctor probes integrity (got ${doc.integrity})`)
 
 assert((call("mem_delete", { id: saved.id }) as any).deleted, "mem_delete")
 assert(call("mem_get_observation", { id: saved.id }) === null, "deleted gone")

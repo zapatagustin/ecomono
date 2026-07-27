@@ -5,6 +5,11 @@
 # (it's a bun builtin, provided at runtime).
 set -euo pipefail
 cd "$(dirname "$0")"
-bun install --cwd ../.. >/dev/null 2>&1 || (cd ../.. && bun install)
-bun build mcp-server.ts --target bun --external bun:sqlite --outfile mcp-server.js
+
+# Same resolution as install.sh: bun is often installed outside PATH.
+BUN="$(command -v bun 2>/dev/null || { [ -x "$HOME/.bun/bin/bun" ] && echo "$HOME/.bun/bin/bun"; })"
+[ -n "$BUN" ] || { echo "error: bun not found (curl -fsSL https://bun.sh/install | bash)" >&2; exit 1; }
+
+"$BUN" install --cwd ../.. >/dev/null 2>&1 || (cd ../.. && "$BUN" install)
+"$BUN" build mcp-server.ts --target bun --external bun:sqlite --outfile mcp-server.js
 echo "built mcp-server.js"

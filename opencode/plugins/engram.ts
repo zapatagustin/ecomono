@@ -47,7 +47,17 @@ function textFromParts(parts: any[]): string {
 
 export const EngramPlugin: Plugin = async (input) => {
   const project = extractProjectName(input.directory || process.cwd())
-  getDb() // initialize schema + run one-time legacy migration
+
+  // Memory must never take down the editing session. A store we cannot open
+  // (corrupt file, full disk, bad permissions) degrades to no memory at all:
+  // no tools and no protocol injection, since telling the agent to call mem_save
+  // when the tools are absent is worse than staying quiet about it.
+  try {
+    getDb() // initialize schema + run one-time legacy migration
+  } catch (e) {
+    console.error("[engram] storage unavailable, memory disabled:", (e as Error).message)
+    return {}
+  }
 
   // Build OpenCode tool definitions from the shared registry. Inject the
   // detected project for tools that accept one but weren't given it.

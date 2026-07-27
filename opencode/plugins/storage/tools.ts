@@ -11,7 +11,7 @@ import * as Obs from "./observations"
 import * as Sess from "./sessions"
 import * as Prompts from "./prompts"
 import * as Conflicts from "./conflicts"
-import { dbPath } from "./db"
+import { dbPath, getDb } from "./db"
 
 export interface MemTool {
   name: string
@@ -147,9 +147,20 @@ export const registry: MemTool[] = [
   },
   {
     name: "mem_doctor",
-    description: "Health check: DB path and store counts.",
+    description: "Health check: SQLite integrity probe, DB path, and store counts.",
     args: {},
-    handler: () => ({ ok: true, db_path: dbPath(), ...Obs.stats() }),
+    // A real probe, not a hardcoded ok. quick_check catches corruption, and the
+    // catch turns an unreadable file or full disk into a reportable answer
+    // rather than a tool-call error the agent can only guess at.
+    handler: () => {
+      try {
+        const row = getDb().query("PRAGMA quick_check").get() as { quick_check?: string } | null
+        const integrity = row?.quick_check ?? "unknown"
+        return { ok: integrity === "ok", integrity, db_path: dbPath(), ...Obs.stats() }
+      } catch (e) {
+        return { ok: false, integrity: "unreadable", error: (e as Error).message, db_path: dbPath() }
+      }
+    },
   },
   {
     name: "mem_judge",
