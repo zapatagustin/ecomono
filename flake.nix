@@ -93,8 +93,12 @@
           # Imperative bits Nix can't own: user-scope plugins/MCP live under
           # runtime-managed state, so register them idempotently on activation.
           home.activation.ecomonoAgents = lib.hm.dag.entryAfter [ "writeBoundary" ] ''
+            # The activation service does not reliably have the new profile on
+            # PATH, so fall back to it explicitly before giving up. Still not a
+            # pinned package: `claude` stays bring-your-own.
             claude="$(command -v claude || true)"
-            if [ -n "$claude" ]; then
+            [ -x "$claude" ] || claude="${config.home.profileDirectory}/bin/claude"
+            if [ -x "$claude" ]; then
               ensurePlugin() {
                 local repo="$1" name="$2" market="''${3:-$2}"
                 if ! "$claude" plugin list 2>/dev/null | grep -q "$name"; then
