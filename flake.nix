@@ -68,6 +68,11 @@
             tui = readCfg ./opencode/tui.json;
             context = ./opencode/AGENTS.md;
             commands = ./opencode/commands;
+            # Same tree Claude gets. The pre-extraction NixOS layout carried a
+            # separate compressed copy for opencode; it held no rules the shared
+            # one lacks, only tighter prose, and had already gone stale on the
+            # engram -> ecomono-memory rename. One tree, no sync to forget.
+            skills = ./skills;
           };
 
           # Plugin sources kept as individual entries so opencode's plugins/

@@ -29,11 +29,20 @@ copy.
 Three skill sets, deduplicated from the old NixOS layout (which copied `claude/skills` and
 `opencode/config/skills` separately):
 
-- `skills/` — Claude-only skills.
+- `skills/` — the process/SDD skill set, shared by both agents (`programs.claude-code` picks it
+  up through the merged store dir, `programs.opencode.skills` points at it directly).
 - `agent-skills/` — the shared set (`ecomono*`, `find-skills`, `proxy-manager`), mounted at
   `~/.agents/skills` and referenced by both agents.
 - `~/.claude/skills` = `skills/` ∪ `agent-skills/` (symlinked children on non-Nix; merged
   store dir on Nix).
+
+The pre-extraction NixOS layout carried a **fourth** tree: `opencode/config/skills`, a separate
+compressed copy of 24 of these skills. Compared line by line before dropping it, the compressed
+variants hold no rule the shared ones lack — the diff is prose only ("Load only when user
+explicitly requests X" against "Load this skill only when the user explicitly asks for X") — and
+they had already gone stale, still saying `Artifact Retrieval (Engram Mode)` after the rename.
+Two variants of 24 files with nothing keeping them equal is the drift machine this document keeps
+running into, so opencode now reads the shared tree.
 
 ### The register is written four times
 
