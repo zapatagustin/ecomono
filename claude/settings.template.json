@@ -52,6 +52,16 @@
             "statusMessage": "Checking diff size (review-4R gate)"
           }
         ]
+      },
+      {
+        "matcher": "Skill",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "$HOME/.claude/hooks/heavy-skill-gate.sh",
+            "statusMessage": "Checking skill weight (context gate)"
+          }
+        ]
       }
     ],
     "PostToolUse": [

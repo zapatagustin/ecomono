@@ -172,7 +172,7 @@ The earlier draft's stated problem — "the SDD protocol loads every turn" — w
 `claude/CLAUDE.md` holds it as an on-demand pointer and `commands/sdd-*.md` read it only when a
 cycle starts.
 
-### Status: shipped, and not yet effective
+### Status: prompt rules ineffective, enforcement moved to a hook
 
 End-to-end verification after the change reached `~/.claude/CLAUDE.md` (home-manager
 generation `rdw36nm0…`): **neither rule fires.** On Opus, a question spanning three subsystems
@@ -190,11 +190,28 @@ to answer from memory. Two specific, imperative, repeated instructions outrank o
 the conflicting one sits inside the `gentle-ai:persona` markers, so `gentle-ai sync` regenerates
 any edit made there.
 
-The prompt rules stay (they cost ~110 tokens and are correct as documentation of intent), but the
-enforcement has to be mechanical. The available lever is a `PreToolUse` hook on `Skill` that
-denies a named set of measured-heavy reference skills and returns the reason, which is the same
-shape as the existing `check-diff-size.sh` gate in `settings.template.json`. Until that lands,
-treat the ~$7-per-session skill finding as diagnosed but unfixed.
+So the prompt rules stay as documentation of intent at ~110 tokens, and enforcement moved to a
+`PreToolUse` gate on the `Skill` tool — `claude/hooks/heavy-skill-gate.sh`, registered in
+`settings.template.json` alongside the existing `check-diff-size.sh` entries.
+
+The mechanism was verified link by link before shipping: `PreToolUse` does match `Skill`; the
+payload carries `tool_input.skill`, so a name is available to gate on; `permissionDecision:
+"deny"` blocks the call; `permissionDecisionReason` reaches the model; and the model then
+delegates on its own. Measured on the same pricing question that cost $2.54 inline:
+
+```
+without the gate   cache_write 250,123   $2.5413   body injected into main thread
+with the gate      cache_write   1,714   $0.4222   body injected: none
+```
+
+Same correct answer, 83% less cost, 146x less cache_write on that invocation — and the saving
+compounds mid-session, where the inline body would have been re-read on every later turn.
+
+Two properties worth keeping in mind. The gate **fails open**: a missing `jq` or an unparseable
+payload exits 0, because a gate that errors closed would block every skill in the session. And
+the denylist is **manual and should stay short** — on a cheap skill the gate is a net loss (the
+model spends a denied call plus a delegation round trip on something whose body was small), so an
+entry belongs there only after its weight has been measured.
 
 ### Reproducing the measurement
 
