@@ -172,6 +172,30 @@ The earlier draft's stated problem — "the SDD protocol loads every turn" — w
 `claude/CLAUDE.md` holds it as an on-demand pointer and `commands/sdd-*.md` read it only when a
 cycle starts.
 
+### Status: shipped, and not yet effective
+
+End-to-end verification after the change reached `~/.claude/CLAUDE.md` (home-manager
+generation `rdw36nm0…`): **neither rule fires.** On Opus, a question spanning three subsystems
+drew 4 `Read` and 6 `Bash` calls inline with no delegation; a question about API pricing invoked
+`claude-api` through the `Skill` tool in the main thread, writing 250,123 cache tokens and
+costing $2.54 to answer with two numbers. That write figure also confirms the ~242k estimate
+above to within 3%.
+
+Two corrections follow. First, non-compliance is not Haiku-specific — the 1-of-4 figure above
+should be read as a property of the rule, not the model: it asks for a *prediction* ("will this
+need 4+ files?") before the work that would answer it. Second, the reference-skill rule loses an
+instruction conflict it cannot win by wording: the persona block calls invoking a matched skill
+through the `Skill` tool "a blocking requirement", and `claude-api`'s own trigger text says never
+to answer from memory. Two specific, imperative, repeated instructions outrank one bullet — and
+the conflicting one sits inside the `gentle-ai:persona` markers, so `gentle-ai sync` regenerates
+any edit made there.
+
+The prompt rules stay (they cost ~110 tokens and are correct as documentation of intent), but the
+enforcement has to be mechanical. The available lever is a `PreToolUse` hook on `Skill` that
+denies a named set of measured-heavy reference skills and returns the reason, which is the same
+shape as the existing `check-diff-size.sh` gate in `settings.template.json`. Until that lands,
+treat the ~$7-per-session skill finding as diagnosed but unfixed.
+
 ### Reproducing the measurement
 
 Transcripts at `~/.claude/projects/*/*.jsonl` carry per-message `usage`. Sum
