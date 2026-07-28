@@ -93,7 +93,7 @@ Delegating cost 2.9x more up front and avoided 62k of permanent context growth. 
 cache-read prices that pays back in **2 turns**; over a 200-turn session it is roughly 100x.
 Median return payload across 90 real `Agent` calls: **465 tokens**.
 
-### The largest single lever: reference skills
+### Reference skills: a rare spike, not the driver
 
 Skills load whole, up front, before their size is knowable — the only context source where the
 price is invisible until after it is paid. Measured in one session of this repo, invoking
@@ -108,6 +108,26 @@ attributable cost over 61 later messages          ~$7.4  of the session's ~$20
 
 ~37% of that session's cost was one skill body re-read 61 times. Compression via delegation:
 242k → 465 tokens, ~520x.
+
+**That figure is one session, and it does not generalise.** Sweeping all 80 transcripts for
+skill-body injections found 16, across 14 sessions:
+
+```
+421,210 tok  claude-api      of which 242,150 is the session above and 179,060 one other
+ 25,490 tok  unidentified
+  3,950 tok  dataviz
+```
+
+Two sessions hold 93% of all skill weight ever loaded here; every other injection lands between
+620 and 12,750 tokens, which is noise. At corpus scale reference skills are **~1% of spend** — a
+rare spike with one culprit, not a systemic driver. The gate is worth keeping because it is cheap
+and fails open, but it should not be sold as the main lever, and the session that produced the
+242k figure was atypical precisely *because* the work in it was about API pricing.
+
+The actual driver is `turns × context size`. 9,692 assistant messages against a ~160k average
+prefix is what produces 1.55B cache reads and half the bill. `Bash` illustrates it: 2,459 calls at
+a median of 110 tokens of output each — the cost is not what a call returns, it is that a call is
+a turn, and every turn re-reads the whole prefix.
 
 Two aggravating factors: the bundle is 980K on disk with no `SKILL.md`, so the harness inlines
 the whole tree instead of using progressive disclosure; and 456K of it is per-language docs, all
@@ -142,18 +162,41 @@ citations, so `medium` lost nothing there. Its **cost** numbers are unusable: pa
 `cache_write` at 2x where the control paid 104–199 tokens of it. That is a harness artifact, not
 an effect of effort.
 
-The global default stays at `high` regardless. Output is 18% of spend, so a 34% output cut is
-worth roughly 6% — but only exploration was verified equivalent, and 97% of spend sits in long
-sessions doing design and debugging, which is exactly what `high` buys. More importantly the
-same saving is already captured by the delegation rule below: exploration moved into the
-`Explore` agent spends its turns and output in a context that is discarded on return. One
-mechanism, no cost to main-loop judgement.
+This was first dismissed by pricing it against output: output is 18% of spend, so a 34% cut is
+worth ~6%, which did not justify the quality risk. **That framing was wrong.** The load-bearing
+number is not output but the -34% in *turns*, and turns drive `cache_read` — 50% of spend, since
+every turn re-reads the whole prefix. On that basis the change is worth roughly **17%**, about
+seventeen times the reference-skill gate above.
+
+It is still not shipped, because only exploration was verified equivalent and 97% of spend sits in
+long sessions doing design and debugging, which is what `high` buys. But it is now the largest
+measured lever available and deserves a real trial rather than a dismissal: set `medium`, work
+normally for a week, and compare transcripts before and after. That measurement costs nothing —
+the data accumulates in `~/.claude/projects` on its own — and it avoids the cache confound that
+made the headless arm's cost figures useless.
+
+### Rate limits are counted in tokens, not dollars
+
+The two meters diverge. `cache_read` is billed at 0.1x input but counts **in full** against plan
+rate limits, and it is ~95% of the tokens a long session moves. Dollar intuition therefore
+mispredicts limit consumption by an order of magnitude: a session can look moderately priced and
+still exhaust an hourly allowance.
+
+The session that produced this document is the worked example. 205 messages, a 534,804-token
+prefix by the end, and **88,130,387 tokens against the limit** — 84M of it cache reads. Roughly
+31k of that prefix is the base system prompt, 242k the `claude-api` body loaded at message 11, and
+the remainder accumulated tool output and printed tables. Measuring the failure mode inside the
+session being measured is what produced it, which is why `CLAUDE.md` now also routes measurement
+output to a file rather than into the thread.
+
+The cheapest optimisation for a session already in this state is not a config change — it is a new
+session. A fresh one starts at ~31k, 17x cheaper per turn.
 
 ### Files changed
 
-- `claude/CLAUDE.md`: added `## Context discipline` (~110 tokens) — the ceiling rule, the
-  large-file rule, and the process-vs-reference skill rule. At 200 turns that block costs ~$0.01
-  per session against ~$7 saved.
+- `claude/CLAUDE.md`: added `## Context discipline` — the ceiling rule, the large-file rule, the
+  process-vs-reference skill rule, and a rule routing measurement output to a file rather than
+  into the thread. ~140 tokens of permanent prefix.
 - `claude/settings.template.json`: unchanged. `effortLevel` stays `high`, `model` stays
   `opus[1m]`.
 

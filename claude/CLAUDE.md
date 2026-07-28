@@ -69,6 +69,9 @@ once. Before pulling anything into the main thread: will I need it verbatim late
 - **Reference skills** (docs and data tables — `claude-api` measures ~240k tokens) → invoke
   inside an `Agent`; the body dies with the subagent. **Process skills** (`brainstorming`,
   `superpowers:*`, `ecomono*`) shape the whole turn → inline.
+- Measurements, bulk listings and generated tables → write them to a file and report the
+  conclusion. This applies to my own output too: everything printed into the thread is re-read
+  on every later turn.
 
 ## Orchestration & memory protocol (on demand)
 
