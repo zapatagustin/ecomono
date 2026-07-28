@@ -58,6 +58,18 @@ The `<available_skills>` block in your system prompt is authoritative — it lis
 Multiple skills can apply at once. Match by file context (extensions, paths) and task context (what the user is asking for).
 <!-- /gentle-ai:persona -->
 
+## Context discipline
+
+Re-read context is ~50% of session cost, and an injection is paid on *every* later turn, not
+once. Before pulling anything into the main thread: will I need it verbatim later?
+
+- 4+ files to read, 3+ exploration commands, or 2+ subsystems without prior context → delegate
+  to the `Explore` agent.
+- A file over ~5k tokens you only want a conclusion from → delegate.
+- **Reference skills** (docs and data tables — `claude-api` measures ~240k tokens) → invoke
+  inside an `Agent`; the body dies with the subagent. **Process skills** (`brainstorming`,
+  `superpowers:*`, `ecomono*`) shape the whole turn → inline.
+
 ## Orchestration & memory protocol (on demand)
 
 Full SDD + Agent-Teams orchestration protocol — delegation triggers, gatekeeper, model assignments, sub-agent context protocol, SDD phase workflow, agent trigger rules — lives in `~/.claude/skills/_shared/sdd-orchestrator.md`. Read it in full BEFORE running any `/sdd-*` command or coordinating multi-agent delegation. It is NOT loaded every turn — pull it in only when orchestration actually starts.
