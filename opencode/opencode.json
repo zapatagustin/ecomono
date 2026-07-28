@@ -281,7 +281,7 @@
     },
     "skill": {}
   },
-  "plugin": [],
+  "plugin": ["./plugins/memory.ts"],
   "provider": {
     "nvidia": {
       "options": {
