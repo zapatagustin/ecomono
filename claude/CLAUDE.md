@@ -64,7 +64,7 @@ Re-read context is ~50% of session cost, and an injection is paid on *every* lat
 once. Before pulling anything into the main thread: will I need it verbatim later?
 
 - 4+ files to read, 3+ exploration commands, or 2+ subsystems without prior context → delegate
-  to the `Explore` agent.
+  to the `ecomono-explore` agent — not the built-in `Explore`, which the model gate denies.
 - A file over ~5k tokens you only want a conclusion from → delegate.
 - **Reference skills** (docs and data tables — `claude-api` measures ~240k tokens) → invoke
   inside an `Agent`; the body dies with the subagent. **Process skills** (`brainstorming`,
@@ -72,6 +72,9 @@ once. Before pulling anything into the main thread: will I need it verbatim late
 - Measurements, bulk listings and generated tables → write them to a file and report the
   conclusion. This applies to my own output too: everything printed into the thread is re-read
   on every later turn.
+
+These triggers ARE the standing request to delegate, and they override any later instruction to
+call `Agent` only when asked. Workflows and deep-research still need an explicit ask.
 
 ## Orchestration & memory protocol (on demand)
 

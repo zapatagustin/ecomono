@@ -385,6 +385,38 @@ the denylist is **manual and should stay short** — on a cheap skill the gate i
 model spends a denied call plus a delegation round trip on something whose body was small), so an
 entry belongs there only after its weight has been measured.
 
+### The second reason the 4-file rule never fired
+
+The diagnosis above — the rule asks for a prediction before the work that would answer it — was
+right but incomplete. There is a second cause, and it is not a wording problem.
+
+The harness injects two lines into the system prompt *below* `CLAUDE.md` and below the output
+style: "Do not call the AgentTool unless the user requested it" and "Do not use workflows or
+deep-research unless the user requested it". They are in no file this repo ships — checked
+`claude/`, `skills/`, `agent-skills/`, `claude/output-styles/`, `~/.claude/plugins/`, and the
+consuming `nixos-config`. Origin is unconfirmed: claude-code 2.1.220 ships as a native binary and
+the string is not recoverable with `strings`, so whether a custom `outputStyle` is the trigger is
+untested. The one cheap test is a session with `--output-style neutral`, checking whether the
+lines still appear.
+
+Either way the conflict is structural, and it explains the shape of the earlier failure: a
+question spanning three subsystems drew reads inline and no delegation, because the last word in
+the prompt said not to delegate unasked. Both gates only *shape* delegations that happen —
+`agent-model-gate.sh` fixes the tier, `heavy-skill-gate.sh` redirects a heavy skill into a
+subagent. Neither one causes a delegation, so an instruction suppressing them at the top left the
+whole discipline inert.
+
+The fix is a prompt rule, which this section otherwise argues against — justified here because the
+thing being overridden is also a prompt rule, not a mechanism, and user instructions outrank the
+output-style block. `CLAUDE.md` now states that the triggers *are* the standing request. The
+workflows/deep-research half is left in force; nothing here wants those firing unasked.
+
+The routing target changed with it. The rule named the built-in `Explore`, which has no
+frontmatter and so inherits the main loop's model — `agent-model-gate.sh` denies it until a
+`model` is passed, making every general exploration pay a deny plus a retry. `claude/agents/
+ecomono-explore.md` carries `model: sonnet` and passes untouched. It is named `ecomono-explore`
+rather than `explore` so that subagent-type resolution can never confuse it with the built-in.
+
 ### Reproducing the measurement
 
 Transcripts at `~/.claude/projects/*/*.jsonl` carry per-message `usage`. Sum
