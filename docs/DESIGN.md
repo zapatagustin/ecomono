@@ -10,7 +10,8 @@ copy.
 ## Decisions
 
 - **Single source, NixOS consumes.** Content lives here only. `nixos-config` points at
-  `inputs.ecomono` — no duplication between the two.
+  `inputs.ecomono` — no duplication between the two. **This was documented before it was
+  implemented**; see "The migration that made decision 1 true" below.
 - **Symlink read-only trees, copy runtime-mutated files.** Config the agents only read
   (agents, skills, commands, hooks, plugins) is symlinked so editing the repo is live.
   `settings.json` is *copied* once and never overwritten — Claude Code rewrites it at
@@ -390,6 +391,45 @@ Transcripts at `~/.claude/projects/*/*.jsonl` carry per-message `usage`. Sum
 `cache_read_input_tokens + cache_creation_input_tokens` per assistant message for real prefix
 growth, and price reads at 0.1x input, writes at 1.25x (5m TTL) or 2x (1h TTL). Do not estimate
 from a token count alone — cache state dominates the result.
+
+## The migration that made decision 1 true
+
+Decision 1 above claimed `nixos-config` consumes this flake. It did not. `nixos-config` had no
+`ecomono` input and no node for it in its lock; `modules/home-manager/claude-code/default.nix` and
+`.../opencode/default.nix` sourced their own `./claude` and `./config` trees, and
+`modules/home-manager/ai/default.nix` carried a line-for-line duplicate of this flake's activation
+script. A rebuild rebuilt from those copies, so a change committed here reached nothing.
+
+The symptom that exposed it: a hook shipped from this repo never appeared in `~/.claude/hooks`
+after a rebuild. `~/.claude/CLAUDE.md` matched the `nixos-config` copy byte for byte and differed
+from this repo — and had been missing the fourth `## Context discipline` bullet since it was
+written, which is why that rule never fired in any session.
+
+Neither tree was a superset, so the merge was not mechanical:
+
+| Behind here | Behind there |
+|---|---|
+| engram → ecomono-memory rename across the SDD prose | `programs.opencode.skills`, never set by this flake |
+| `_shared/sdd-orchestrator.md` | a 474K `memory.plugin.js` bundle this repo does not version |
+| the top-level opencode `permission` block | 24 compressed opencode skill variants |
+
+Three resolutions, each recorded where it belongs above: `skills = ./skills` closes the first gap;
+`memory.ts` plus the shipped `storage/` replaces the bundle; the compressed variants go. The
+`permission` block was the one real loss and the reason to check rather than assume — the
+extraction had left it under `agent.orchestrator`, so the deny rules for `.ssh`, `.env`,
+`credentials.json`, `*.pem` and `*.key`, and the `ask` gates on `git push`, `git rebase` and
+`git reset --hard`, applied to one agent instead of every one. Restored at top level.
+
+One regression was introduced and caught before shipping: this flake's activation script resolved
+`claude` with `command -v` alone, where the deleted module used an absolute store path. The HM
+activation service does not reliably carry the new profile on `PATH`, so plugin and MCP
+registration would have failed silently. It now falls back to `config.home.profileDirectory`
+before giving up, still without pinning a `claude` package.
+
+The pattern behind all of it, and behind the persona blocks and the model inheritance above: a
+value defined in one place while the consumer reads another. Every instance was invisible for the
+same reason — an absent rule reads exactly like a followed one. That is why the enforcement in this
+repo is hooks and drift checks rather than prose.
 
 ## Portability notes
 
