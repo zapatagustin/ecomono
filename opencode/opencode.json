@@ -262,24 +262,7 @@
       "enabled": true,
       "type": "remote",
       "url": "https://mcp.context7.com/mcp"
-    },
-    "read": {
-      "*": "allow",
-      "**/*.key": "deny",
-      "**/*.pem": "deny",
-      "**/.aws/credentials": "deny",
-      "**/.config/gh/hosts.yml": "deny",
-      "**/.credentials/**": "deny",
-      "**/.env": "deny",
-      "**/.env.*": "deny",
-      "**/.ssh/**": "deny",
-      "**/Library/Keychains/**": "deny",
-      "**/credentials.json": "deny",
-      "**/secrets/**": "deny",
-      "*.env": "deny",
-      "*.env.*": "deny"
-    },
-    "skill": {}
+    }
   },
   "permission": {
     "*": "allow",
