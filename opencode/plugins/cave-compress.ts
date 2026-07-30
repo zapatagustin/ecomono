@@ -351,12 +351,13 @@ function argPath(args: unknown): string | undefined {
 
 // ── Opt-in savings metrics ───────────────────────────────────────────────────
 
-// Set CAVE_COMPRESS_STATS=1 to append one JSONL record per compressed tool
-// result to ~/.cache/cave-compress/stats.jsonl. Local file only — never enters
-// the model context, so it costs zero tokens. Summarize accumulated savings:
-//   node -e 'let i=0,o=0;require("fs").readFileSync(process.env.HOME+"/.cache/cave-compress/stats.jsonl","utf8").trim().split("\n").forEach(l=>{let r=JSON.parse(l);i+=r.in;o+=r.out});console.log(`saved ${Math.round(100-100*o/i)}% (${i}->${o} chars over ${i&&""}records)`)'
-const STATS_FILE = process.env.CAVE_COMPRESS_STATS
-  ? `${process.env.XDG_CACHE_HOME ?? `${process.env.HOME}/.cache`}/cave-compress/stats.jsonl`
+// Set ECOMONO_COMPRESS_STATS=1 to append one JSONL record per compressed tool
+// result to ~/.cache/ecomono-compress/stats.jsonl — the same file the Claude-side
+// hook writes, so savings across both harnesses accumulate in one place. Local
+// file only — never enters the model context, so it costs zero tokens. Summarize:
+//   node -e 'let i=0,o=0;require("fs").readFileSync(process.env.HOME+"/.cache/ecomono-compress/stats.jsonl","utf8").trim().split("\n").forEach(l=>{let r=JSON.parse(l);i+=r.in;o+=r.out});console.log(`saved ${Math.round(100-100*o/i)}% (${i}->${o} chars over ${i&&""}records)`)'
+const STATS_FILE = process.env.ECOMONO_COMPRESS_STATS
+  ? `${process.env.XDG_CACHE_HOME ?? `${process.env.HOME}/.cache`}/ecomono-compress/stats.jsonl`
   : null
 let statsDirReady: Promise<unknown> | null = null
 
@@ -383,7 +384,7 @@ export const CaveCompress: Plugin = async () => ({
   // Additive via output.context; we deliberately do NOT replace output.prompt,
   // which would drop opencode's built-in preservation instructions.
   "experimental.session.compacting": async (_input, output) => {
-    if (process.env.CAVE_COMPRESS === "off") return
+    if (process.env.ECOMONO_COMPRESS === "off") return
     output.context.push(
       "Write the summary in compressed ecomono style: drop articles, filler, and " +
         "hedging; fragments are fine; use short synonyms. Preserve ALL substance " +
@@ -393,7 +394,7 @@ export const CaveCompress: Plugin = async () => ({
   },
 
   "tool.execute.after": async (input, output) => {
-    if (process.env.CAVE_COMPRESS === "off") return
+    if (process.env.ECOMONO_COMPRESS === "off") return
     if (typeof output.output !== "string" || output.output.length === 0) return
 
     const tool = input.tool.toLowerCase()

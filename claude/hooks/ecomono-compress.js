@@ -17,7 +17,7 @@
 //     corrupt what the model sees. We never touch them.
 //
 // Safe passthrough on ANY error or non-Bash tool: exit 0 emitting nothing,
-// which leaves the original result 100% intact. Set CAVE_COMPRESS=off to
+// which leaves the original result 100% intact. Set ECOMONO_COMPRESS=off to
 // disable entirely.
 
 // ── Compression logic (ported from ecomono-code, MIT) ───────────────────────
@@ -281,16 +281,16 @@ function compressBash(text, commandHint) {
 // Best-effort savings log: one JSON line per compressed stream. Lets you measure
 // real impact and tune the per-tool budgets from data instead of guesswork.
 // Synchronous so the write flushes before the short-lived hook process exits.
-// Records char counts + tool + timestamp — never content. CAVE_COMPRESS_STATS=off
+// Records char counts + tool + timestamp — never content. ECOMONO_COMPRESS_STATS=off
 // disables. Read with:
-//   node -e 'let i=0,o=0;require("fs").readFileSync(process.env.HOME+"/.cache/cave-compress/stats.jsonl","utf8").trim().split("\n").forEach(l=>{let r=JSON.parse(l);i+=r.in;o+=r.out});console.log(`saved ${Math.round(100-100*o/i)}% (${i}->${o} chars)`)'
+//   node -e 'let i=0,o=0;require("fs").readFileSync(process.env.HOME+"/.cache/ecomono-compress/stats.jsonl","utf8").trim().split("\n").forEach(l=>{let r=JSON.parse(l);i+=r.in;o+=r.out});console.log(`saved ${Math.round(100-100*o/i)}% (${i}->${o} chars)`)'
 const fs = require("fs");
 
 function logStats(tool, before, after) {
-  if (process.env.CAVE_COMPRESS_STATS === "off" || after >= before) return;
+  if (process.env.ECOMONO_COMPRESS_STATS === "off" || after >= before) return;
   try {
     const base = process.env.XDG_CACHE_HOME || `${process.env.HOME}/.cache`;
-    const dir = `${base}/cave-compress`;
+    const dir = `${base}/ecomono-compress`;
     fs.mkdirSync(dir, { recursive: true });
     fs.appendFileSync(`${dir}/stats.jsonl`, `${JSON.stringify({ t: Date.now(), tool, in: before, out: after })}\n`);
   } catch {
@@ -311,7 +311,7 @@ process.stdin.on("data", (chunk) => {
 });
 process.stdin.on("end", () => {
   try {
-    if (process.env.CAVE_COMPRESS === "off") return passthrough();
+    if (process.env.ECOMONO_COMPRESS === "off") return passthrough();
 
     const data = JSON.parse(input);
 
