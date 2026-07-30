@@ -1,83 +1,112 @@
-# SDD Init Details
+# Init details
 
-## Testing Capability Checklist
+Detection checklist and payload shapes for `ecomono-sdd-init`.
 
-- Test runner: `package.json` scripts/deps, `pyproject.toml`, `pytest.ini`, `go.mod`, `Cargo.toml`, `Makefile`.
-- Test layers: unit runner; integration libraries (`testing-library`, `httpx`, `httptest`, `WebApplicationFactory`); E2E tools (`playwright`, `cypress`, `selenium`, `chromedp`).
-- Coverage: `vitest --coverage`, `jest --coverage`, `c8`, `pytest-cov`, `go test -cover`, `coverlet`.
-- Quality: linter, type checker, formatter commands.
+## What to look for
 
-## Skill Registry Scan Rules
+**Test runner** — `package.json` scripts and deps, `pyproject.toml`, `pytest.ini`,
+`go.mod`, `Cargo.toml`, `Makefile`. Capture the **exact command**, not just the framework
+name: `apply` and `verify` run it, and "uses vitest" is not runnable.
 
-- Scan user skills: `~/.pi/agent/skills/`, `~/.config/agents/skills/`, `~/.agents/skills/`, `~/.kimi/skills/`, `~/.config/opencode/skills/`, `~/.config/kilo/skills/`, `~/.claude/skills/`, `~/.gemini/skills/`, `~/.gemini/antigravity/skills/`, `~/.cursor/skills/`, `~/.copilot/skills/`, `~/.codex/skills/`, `~/.codeium/windsurf/skills/`, `~/.qwen/skills/`, `~/.kiro/skills/`, and `~/.openclaw/skills/`.
-- Scan project skills: `{project-root}/skills/`, `{project-root}/.opencode/skills/`, `{project-root}/.claude/skills/`, `{project-root}/.gemini/skills/`, `{project-root}/.cursor/skills/`, `{project-root}/.github/skills/`, `{project-root}/.codex/skills/`, `{project-root}/.qwen/skills/`, `{project-root}/.kiro/skills/`, `{project-root}/.openclaw/skills/`, `{project-root}/.pi/skills/`, `{project-root}/.agent/skills/`, `{project-root}/.agents/skills/`, and `{project-root}/.atl/skills/`.
-- Skip `sdd-*`, `_shared`, and `skill-registry`; deduplicate by skill name, preferring project-level skills over user-level skills.
-- Read each selected `SKILL.md` frontmatter as needed.
-- Extract `name`, trigger text from `description`, full `SKILL.md` path, and scope.
-- Treat the registry as an index, not a generated summary; subagents receive exact paths and read the full skill source of truth.
-- Scan project convention files: `agents.md`, `AGENTS.md`, project-level `CLAUDE.md`, `.cursorrules`, `GEMINI.md`, and `copilot-instructions.md`.
-- For index files such as `AGENTS.md`, extract referenced file paths and include both the index and referenced files in the registry.
+**Test layers**
 
-## LLM-First Skill Criteria
+| Layer | Signals |
+|---|---|
+| Unit | The runner itself |
+| Integration | `testing-library`, `httpx`, `httptest`, `WebApplicationFactory` |
+| E2E | `playwright`, `cypress`, `selenium`, `chromedp` |
 
-- Treat skills as runtime instruction contracts, not human documentation.
-- Required structure: frontmatter, Activation Contract, Hard Rules, Decision Gates, Execution Steps, Output Contract, References.
-- Keep `description` quoted, one physical line, trigger-first, and no longer than 250 characters.
-- Target 180-450 body tokens; move examples, schemas, edge cases, and background into local `references/` or `assets/`.
-- References must be local files and stable relative to the skill directory when possible.
-- Quality gates: hard rules are observable, decision gates cover real forks, output contract states exactly what to return, and references resolve locally.
+**Coverage** — `vitest --coverage`, `jest --coverage`, `c8`, `pytest-cov`,
+`go test -cover`, `coverlet`.
 
-## ecomono-memory Saves
+**Quality** — linter, type checker, formatter, with their commands.
 
-```text
-mem_save title/topic_key: ecomono-sdd-init/{project}
-type: architecture
-content: detected project context markdown
+Record what is **absent** as clearly as what is present. A missing coverage tool is a fact
+`verify` needs; an unmentioned one becomes a phase looking for something that was never
+there.
 
-mem_save title/topic_key: sdd/{project}/testing-capabilities
-type: config
-content: testing capabilities markdown
+## Skill registry
 
-mem_save title/topic_key: skill-registry
-type: config
-content: registry markdown
+Do not re-derive the scan. Run the generator:
+
+```
+node ~/.claude/hooks/ecomono-skill-registry.js --cwd <repo>
 ```
 
-## Testing Capabilities Format
+It walks the skill roots, reads frontmatter, skips anything marked
+`disable-model-invocation`, dedupes by name preferring project-level, and writes
+`.atl/skill-registry.md`. It also runs on every user prompt, so an empty or stale registry
+usually means malformed frontmatter rather than a generator that never ran.
+
+Describing its rules here would create a second copy of them with nothing keeping the two
+equal. The generator is the source of truth; `--selftest` covers its parser.
+
+Also worth scanning for project conventions, which the registry does not cover:
+`AGENTS.md`, project-level `CLAUDE.md`, `.cursorrules`. When one of these is an index,
+follow its referenced paths and record both the index and what it points at.
+
+## Memory writes
+
+```text
+mem_save  topic_key: ecomono-sdd-init/{project}
+          type: architecture
+          content: detected project context
+
+mem_save  topic_key: sdd/{project}/testing-capabilities
+          type: config
+          content: the table below
+
+mem_save  topic_key: skill-registry
+          type: config
+          content: the generated registry
+```
+
+## Testing capabilities format
 
 ```markdown
 ## Testing Capabilities
 
-**Strict TDD Mode**: {enabled/disabled}
+**Strict TDD**: {enabled | disabled} — {the signal that decided}
 **Detected**: {date}
 
-### Test Runner
-
+### Runner
 - Command: `{command}`
 - Framework: {name}
 
-### Test Layers
-
-| Layer       | Available | Tool        |
-| ----------- | --------- | ----------- |
-| Unit        | ✅ / ❌   | {tool or —} |
-| Integration | ✅ / ❌   | {tool or —} |
-| E2E         | ✅ / ❌   | {tool or —} |
+### Layers
+| Layer | Available | Tool |
+|---|---|---|
+| Unit | yes/no | {tool or —} |
+| Integration | yes/no | {tool or —} |
+| E2E | yes/no | {tool or —} |
 
 ### Coverage
-
-- Available: ✅ / ❌
+- Available: yes/no
 - Command: `{command or —}`
 
-### Quality Tools
-
-| Tool         | Available | Command        |
-| ------------ | --------- | -------------- |
-| Linter       | ✅ / ❌   | {command or —} |
-| Type checker | ✅ / ❌   | {command or —} |
-| Formatter    | ✅ / ❌   | {command or —} |
+### Quality
+| Tool | Available | Command |
+|---|---|---|
+| Linter | yes/no | {command or —} |
+| Type checker | yes/no | {command or —} |
+| Formatter | yes/no | {command or —} |
 ```
 
-## Output Templates
+Strict TDD carries the deciding signal on the same line. `enabled` alone gives the user
+nothing to act on; `enabled — vitest detected, no explicit preference set` tells them
+where the switch is.
 
-For each mode, include project, stack, persistence, Strict TDD Mode, Testing Capabilities table, artifacts created/saved, limitations where relevant, and next steps. ecomono-memory mode must mention local/non-shareable limitations; none mode must recommend enabling persistence.
+## Output
+
+Report project, stack, persistence mode, strict TDD with its signal, the capabilities
+table, the observation IDs saved, the registry path, and the next step.
+
+Then name the mode's ceiling, since the user chose it once and will not be asked again:
+
+- `ecomono-memory` — artifacts are local and not shareable, and a re-run of a phase
+  overwrites its previous artifact with no history.
+- `none` — nothing survives compaction or session end. Recommend enabling the backend, and
+  keep changes small enough to finish in one context.
+
+Anything you could not detect goes in `risks`, named. A silent gap here becomes a
+confident wrong assumption in every phase that follows.
