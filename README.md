@@ -11,8 +11,8 @@ into place and fetches the custom binary (`gentle-ai`).
 ## Layout
 
 ```
-skills/          Claude-only skills (branch-pr, sdd-*, judgment-day, …)
-agent-skills/    Shared skills (ecomono*, find-skills, proxy-manager) → ~/.agents/skills
+agent-skills/    Every skill (ecomono*, find-skills, proxy-manager) → ~/.claude/skills
+                 and ~/.agents/skills. One tree; see NOTICE.md for forked work.
 claude/          CLAUDE.md, agents/, commands/, hooks/, output-styles/, themes/,
                  settings.template.json
 opencode/        AGENTS.md, opencode.json, tui.json, commands/, plugins/, tui-plugins/

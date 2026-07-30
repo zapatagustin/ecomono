@@ -37,7 +37,7 @@ ours=""
 case "$skill" in
   claude-api) ;;
   simplify) ours="ecomono-cut for a diff, ecomono-audit for the whole repo" ;;
-  review) ours="ecomono-review for the comment format, or judgment-day for dual adversarial review" ;;
+  review) ours="ecomono-review for the comment format, or ecomono-judgment for dual adversarial review" ;;
   security-review) ours="the review-risk agent (R1), launched via Agent" ;;
   *) exit 0 ;;
 esac

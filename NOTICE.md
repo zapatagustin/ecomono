@@ -20,25 +20,25 @@ Forked under MIT:
 
 | Derived work | Upstream skill |
 |---|---|
-| `agent-skills/ecomono-sdd-explore` | `sdd-explore` |
-| `agent-skills/ecomono-sdd-propose` | `sdd-propose` |
-| `agent-skills/ecomono-sdd-spec` | `sdd-spec` |
-| `agent-skills/ecomono-sdd-design` | `sdd-design` |
-| `agent-skills/ecomono-sdd-tasks` | `sdd-tasks` |
-| `agent-skills/ecomono-sdd-apply` | `sdd-apply` |
-| `agent-skills/ecomono-sdd-verify` | `sdd-verify` |
-| `agent-skills/ecomono-sdd-archive` | `sdd-archive` |
-| `agent-skills/ecomono-sdd-init` | `sdd-init` |
-| `agent-skills/ecomono-sdd-onboard` | `sdd-onboard` |
+| `agent-skills/ecomono-sdd-explore` | `ecomono-sdd-explore` |
+| `agent-skills/ecomono-sdd-propose` | `ecomono-sdd-propose` |
+| `agent-skills/ecomono-sdd-spec` | `ecomono-sdd-spec` |
+| `agent-skills/ecomono-sdd-design` | `ecomono-sdd-design` |
+| `agent-skills/ecomono-sdd-tasks` | `ecomono-sdd-tasks` |
+| `agent-skills/ecomono-sdd-apply` | `ecomono-sdd-apply` |
+| `agent-skills/ecomono-sdd-verify` | `ecomono-sdd-verify` |
+| `agent-skills/ecomono-sdd-archive` | `ecomono-sdd-archive` |
+| `agent-skills/ecomono-sdd-init` | `ecomono-sdd-init` |
+| `agent-skills/ecomono-sdd-onboard` | `ecomono-sdd-onboard` |
 | `agent-skills/ecomono-sdd-shared` | `_shared` |
 
 Forked under Apache-2.0:
 
 | Derived work | Upstream skill |
 |---|---|
-| `agent-skills/ecomono-judgment` | `judgment-day` |
-| `agent-skills/ecomono-pr` | `branch-pr` |
-| `agent-skills/ecomono-docs` | `cognitive-doc-design` |
+| `agent-skills/ecomono-judgment` | `ecomono-judgment` |
+| `agent-skills/ecomono-pr` | `ecomono-pr` |
+| `agent-skills/ecomono-docs` | `ecomono-docs` |
 
 The `gentle-ai` binary itself is not vendored — it is fetched from upstream
 releases at install time (`nix/gentle-ai.nix`, `install.sh`) and remains upstream's

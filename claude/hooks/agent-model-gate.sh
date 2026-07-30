@@ -11,7 +11,7 @@
 #
 # Three things would have to hold for a prompt rule to cover this and none do:
 # the delegation rule in CLAUDE.md names an agent but no model; the
-# `default | sonnet` row lives in skills/_shared/sdd-orchestrator.md, which is
+# `default | sonnet` row lives in agent-skills/ecomono-sdd-shared/sdd-orchestrator.md, which is
 # loaded only when an SDD cycle starts, so it is unreachable for exactly the
 # non-SDD delegations that need it; and a default in a lazily-loaded file is not
 # a default.

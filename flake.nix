@@ -30,11 +30,11 @@
           patch = builtins.replaceStrings [ "/home/agustin" ] [ homeDir ];
           readCfg = f: builtins.removeAttrs (builtins.fromJSON (patch (builtins.readFile f))) [ "$schema" ];
 
-          # ~/.claude/skills as ONE store dir: claude-only skills + the shared
-          # agent-skills merged, so the whole tree resolves under a single link.
+          # One skill tree. The vendored gentle-ai skills were forked into
+          # agent-skills/ under the ecomono prefix (see NOTICE.md), so the split
+          # between a claude-only tree and a shared tree no longer exists.
           claudeSkills = pkgs.runCommand "ecomono-claude-skills" { } ''
             mkdir -p $out
-            cp -r ${./skills}/. $out/
             cp -r ${./agent-skills}/. $out/
           '';
         in
@@ -68,11 +68,8 @@
             tui = readCfg ./opencode/tui.json;
             context = ./opencode/AGENTS.md;
             commands = ./opencode/commands;
-            # Same tree Claude gets. The pre-extraction NixOS layout carried a
-            # separate compressed copy for opencode; it held no rules the shared
-            # one lacks, only tighter prose, and had already gone stale on the
-            # engram -> ecomono-memory rename. One tree, no sync to forget.
-            skills = ./skills;
+            # Same tree Claude gets — one tree, no sync to forget.
+            skills = ./agent-skills;
           };
 
           # Plugin sources kept as individual entries so opencode's plugins/

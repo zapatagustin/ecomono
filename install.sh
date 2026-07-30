@@ -44,10 +44,9 @@ link "$REPO/claude/CLAUDE.md" "$CLAUDE/CLAUDE.md"
 for d in agents commands hooks output-styles themes; do
   link "$REPO/claude/$d" "$CLAUDE/$d"
 done
-# ~/.claude/skills = claude-only skills + the shared agent-skills, as children.
-link_children "$REPO/skills"        "$CLAUDE/skills"
+# One skill tree: agent-skills/ children land in ~/.claude/skills.
 link_children "$REPO/agent-skills"  "$CLAUDE/skills"
-# Shared agent-skills also live at ~/.agents/skills (opencode + CLAUDE.md refs).
+# Same tree also at ~/.agents/skills (opencode + CLAUDE.md refs).
 link_children "$REPO/agent-skills"  "$AGENTS"
 # settings.json is runtime-mutated by Claude Code — seed once, never overwrite.
 if [ -e "$CLAUDE/settings.json" ]; then

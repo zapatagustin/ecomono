@@ -27,23 +27,34 @@ copy.
 
 ## Skill topology
 
-Three skill sets, deduplicated from the old NixOS layout (which copied `claude/skills` and
-`opencode/config/skills` separately):
+**One tree.** `agent-skills/` holds every skill and is mounted at both `~/.claude/skills`
+(symlinked children on non-Nix, merged store dir on Nix) and `~/.agents/skills`.
 
-- `skills/` — the process/SDD skill set, shared by both agents (`programs.claude-code` picks it
-  up through the merged store dir, `programs.opencode.skills` points at it directly).
-- `agent-skills/` — the shared set (`ecomono*`, `find-skills`, `proxy-manager`), mounted at
-  `~/.agents/skills` and referenced by both agents.
-- `~/.claude/skills` = `skills/` ∪ `agent-skills/` (symlinked children on non-Nix; merged
-  store dir on Nix).
+It was two trees until the gentle-ai fork. `skills/` held the vendored Spec-Driven
+Development family plus `judgment-day`, `branch-pr` and `cognitive-doc-design` — 14 skills
+carrying `license: MIT`/`Apache-2.0` and `metadata.author: gentleman-programming`. They were
+forked into `agent-skills/` under the `ecomono-` prefix, attribution preserved per file and
+in `NOTICE.md`, which also closed a real gap: the repo declared those licences while
+shipping neither licence text nor copyright notice.
 
-The pre-extraction NixOS layout carried a **fourth** tree: `opencode/config/skills`, a separate
+Forking was safe because nothing recreates them. `gentle-ai sync` and `gentle-ai install`
+are invoked nowhere in this repo or its deploy path — the vendored files were committed once
+in `e8a444e` and lived as plain git files, so the `<!-- gentle-ai:* -->` markers around them
+were inert. The markers still matter for `claude/CLAUDE.md` and `opencode/AGENTS.md`, which a
+manual `gentle-ai sync` would rewrite.
+
+What stayed unrenamed, deliberately: `gentle-ai sdd-status` and `gentle-ai sdd-continue` are
+the binary's own CLI subcommands, and `sdd-new` is a literal routing token its dispatcher
+emits in `nextRecommended`. Our slash commands became `/ecomono-sdd-*`; the strings the
+binary consumes did not move.
+
+The pre-extraction NixOS layout carried yet another tree: `opencode/config/skills`, a separate
 compressed copy of 24 of these skills. Compared line by line before dropping it, the compressed
 variants hold no rule the shared ones lack — the diff is prose only ("Load only when user
 explicitly requests X" against "Load this skill only when the user explicitly asks for X") — and
 they had already gone stale, still saying `Artifact Retrieval (Engram Mode)` after the rename.
 Two variants of 24 files with nothing keeping them equal is the drift machine this document keeps
-running into, so opencode now reads the shared tree.
+running into, so both agents now read one tree.
 
 ### The register is written four times
 
@@ -90,7 +101,7 @@ redirect.
 | Shipped | Redirected to |
 |---|---|
 | `simplify` | `ecomono-cut` (diff), `ecomono-audit` (whole repo) |
-| `review` | `ecomono-review` (comment format), `judgment-day` (dual adversarial review) |
+| `review` | `ecomono-review` (comment format), `ecomono-judgment` (dual adversarial review) |
 | `security-review` | the `review-risk` agent (R1), via `Agent` |
 
 The hook is already registered on `Skill`, so `settings.template.json` is unchanged.
@@ -112,7 +123,7 @@ security, or accessibility. The report stays the audit trail.
 | `run`, `keybindings-help`, `fewer-permission-prompts` | Use them. Harness utilities with no ecomono opinion to add. |
 | `dataviz`, `artifact-design`, `artifact-capabilities` | Ignore. Artifacts are not part of this workflow (`dataviz` measured 3,950 tok, noise). |
 | `claude-api` | Gated, delegate. An ecomono copy would carry pricing tables that go stale. |
-| `init` | **Build ours.** It writes a `CLAUDE.md` documenting a codebase; `sdd-init` bootstraps SDD persistence, a different job. An ecomono version would emit a compressed `CLAUDE.md` rather than prose. The only candidate on this list. |
+| `init` | **Build ours.** It writes a `CLAUDE.md` documenting a codebase; `ecomono-sdd-init` bootstraps SDD persistence, a different job. An ecomono version would emit a compressed `CLAUDE.md` rather than prose. The only candidate on this list. |
 
 ## Context economics & model routing
 
@@ -155,7 +166,7 @@ The same inheritance runs the other way and costs more. From an Opus main loop, 
 the built-in `Explore` agent runs file search on Opus, because a built-in type has no frontmatter
 to put the field in. Three separate things have to hold for that not to happen, and none do: the
 delegation rule in `claude/CLAUDE.md` names an agent but no model; the `default | sonnet` row that
-would cover it lives in `skills/_shared/sdd-orchestrator.md`, which the same file states is *not*
+would cover it lives in `agent-skills/ecomono-sdd-shared/sdd-orchestrator.md`, which the same file states is *not*
 loaded every turn — so for any non-SDD delegation the default is unreachable at the moment it is
 needed; and a default defined in a lazily-loaded file is not a default. By contrast
 `opencode/opencode.json` sets `model` explicitly on every one of its ~18 subagents plus a global
@@ -436,7 +447,7 @@ Rejected from the earlier draft:
 |---|---|
 | `settings: model → haiku` | 0.3% of spend; costs the judgement the main loop needs |
 | Lean-rewrite `CLAUDE.md` | 1.1k of a 31k prefix = 3.5%; noise |
-| `agents/sdd-orchestrator.md` | Duplicates the existing 32KB `skills/_shared/sdd-orchestrator.md` |
+| `agents/sdd-orchestrator.md` | Duplicates the existing 32KB `agent-skills/ecomono-sdd-shared/sdd-orchestrator.md` |
 | `agents/sdd-orchestrator-opus.md` | A second copy of the same file; guaranteed drift |
 | `agents/explore-agent.md` | The built-in `Explore` agent already covers it |
 | `commands/sdd-*` triggers | They already point at the orchestrator protocol |

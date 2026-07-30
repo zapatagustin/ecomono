@@ -40,7 +40,7 @@ check "built-in with model passes" \
 check "absent subagent_type defaults to general-purpose and is gated" \
   "$(p '{"prompt":"find X"}')" '^deny:'
 check "a project agent carrying frontmatter is not gated" \
-  "$(p '{"subagent_type":"sdd-apply","prompt":"implement"}')" '^allow$'
+  "$(p '{"subagent_type":"ecomono-sdd-apply","prompt":"implement"}')" '^allow$'
 check "fork is never gated — it cannot take a model" \
   "$(p '{"subagent_type":"fork","prompt":"continue"}')" '^allow$'
 check "an unknown plugin agent passes" \
