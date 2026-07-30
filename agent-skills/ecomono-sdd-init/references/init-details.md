@@ -43,18 +43,6 @@ type: config
 content: registry markdown
 ```
 
-## OpenSpec Skeleton
-
-```text
-openspec/
-├── config.yaml
-├── specs/
-└── changes/
-    └── archive/
-```
-
-`config.yaml` should include concise context, `strict_tdd`, testing capabilities, and phase rules for proposal/spec/design/tasks/apply/verify/archive. Keep `context:` under 10 lines.
-
 ## Testing Capabilities Format
 
 ```markdown

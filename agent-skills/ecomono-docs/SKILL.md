@@ -1,6 +1,6 @@
 ---
 name: ecomono-docs
-description: "Design docs that reduce cognitive load. Trigger: writing guides, READMEs, RFCs, onboarding, architecture, or review-facing docs."
+description: "Write docs that reduce cognitive load. Trigger: guides, READMEs, RFCs, onboarding, architecture, PR descriptions, or any doc that reads long and dense."
 license: Apache-2.0
 metadata:
   author: gentleman-programming
@@ -9,75 +9,73 @@ metadata:
   version: "1.0"
 ---
 
-## When to Use
+Write for a reader who is skimming, interrupted, and looking for one specific thing. That
+is the actual reader of every doc, including the ones written for careful study.
 
-Load this skill when creating or editing documentation that people need to understand quickly, retain, or use during review.
+Use for PR descriptions and review notes, contributor guides, architecture and onboarding
+docs, and anything that already feels long or hard to scan.
 
-Use it especially for:
-
-- PR descriptions and review notes.
-- Contributor or maintainer guides.
-- Architecture, workflow, or onboarding docs.
-- Any doc that currently feels long, dense, or hard to scan.
-
-## Critical Patterns
+## Patterns
 
 | Pattern | Rule |
-|---------|------|
-| Lead with the answer | Put the decision, action, or outcome first. Context comes after. |
-| Progressive disclosure | Start with the happy path, then add details, edge cases, and references. |
-| Chunking | Group related information into small sections. Keep flat lists short. |
-| Signposting | Use headings, labels, callouts, and summaries so readers know where they are. |
-| Recognition over recall | Prefer tables, checklists, examples, and templates over prose that must be remembered. |
-| Review empathy | Design docs so reviewers can verify intent without reconstructing the whole story. |
+|---|---|
+| Lead with the answer | Decision, action or outcome first. Context after. Nobody reads background to find out whether the doc is relevant |
+| Progressive disclosure | Happy path first, then details, then edge cases, then references |
+| Chunking | Small sections. Short flat lists. A 15-item list is read as none |
+| Signposting | Headings, labels, summaries — so a reader dropping in mid-doc knows where they are |
+| Recognition over recall | Tables, checklists, examples, templates. Prose that must be held in the head is prose that gets re-read |
+| Review empathy | The reader must verify your intent without reconstructing how you got there |
 
-## Documentation Shape
+## Default shape
 
-Use this default structure unless the repo already provides a stronger template:
+Unless the repo already has a stronger template:
 
 ```markdown
-# <Outcome-oriented title>
+# {Outcome-oriented title}
 
-<One paragraph: what changed, who it helps, and why it matters.>
+{One paragraph: what changed, who it helps, why it matters.}
 
 ## Quick path
-
-1. <First action>
-2. <Second action>
-3. <Verification or expected result>
+1. {First action}
+2. {Second action}
+3. {Verification — how they know it worked}
 
 ## Details
-
 | Topic | Decision |
-|-------|----------|
-| <area> | <concise explanation> |
+|---|---|
 
 ## Checklist
-
-- [ ] <Reader can confirm this>
-- [ ] <Reader can confirm that>
+- [ ] {something the reader can confirm}
 
 ## Next step
-
-<Link or action that continues the workflow.>
+{Link or action that continues the workflow.}
 ```
 
-## PR and Review Docs
+The title states an outcome, not a topic. "Configuring the cache" makes the reader guess
+whether it applies to them; "Cache config: what to set and when" does not.
 
-When documenting a PR, reduce reviewer burnout by making the review path explicit:
+## PR and review docs
 
-- State what to review first.
-- State what is intentionally out of scope.
-- Link the previous and next PR when work is chained.
-- Keep each section focused on one decision or unit of work.
-- Use checklists for acceptance criteria and verification.
+Make the review path explicit, because a reviewer with no path reads linearly and runs out
+of attention before the part that mattered:
 
-## Commands
+- What to review **first**.
+- What is intentionally **out of scope**.
+- How to **verify** — a command, a flow, a test name.
+- Which tradeoffs were deliberate, so a shortcut reads as a decision rather than an
+  oversight.
 
-```bash
-# Check markdown files changed in the current branch
-git diff --name-only -- '*.md'
+## Rules
 
-# Inspect PR changed-line count for cognitive load
-gh pr view <PR_NUMBER> --json additions,deletions,changedFiles
-```
+- Cut every sentence that survives its own deletion. If removing it loses nothing, it was
+  costing attention for nothing.
+- One idea per paragraph. Two ideas means the second gets skipped.
+- Concrete over general: a path, a command, a number. "Configure appropriately" is not
+  instruction.
+- Never bury a constraint in prose. A limit, a required order, a destructive step goes in
+  its own line or callout — a reader who misses it will not have been careless, they will
+  have been skimming as designed.
+- Match the repo's existing docs where they are consistent. A single well-designed doc in
+  a directory of differently-shaped ones adds friction rather than removing it.
+- Say what the doc does **not** cover. An unstated boundary is read as a gap in the work,
+  not a gap in the doc.

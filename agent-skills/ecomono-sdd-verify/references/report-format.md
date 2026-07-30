@@ -44,6 +44,16 @@
 
 **Compliance summary**: {N}/{total} scenarios compliant
 
+### Delta Completeness
+Every `MODIFIED` requirement, delta scenario count against the current main spec.
+Fewer in the delta is CRITICAL — archive replaces the requirement wholesale, so the
+omitted scenarios would be deleted from the baseline.
+
+| Capability | Requirement | Main spec | Delta | Result |
+|---|---|---|---|---|
+| `user-auth` | Session Expiration | 4 | 5 | ✅ |
+| `user-auth` | Token Refresh | 6 | 3 | ❌ CRITICAL — 3 scenarios dropped, not declared REMOVED |
+
 ### Correctness (Static Evidence)
 | Requirement | Status | Notes |
 |------------|--------|-------|
