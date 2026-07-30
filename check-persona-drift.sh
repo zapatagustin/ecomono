@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # The ecomono register is written in four places: claude/output-styles/ecomono.md,
-# agent-skills/ecomono/SKILL.md, and the `gentle-ai:persona` blocks in both
+# agent-skills/ecomono/SKILL.md, and the `ecomono:persona` blocks in both
 # claude/CLAUDE.md and opencode/AGENTS.md. The two persona blocks are supposed to
 # say the same thing to two different agents, and nothing keeps them saying it.
 #
@@ -21,7 +21,7 @@
 set -uo pipefail
 cd "$(dirname "$0")"
 
-block() { awk '/gentle-ai:persona/,/\/gentle-ai:persona/' "$1" | grep -v '^[[:space:]]*$' | sort; }
+block() { awk '/ecomono:persona/,/\/ecomono:persona/' "$1" | grep -v '^[[:space:]]*$' | sort; }
 
 # Differences that are correct. opencode has no `Skill` tool, so its skill-loading
 # section names a read mechanism instead, and it is worded tighter throughout.

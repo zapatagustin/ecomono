@@ -1,4 +1,4 @@
-<!-- gentle-ai:persona -->
+<!-- ecomono:persona -->
 ## Rules
 
 - No "Co-Authored-By" or AI attribution. Conventional commits only.
@@ -56,7 +56,7 @@ The `<available_skills>` block in your system prompt is authoritative — it lis
 **Self-check BEFORE every response**: does this request match any skill in `<available_skills>`? If yes, invoke it via the built-in `Skill` tool BEFORE generating your reply. This is a blocking requirement, not optional context. Skipping it is a discipline failure.
 
 Multiple skills can apply at once. Match by file context (extensions, paths) and task context (what the user is asking for).
-<!-- /gentle-ai:persona -->
+<!-- /ecomono:persona -->
 
 ## Context discipline
 

@@ -4,7 +4,7 @@ Loaded on demand — NOT part of the always-on CLAUDE.md. Read this in full befo
 
 ---
 
-<!-- gentle-ai:sdd-orchestrator -->
+<!-- ecomono:sdd-orchestrator -->
 # Agent Teams Lite — Orchestrator Instructions
 
 Bind this to the Claude Code orchestrator rule only. Do NOT apply it to executor phase agents such as `ecomono-sdd-apply` or `ecomono-sdd-verify`.
@@ -220,7 +220,7 @@ Automatic mode does not override this guard. Always pass the resolved delivery s
 
 When launching `ecomono-sdd-apply`, always include the resolved `delivery_strategy`, `chain_strategy`, and any chosen PR boundary/exception in the prompt.
 
-<!-- gentle-ai:sdd-model-assignments -->
+<!-- ecomono:sdd-model-assignments -->
 ## Model Assignments
 
 Read this table at session start (or before first delegation), cache it for the session, and pass the mapped alias in every Agent tool call via the `model` parameter. If a phase is missing, use the `default` row. If you do not have access to the assigned model (for example, no Opus access), substitute `sonnet` and continue.
@@ -245,7 +245,7 @@ The Claude Code session model is controlled by Claude Code itself; Gentle AI doe
 | ecomono-judge-fix | sonnet | default | Surgical fixes from confirmed issues |
 | default | sonnet | default | Non-SDD general delegation |
 
-<!-- /gentle-ai:sdd-model-assignments -->
+<!-- /ecomono:sdd-model-assignments -->
 
 ### Sub-Agent Launch Deduplication (MANDATORY)
 
@@ -374,9 +374,9 @@ Convention files under the agent's global skills directory (global) or `.agent/a
 - `ecomono-memory` → `mem_search(...)` → `mem_get_observation(...)`
 - `openspec` → read `openspec/changes/*/state.yaml`
 - `none` → state not persisted — explain to user
-<!-- /gentle-ai:sdd-orchestrator -->
+<!-- /ecomono:sdd-orchestrator -->
 
-<!-- gentle-ai:trigger-rules -->
+<!-- ecomono:trigger-rules -->
 ## Agent Trigger Rules
 
 These are organic recommendations, not enforced checkpoints. gentle-ai only renders this text; the AI orchestrator decides when to act on it.
@@ -385,4 +385,4 @@ These are organic recommendations, not enforced checkpoints. gentle-ai only rend
 - At **pre-push**, always, consider running `review-readability`. (everyday event → ONE cheap advisory lens (~1x); 4R fan-out reserved for pre-pr on hot paths / large diffs)
 - At **pre-pr**, when the diff touches `**/auth/**`, `**/update/**`, `**/security/**`, `**/payments/**` OR when the diff exceeds 400 changed lines, **strongly recommend** running `review-risk`, `review-resilience`, `review-readability`, and `review-reliability` in parallel. (full 4R fan-out (~4x) only on hot paths (auth/update/security/payments) or diffs exceeding 400 changed lines)
 - At **post-sdd-phase**, after the design or apply phase completes, **strongly recommend** running `ecomono-judgment`. (adversarial verification (~4 + 3*findings cost) only at high-stakes SDD phases (design and apply))
-<!-- /gentle-ai:trigger-rules -->
+<!-- /ecomono:trigger-rules -->
