@@ -1,6 +1,10 @@
 ---
 name: ecomono-pr
-description: "Create Gentle AI pull requests with issue-first checks. Trigger: creating, opening, or preparing PRs for review."
+description: >
+  Prepare a branch and open a pull request: branch naming, conventional commits, a
+  body a reviewer can act on, and the review-size budget. Use when creating, opening
+  or preparing a PR, when the user says "open a PR" or "prepare this branch", or
+  invokes /ecomono-pr.
 license: Apache-2.0
 metadata:
   author: gentleman-programming
@@ -9,196 +13,85 @@ metadata:
   version: "2.0"
 ---
 
-## When to Use
+Open a PR someone can actually review. The binding constraint is reviewer attention, not
+process compliance.
 
-Use this skill when:
-- Creating a pull request for any change
-- Preparing a branch for submission
-- Helping a contributor open a PR
-
----
-
-## Critical Rules
-
-1. **Every PR MUST link an approved issue** — no exceptions
-2. **Every PR MUST have exactly one `type:*` label**
-3. **Automated checks must pass** before merge is possible
-4. **Blank PRs without issue linkage will be blocked** by GitHub Actions
-
----
-
-## Workflow
+## Branch naming
 
 ```
-1. Verify issue has `status:approved` label
-2. Create branch: type/description (see Branch Naming below)
-3. Implement changes with conventional commits
-4. Run shellcheck on modified scripts
-5. Open PR using the template
-6. Add exactly one type:* label
-7. Wait for automated checks to pass
+^(feat|fix|chore|docs|style|refactor|perf|test|build|ci|revert)/[a-z0-9._-]+$
 ```
 
----
+`type/description`, lowercase, only `a-z0-9._-` after the slash. `feat/user-login`,
+`fix/zsh-glob-error`, `refactor/extract-shared-logic`.
 
-## Branch Naming
+The prefix matches the conventional-commit type, so the branch and the history agree.
 
-Branch names MUST match this regex:
+## Before opening
 
-```
-^(feat|fix|chore|docs|style|refactor|perf|test|build|ci|revert)\/[a-z0-9._-]+$
-```
+1. **Never work on the default branch.** Branch first.
+2. Conventional commits throughout: `type(scope): subject`, subject ≤50 chars,
+   imperative. Body only when the *why* is not obvious from the diff. No AI attribution,
+   no `Co-Authored-By`.
+3. Run what the project actually checks — its linter, its tests, `shellcheck` on modified
+   shell. Detect from the project; never assume a stack.
+4. **Measure the diff**: `additions + deletions` against the merge base.
 
-**Format:** `type/description` — lowercase, no spaces, only `a-z0-9._-` in description.
+## PR body
 
-| Type | Branch pattern | Example |
-|------|---------------|---------|
-| Feature | `feat/<description>` | `feat/user-login` |
-| Bug fix | `fix/<description>` | `fix/zsh-glob-error` |
-| Chore | `chore/<description>` | `chore/update-ci-actions` |
-| Docs | `docs/<description>` | `docs/installation-guide` |
-| Style | `style/<description>` | `style/format-scripts` |
-| Refactor | `refactor/<description>` | `refactor/extract-shared-logic` |
-| Performance | `perf/<description>` | `perf/reduce-startup-time` |
-| Test | `test/<description>` | `test/add-setup-coverage` |
-| Build | `build/<description>` | `build/update-shellcheck` |
-| CI | `ci/<description>` | `ci/add-branch-validation` |
-| Revert | `revert/<description>` | `revert/broken-setup-change` |
-
----
-
-## PR Body Format
-
-The PR template is at `.github/PULL_REQUEST_TEMPLATE.md`. Every PR body MUST contain:
-
-### 1. Linked Issue (REQUIRED)
+Four sections, in this order. A reviewer reads top-down and stops once they have enough.
 
 ```markdown
-Closes #<issue-number>
+## What
+{One or two sentences. What changed, not how.}
+
+## Why
+{The problem this solves. `Closes #N` when an issue exists.}
+
+## How to verify
+{A command, a flow, or a test name. Something the reviewer can run.}
+
+## Notes
+{Deliberate tradeoffs, known ceilings, what was left out and why. Omit if none.}
 ```
 
-Valid keywords: `Closes #N`, `Fixes #N`, `Resolves #N` (case insensitive).
-The linked issue MUST have the `status:approved` label.
+**How to verify** is the section reviewers use most and the one most often missing. Without
+it you are asking them to reverse-engineer your intent from the diff.
 
-### 2. PR Type (REQUIRED)
+Declare deliberate omissions in Notes. A shortcut the reviewer finds themselves reads as
+an oversight; the same shortcut stated reads as a decision.
 
-Check exactly ONE in the template and add the matching label:
+## Review size
 
-| Checkbox | Label to add |
-|----------|-------------|
-| Bug fix | `type:bug` |
-| New feature | `type:feature` |
-| Documentation only | `type:docs` |
-| Code refactoring | `type:refactor` |
-| Maintenance/tooling | `type:chore` |
-| Breaking change | `type:breaking-change` |
+Past roughly **400 changed lines** review quality drops — the reviewer starts skimming,
+and a skimmed approval is worse than a slow one because it looks identical.
 
-### 3. Summary
+Over budget → split along **deliverable** units, never along line counts. Each slice needs
+a clear start, a clear finish, its own verification, and a sane rollback.
 
-1-3 bullet points of what the PR does.
+| Strategy | Base branches |
+|---|---|
+| Stacked to main | Each PR merges to main in order. Independent slices, fast iteration |
+| Feature branch chain | PR #1 → tracker branch, each later PR → the previous PR's branch. Only the tracker reaches main |
 
-### 4. Changes Table
+In a chain, a child PR whose diff shows earlier slices has the wrong base. Retarget or
+rebase until the diff is only this slice, or the split bought nothing.
 
-```markdown
-| File | Change |
-|------|--------|
-| `path/to/file` | What changed |
-```
+Genuinely unsplittable — generated code, a migration, a vendor bump — say so in the body
+and ask for an explicit size exception. Do not open a 2,000-line PR and hope.
 
-### 5. Test Plan
+## Project gates: detect, do not assume
 
-```markdown
-- [x] Scripts run without errors: `shellcheck scripts/*.sh`
-- [x] Manually tested the affected functionality
-- [x] Skills load correctly in target agent
-```
+Some repos enforce issue linkage, required labels, or CI checks. Read `.github/` for a PR
+template and workflows, and check the real label list, before requiring any of it.
 
-### 6. Contributor Checklist
+Present → follow exactly. Absent → do not invent ceremony the project does not have.
+Demanding a label that does not exist produces instructions nobody can follow.
 
-All boxes must be checked:
-- Linked an approved issue
-- Added exactly one `type:*` label
-- Ran shellcheck on modified scripts
-- Skills tested in at least one agent
-- Docs updated if behavior changed
-- Conventional commit format
-- No `Co-Authored-By` trailers
+## Rules
 
----
-
-## Automated Checks (all must pass)
-
-| Check | Job name | What it verifies |
-|-------|----------|-----------------|
-| PR Validation | `Check Issue Reference` | Body contains `Closes/Fixes/Resolves #N` |
-| PR Validation | `Check Issue Has status:approved` | Linked issue has `status:approved` |
-| PR Validation | `Check PR Has type:* Label` | PR has exactly one `type:*` label |
-| CI | `Shellcheck` | Shell scripts pass `shellcheck` |
-
----
-
-## Conventional Commits
-
-Commit messages MUST match this regex:
-
-```
-^(build|chore|ci|docs|feat|fix|perf|refactor|revert|style|test)(\([a-z0-9\._-]+\))?!?: .+
-```
-
-**Format:** `type(scope): description` or `type: description`
-
-- `type` — required, one of: `build`, `chore`, `ci`, `docs`, `feat`, `fix`, `perf`, `refactor`, `revert`, `style`, `test`
-- `(scope)` — optional, lowercase with `a-z0-9._-`
-- `!` — optional, indicates breaking change
-- `description` — required, starts after `: `
-
-Type-to-label mapping:
-
-| Commit type | PR label |
-|-------------|----------|
-| `feat` | `type:feature` |
-| `fix` | `type:bug` |
-| `docs` | `type:docs` |
-| `refactor` | `type:refactor` |
-| `chore` | `type:chore` |
-| `style` | `type:chore` |
-| `perf` | `type:feature` |
-| `test` | `type:chore` |
-| `build` | `type:chore` |
-| `ci` | `type:chore` |
-| `revert` | `type:bug` |
-| `feat!` / `fix!` | `type:breaking-change` |
-
-Examples:
-```
-feat(scripts): add Codex support to setup.sh
-fix(skills): correct topic key format in ecomono-sdd-apply
-docs(readme): update multi-model configuration guide
-refactor(skills): extract shared persistence logic
-chore(ci): add shellcheck to PR validation workflow
-perf(scripts): reduce setup.sh execution time
-style(skills): fix markdown formatting
-test(scripts): add setup.sh integration tests
-ci(workflows): add branch name validation
-revert: undo broken setup change
-feat!: redesign skill loading system
-```
-
----
-
-## Commands
-
-```bash
-# Create branch
-git checkout -b feat/my-feature main
-
-# Run shellcheck before pushing
-shellcheck scripts/*.sh
-
-# Push and create PR
-git push -u origin feat/my-feature
-gh pr create --title "feat(scope): description" --body "Closes #N"
-
-# Add type label to PR
-gh pr edit <pr-number> --add-label "type:feature"
-```
+- Branch before committing. Never push work to the default branch.
+- One logical change per PR. "While I was in there" is how a 200-line PR becomes 900.
+- Tests and docs travel in the same PR as the code that needs them.
+- Never claim checks pass without running them and reading the output.
+- Work incomplete → draft PR, not a ready PR with a WIP note.

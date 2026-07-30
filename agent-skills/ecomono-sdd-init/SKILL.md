@@ -1,6 +1,6 @@
 ---
 name: ecomono-sdd-init
-description: "Trigger: sdd init, iniciar sdd, openspec init. Initialize SDD context, testing capabilities, registry, and persistence."
+description: "Bootstrap SDD in a project: detect stack, resolve strict TDD, cache context and registry. Trigger: sdd init, iniciar sdd, or any SDD command finding no init."
 disable-model-invocation: true
 user-invocable: false
 license: MIT
@@ -12,66 +12,76 @@ metadata:
   delegate_only: true
 ---
 
-## Executor Override
+**You are the executor.** Detect and persist yourself, do not delegate, do not call the
+Skill tool. Reached this through `Skill`? You are the orchestrator — stop and delegate to
+the `ecomono-sdd-init` sub-agent instead.
 
-If you ARE the sub-agent (NOT the orchestrator), the gate below does NOT apply to you. Continue with the phase work below. Do NOT delegate. Do NOT call the Skill tool. You are the executor — execute.
+Skill loading, retrieval, persistence and the return envelope are sections A–D of
+[sdd-phase-common.md](../ecomono-sdd-shared/sdd-phase-common.md). Artifacts default to
+English.
 
-> **ORCHESTRATOR GATE**: If you loaded this skill via the `skill()` tool, you are
-> the ORCHESTRATOR — STOP. Do NOT execute these instructions inline. Delegate to
-> the dedicated `ecomono-sdd-init` sub-agent using your platform's delegation primitive
-> (e.g., `task(...)`, sub-agent invocation, etc.). This skill is for EXECUTORS
-> only.
+## Purpose
 
+Bootstrap SDD for a project: detect what is really there, resolve whether strict TDD
+applies, cache both so every later phase runs with project context instead of guessing.
 
+Every SDD command checks for this first, and nothing downstream works well without it.
+Undetected testing capabilities mean strict TDD never activates; missing conventions mean
+phases fall back to generic best practice instead of the project's own.
 
-## Language Domain Contract
+**Writes:** `ecomono-sdd-init/{project}` — stack, conventions, testing capabilities — and
+`.atl/skill-registry.md`.
 
-Generated technical artifacts default to English. Do not inherit the user's conversational language or the active persona's regional voice for SDD artifacts unless the user explicitly requests that artifact language or the project convention requires it.
+## Hard rules
 
-If Spanish technical artifacts are explicitly requested, use neutral/professional Spanish unless the user explicitly asks for a regional variant.
+- **Detect, never guess.** Read the real files. An invented convention is worse than none,
+  because every later phase will faithfully follow it.
+- Detection is read-only. The only file you produce is the skill registry; no SDD
+  artifacts go into the project tree.
+- Persist testing capabilities separately so `apply` and `verify` resolve TDD mode from
+  cache instead of re-detecting on every launch.
 
-Public/contextual comments follow the target context language by default. Explicit user language or tone overrides win; Spanish comments default to neutral/professional Spanish unless the user or target context clearly calls for regional tone.
+## Detection
 
-## Activation Contract
+1. **Stack and conventions** — `package.json`, `go.mod`, `pyproject.toml`, CI config,
+   lint and format config. Summarize what the project actually does, and specifically
+   where it diverges from the ecosystem default: that divergence is what later phases
+   must match.
+2. **Testing capabilities** — test runner and its exact command, available layers (unit,
+   integration, E2E), coverage tool, linter, type checker, formatter.
+3. **Strict TDD**, resolved in this order:
 
-Run this phase when the orchestrator/user asks to initialize SDD in a project. You are the phase executor: do the work yourself, do not delegate, and do not behave like the orchestrator.
-
-## Hard Rules
-
-- Detect the real stack, conventions, architecture, testing tools, and persistence mode; never guess.
-- In `ecomono-memory` mode, do **not** create `openspec/`.
-- In `hybrid` mode, write both openspec files and ecomono-memory observations.
-- Always persist testing capabilities separately as `sdd/{project}/testing-capabilities` or `openspec/config.yaml` `testing:`.
-- Always build `.atl/skill-registry.md`; also save `skill-registry` to ecomono-memory when available.
-- If `openspec/` already exists, report what exists and ask before updating it.
-
-## Decision Gates
-
-| Input | Action |
+| Signal | Result |
 |---|---|
-| `mode=ecomono-memory` | Save context and capabilities to ecomono-memory only. |
-| `mode=openspec` | Create/update openspec bootstrap files only. |
-| `mode=hybrid` | Do both ecomono-memory and openspec persistence. |
-| `mode=none` | Return detected context only; write no SDD artifacts except registry if required. |
-| strict TDD marker/config found | Use that value. |
-| no marker/config but test runner exists | Default `strict_tdd: true`. |
-| no test runner | Set `strict_tdd: false` and explain unavailable. |
+| Explicit marker or project config | Use that value — stated intent wins |
+| No marker, but a test runner exists | `strict_tdd: true` |
+| No test runner | `strict_tdd: false`, and say why it is unavailable |
 
-## Execution Steps
+Defaulting to `true` when a runner exists is deliberate. A project with tests and no
+stated preference gets the stricter path and the user can switch it off; the reverse drops
+the discipline silently, which nobody notices until verify has nothing to check.
 
-1. Inspect project files (`package.json`, `go.mod`, `pyproject.toml`, CI, lint/test config) and summarize stack/conventions.
-2. Detect test runner, test layers, coverage, linter, type checker, and formatter.
-3. Resolve Strict TDD from agent marker, `openspec/config.yaml`, detected runner fallback, or no-runner fallback.
-4. Initialize persistence for the resolved mode.
-5. Build `.atl/skill-registry.md` using the skill-registry scan rules.
-6. Persist testing capabilities and project context.
-7. Return the structured initialization envelope.
+## Then
 
-## Output Contract
+4. Persist project context and testing capabilities to `ecomono-sdd-init/{project}`.
+5. Build the registry: `node ~/.claude/hooks/ecomono-skill-registry.js --cwd <repo>`.
+   Also save it to memory as `skill-registry` when the backend answers, so a delegator can
+   recover its selection after a compaction.
+6. Return the envelope.
 
-Return `status`, `executive_summary`, `artifacts`, `next_recommended`, and `risks`. Include project, stack, persistence mode, Strict TDD status, testing capability table, saved observation IDs/paths, registry path, and next `/ecomono-sdd-explore` or `/ecomono-sdd-new` step.
+Detection checklist, payload shapes and output templates:
+[references/init-details.md](references/init-details.md). Artifact naming:
+[memory-convention.md](../ecomono-sdd-shared/memory-convention.md).
 
-## References
+## Output
 
-- [references/init-details.md](references/init-details.md) — detection checklist, ecomono-memory payloads, config skeleton, and output templates.
-- `../ecomono-sdd-shared/memory-convention.md` — ecomono-memory artifact naming.
+Beyond the section D envelope: project name, stack, persistence mode, strict TDD status
+**with the signal that decided it**, the testing capability table, saved observation IDs,
+the registry path, and the next step (`/ecomono-sdd-explore` or `/ecomono-sdd-new`).
+
+Name the deciding signal, not just the verdict. `strict_tdd: true` tells the user nothing
+they can act on; `true — vitest detected, no explicit preference set` tells them where the
+switch is.
+
+Anything you could not detect goes in `risks`, named. A silent gap here becomes a
+confident wrong assumption in every phase that follows.
