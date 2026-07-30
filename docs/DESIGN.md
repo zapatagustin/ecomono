@@ -263,10 +263,61 @@ loaded on demand.
 
 The actionable split is by skill *kind*, since size is unknowable before invocation:
 
-- **Process skills** (`brainstorming`, `superpowers:*`, `ecomono*`) are small and shape the whole
-  turn → inline.
+- **Process skills** (`brainstorming`, `writing-plans`, `test-driven-development`,
+  `systematic-debugging`, `ecomono*`) are small and shape the whole turn → inline.
 - **Reference skills** (docs, data tables) are large and get consulted → invoke inside an
   `Agent`, whose context dies on return.
+
+### Decision: port four superpowers skills, retire the plugin
+
+The plugin shipped 14 skills; 6 were ever invoked here, ~10 times total. It cost ~840 tok/turn of
+skill listing plus a `SessionStart` hook that injects the whole `using-superpowers` body every
+session — measured at a 868-token median and 5.6M token-turns of carry — to state a
+skill-discovery rule `claude/CLAUDE.md` already carries under "Contextual Skill Loading". Pure
+duplication.
+
+Ported to `agent-skills/`, at 480–600 tokens each against the plugin's 9–10KB originals:
+`brainstorming`, `writing-plans`, `test-driven-development`, `systematic-debugging`.
+
+Not ported, deliberately:
+
+- `subagent-driven-development` — 28KB of dispatch protocol that `_shared/sdd-orchestrator.md`
+  already covers.
+- `executing-plans` — self-declared fallback for harnesses without subagents
+  (`executing-plans/SKILL.md:14`); never applies here.
+- The rest registered zero invocations.
+
+The claim that superpowers "runs everything in one context" is false and worth recording, because
+the port inherits the opposite. `subagent-driven-development/SKILL.md:10`: *"They should never
+inherit your session's context or history."* `requesting-code-review/SKILL.md:79`: *"reviewing the
+diff inline burns the context window you need to keep driving the work."* It is a hybrid —
+brainstorming and planning inline, implementation and review isolated. The four ported skills keep
+that split and name it explicitly.
+
+### The two premises, now encoded
+
+Delegation here was justified only by cost. Two corrections went into `claude/CLAUDE.md`:
+
+**Attention, not just cost.** Superseded content — a traceback from before the fix, a rejected
+approach, output from code since changed — costs the same as fresh evidence and actively misleads,
+however small. A cost-only rule fires on large payloads and misses this entirely: `bash_search`
+has a 106-token median, so cost says "cheap" while 2,116 of them say "noise, re-read every turn".
+
+**Isolate with a subagent, not with `/clear`.** Both produce a fresh context, but they are not
+equivalent, and the popular advice to `/clear` religiously omits the price. Measured across the 25
+sessions that contain one:
+
+```
+skill_listing        re-injected to 9,397 tok avg   (vs 3,435 for a single injection)
+deferred_tools       3,166 tok avg
+agent_listing        3,045 tok avg
+mcp_instructions     1,244 tok avg
+```
+
+A `/clear` re-pays the whole per-session structural block and discards the prompt cache, so the
+next turn is full-price input rather than a cache read. A subagent returns a 434-token median and
+leaves the main thread's cache intact. Subagent strictly dominates for isolation; `/clear` is for
+a real change of task.
 
 ### Where the context actually goes: 283 transcripts, carry-weighted
 

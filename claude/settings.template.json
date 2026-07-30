@@ -100,9 +100,7 @@
       }
     ]
   },
-  "enabledPlugins": {
-    "superpowers@claude-plugins-official": true
-  },
+  "enabledPlugins": {},
   "outputStyle": "Ecomono",
   "effortLevel": "high",
   "skipDangerousModePermissionPrompt": true,

@@ -35,9 +35,10 @@ from the template **only if absent** (never clobbers the runtime file); backs up
 pre-existing real dir to `*.pre-ecomono.bak` before linking.
 
 It **fetches** `gentle-ai` (GitHub-release binary) into `~/.local/bin`, and
-**registers** the `superpowers` Claude plugin, the `context7` MCP server, and the
-native **ecomono-memory** MCP server (a self-contained bun bundle — no external
-Go binary, replaces the old `engram@engram` plugin, which it uninstalls).
+**registers** the `context7` MCP server and the native **ecomono-memory** MCP
+server (a self-contained bun bundle — no external Go binary, replaces the old
+`engram@engram` plugin, which it uninstalls). It also uninstalls the
+`superpowers` plugin, whose process skills now ship from `agent-skills/`.
 
 It **checks** — but does not install — `node`, `claude`, `opencode`, and `bun`,
 printing a distro-specific hint if any is missing (those belong to your package

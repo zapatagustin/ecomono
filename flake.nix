@@ -106,7 +106,15 @@
                   "$claude" plugin install "$name@$market" || echo "warning: could not install plugin $name"
                 fi
               }
-              ensurePlugin anthropics/claude-plugins-official superpowers claude-plugins-official
+              # Retire the superpowers plugin: its four load-bearing process skills
+              # (brainstorming, writing-plans, test-driven-development,
+              # systematic-debugging) now ship from agent-skills/ under our own
+              # guidelines. Leaving it installed costs 15 skill listings plus a
+              # SessionStart hook that re-injects a skill-discovery rule CLAUDE.md
+              # already states.
+              if "$claude" plugin list 2>/dev/null | grep -q superpowers; then
+                "$claude" plugin uninstall superpowers@claude-plugins-official >/dev/null 2>&1 || true
+              fi
               if ! "$claude" mcp get context7 >/dev/null 2>&1; then
                 "$claude" mcp add --scope user context7 -- npx -y --package=@upstash/context7-mcp@2.2.5 -- context7-mcp \
                   || echo "warning: could not register context7 mcp"

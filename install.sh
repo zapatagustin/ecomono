@@ -118,7 +118,16 @@ elif have claude; then
     claude plugin install "$name@$market" \
       || warn "could not install plugin $name (retry: claude plugin install $name@$market)"
   }
-  ensure_plugin anthropics/claude-plugins-official  superpowers claude-plugins-official
+  # Retire the superpowers plugin: its four load-bearing process skills
+  # (brainstorming, writing-plans, test-driven-development, systematic-debugging)
+  # now ship from agent-skills/ under our own guidelines. Leaving it installed
+  # costs 15 skill listings plus a SessionStart hook that re-injects a
+  # skill-discovery rule CLAUDE.md already states.
+  if claude plugin list 2>/dev/null | grep -q superpowers; then
+    log "retiring the superpowers plugin (its process skills now ship in agent-skills/)"
+    claude plugin uninstall superpowers@claude-plugins-official >/dev/null 2>&1 \
+      || warn "could not uninstall superpowers (retry: claude plugin uninstall superpowers@claude-plugins-official)"
+  fi
 
   if claude mcp get context7 >/dev/null 2>&1; then
     info "mcp context7 ✓"

@@ -63,6 +63,10 @@ Multiple skills can apply at once. Match by file context (extensions, paths) and
 Re-read context is ~50% of session cost, and an injection is paid on *every* later turn, not
 once. Before pulling anything into the main thread: will I need it verbatim later?
 
+Cost is only half of it. Superseded content — a traceback from before the fix, a rejected
+approach, output from code since changed — costs the same as fresh evidence and actively
+misleads, however small it is. Say a hypothesis is dead and stop re-reading it.
+
 - Shell exploration (`ls`/`cat`/`grep`/`find`/`jq`) and file reads are 35% of measured carry —
   many small results, not a few big ones. 3+ exploration commands, 4+ files, 2+ subsystems, or
   a test/build/lint loop → delegate to `ecomono-explore`, not the built-in `Explore`, which the
@@ -72,7 +76,13 @@ once. Before pulling anything into the main thread: will I need it verbatim late
 - A file over ~5k tokens you only want a conclusion from → delegate.
 - **Reference skills** (docs and data tables — `claude-api` measures ~240k tokens) → invoke
   inside an `Agent`; the body dies with the subagent. **Process skills** (`brainstorming`,
-  `superpowers:*`, `ecomono*`) shape the whole turn → inline.
+  `writing-plans`, `test-driven-development`, `systematic-debugging`, `ecomono*`) shape the whole
+  turn → inline.
+- Review and adversarial checks need a context that never saw the work — delegate them even when
+  the diff is small; independent judgement is the point, not token saving.
+- Isolate with a subagent, not with `/clear`. Both give a fresh context, but a subagent returns
+  a median 434 tok while `/clear` re-pays the whole per-session structural block (~8k tok) and
+  discards the prompt cache. Reserve `/clear` for a real change of task.
 - Measurements, bulk listings and generated tables → write them to a file and report the
   conclusion. This applies to my own output too: everything printed into the thread is re-read
   on every later turn.
