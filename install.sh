@@ -118,10 +118,10 @@ elif have claude; then
     claude plugin install "$name@$market" \
       || warn "could not install plugin $name (retry: claude plugin install $name@$market)"
   }
-  # Retire the superpowers plugin: its four load-bearing process skills
-  # (brainstorming, writing-plans, test-driven-development, systematic-debugging)
-  # now ship from agent-skills/ under our own guidelines. Leaving it installed
-  # costs 15 skill listings plus a SessionStart hook that re-injects a
+  # Retire the superpowers plugin: its four load-bearing process skills now ship
+  # from agent-skills/ as ecomono-brainstorm, ecomono-plan, ecomono-tdd and
+  # ecomono-debug, under our own guidelines. Leaving it installed costs 15 skill
+  # listings plus a SessionStart hook that re-injects a
   # skill-discovery rule CLAUDE.md already states.
   if claude plugin list 2>/dev/null | grep -q superpowers; then
     log "retiring the superpowers plugin (its process skills now ship in agent-skills/)"

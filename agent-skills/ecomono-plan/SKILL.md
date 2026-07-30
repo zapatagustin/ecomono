@@ -1,10 +1,11 @@
 ---
-name: writing-plans
+name: ecomono-plan
 description: >
   Turn an agreed design into an ordered plan whose tasks each run in a fresh
   context. Use after brainstorming, when a spec or requirement needs breaking
   down, or when the user says "write a plan", "break this down", "what are the
-  steps". Not for single-edit work — that gets implemented, not planned.
+  steps", or invokes /ecomono-plan. Not for single-edit work — that gets
+  implemented, not planned.
 ---
 
 A plan exists so the work can be split. If every task needs the planning
@@ -29,7 +30,7 @@ A task failing this test is not a task, it is a note to yourself.
 |---|---|
 | One file, mechanical, you know the edit | Implement it |
 | Under ~3 steps with no ordering risk | Implement it |
-| Design not yet agreed | `brainstorming` first |
+| Design not yet agreed | `ecomono-brainstorm` first |
 
 ## Sequence
 

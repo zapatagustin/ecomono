@@ -1,10 +1,11 @@
 ---
-name: test-driven-development
+name: ecomono-tdd
 description: >
   Write the failing check before the implementation. Use when implementing a
   feature or a bugfix, and before writing implementation code for non-trivial
   logic — a branch, a loop, a parser, a money or security path. Use when the user
-  says "TDD", "write tests first", or asks for tests alongside a change.
+  says "TDD", "test-driven", "write tests first", asks for tests alongside a
+  change, or invokes /ecomono-tdd.
 ---
 
 Red, green, refactor. The failing assertion is the specification: it is the only

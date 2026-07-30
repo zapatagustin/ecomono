@@ -1,11 +1,11 @@
 ---
-name: brainstorming
+name: ecomono-brainstorm
 description: >
   Explore intent, requirements and design before any implementation. Use before
   creating a feature, building a component, adding functionality, or changing
   behavior — and before entering plan mode. Use when the user says "let's build",
-  "I want to add", "how should we structure", "design this", or describes a goal
-  without a spec. Produces an agreed design, not code.
+  "I want to add", "brainstorm this", "how should we structure", "design this", or
+  invokes /ecomono-brainstorm. Produces an agreed design, not code.
 ---
 
 Understand the problem before shortening the solution. The build ladder shortens
@@ -46,6 +46,6 @@ brainstorm. Everything downstream of the agreed design gets isolated instead.
 A design the next phase can execute without re-reading this conversation: the
 goal, the chosen approach, the named constraint, and what is explicitly out of
 scope. If it needs "as we discussed" to make sense, it is not done — see
-[writing-plans](../writing-plans/SKILL.md).
+[ecomono-plan](../ecomono-plan/SKILL.md).
 
 Speculative scope gets cut here, with one line saying what and why.

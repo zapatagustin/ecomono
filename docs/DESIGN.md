@@ -263,8 +263,8 @@ loaded on demand.
 
 The actionable split is by skill *kind*, since size is unknowable before invocation:
 
-- **Process skills** (`brainstorming`, `writing-plans`, `test-driven-development`,
-  `systematic-debugging`, `ecomono*`) are small and shape the whole turn → inline.
+- **Process skills** (`ecomono*` — brainstorm, plan, tdd, debug, cut, review) are small and
+  shape the whole turn → inline.
 - **Reference skills** (docs, data tables) are large and get consulted → invoke inside an
   `Agent`, whose context dies on return.
 
@@ -276,8 +276,9 @@ session — measured at a 868-token median and 5.6M token-turns of carry — to 
 skill-discovery rule `claude/CLAUDE.md` already carries under "Contextual Skill Loading". Pure
 duplication.
 
-Ported to `agent-skills/`, at 480–600 tokens each against the plugin's 9–10KB originals:
-`brainstorming`, `writing-plans`, `test-driven-development`, `systematic-debugging`.
+Ported to `agent-skills/` under the ecomono prefix, so our implementations stay distinguishable
+from third-party ones, at 480–600 tokens each against the plugin's 9–10KB originals:
+`ecomono-brainstorm`, `ecomono-plan`, `ecomono-tdd`, `ecomono-debug`.
 
 Not ported, deliberately:
 

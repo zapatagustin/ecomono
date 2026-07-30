@@ -75,9 +75,8 @@ misleads, however small it is. Say a hypothesis is dead and stop re-reading it.
   for; a subagent re-pays it and needs the diff restated in prose.
 - A file over ~5k tokens you only want a conclusion from → delegate.
 - **Reference skills** (docs and data tables — `claude-api` measures ~240k tokens) → invoke
-  inside an `Agent`; the body dies with the subagent. **Process skills** (`brainstorming`,
-  `writing-plans`, `test-driven-development`, `systematic-debugging`, `ecomono*`) shape the whole
-  turn → inline.
+  inside an `Agent`; the body dies with the subagent. **Process skills** (`ecomono*` — brainstorm,
+  plan, tdd, debug, cut, review) shape the whole turn → inline.
 - Review and adversarial checks need a context that never saw the work — delegate them even when
   the diff is small; independent judgement is the point, not token saving.
 - Isolate with a subagent, not with `/clear`. Both give a fresh context, but a subagent returns

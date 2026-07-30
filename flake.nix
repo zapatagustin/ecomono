@@ -107,9 +107,9 @@
                 fi
               }
               # Retire the superpowers plugin: its four load-bearing process skills
-              # (brainstorming, writing-plans, test-driven-development,
-              # systematic-debugging) now ship from agent-skills/ under our own
-              # guidelines. Leaving it installed costs 15 skill listings plus a
+              # now ship from agent-skills/ as ecomono-brainstorm, ecomono-plan,
+              # ecomono-tdd and ecomono-debug, under our own guidelines. Leaving it
+              # installed costs 15 skill listings plus a
               # SessionStart hook that re-injects a skill-discovery rule CLAUDE.md
               # already states.
               if "$claude" plugin list 2>/dev/null | grep -q superpowers; then

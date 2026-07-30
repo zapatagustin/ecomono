@@ -35,7 +35,7 @@ check "heavy skill is denied and routed to an Agent" claude-api '^deny:.*call Ag
 check "overlap routes to the ecomono equivalent"     simplify   '^deny:.*ecomono-cut'
 check "review routes to ecomono-review"              review     '^deny:.*ecomono-review'
 check "security-review routes to the risk agent"     security-review '^deny:.*review-risk'
-check "an ungated skill passes"                      brainstorming   '^allow$'
+check "an ungated skill passes"                      cognitive-doc-design '^allow$'
 check "an ecomono skill never gates itself"          ecomono-cut     '^allow$'
 
 # Fail open: an unparseable payload must not block the session.

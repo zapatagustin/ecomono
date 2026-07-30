@@ -32,6 +32,10 @@ Mode stick until changed or session end.
 | **ecomono-compress** | `/ecomono-compress <file>` | Compress .md files to ecomono prose. Saves ~46% input tokens. |
 | **ecomono-cut** | `/ecomono-cut` | Over-engineering review of a diff. What to delete, one line each. |
 | **ecomono-audit** | `/ecomono-audit` | Over-engineering audit of the whole repo. Ranked list of what to cut. |
+| **ecomono-brainstorm** | `/ecomono-brainstorm` | Agree the design before any code. Runs inline, one question at a time. |
+| **ecomono-plan** | `/ecomono-plan` | Ordered plan whose tasks each run in a fresh context. No "as we discussed". |
+| **ecomono-tdd** | `/ecomono-tdd` | Red, green, refactor. Failing assertion first, test loop delegated. |
+| **ecomono-debug** | `/ecomono-debug` | Root cause, not symptom. Dead hypotheses declared dead and dropped. |
 | **ecomono-help** | `/ecomono-help` | This card. |
 
 ## Deactivate

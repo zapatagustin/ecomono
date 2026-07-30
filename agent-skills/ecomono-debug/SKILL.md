@@ -1,10 +1,11 @@
 ---
-name: systematic-debugging
+name: ecomono-debug
 description: >
   Find the root cause before proposing a fix. Use on any bug, test failure,
   crash, wrong output, or unexpected behavior, and before editing the code that
   looks guilty. Use when the user says "this is broken", "why does this fail",
-  "debug this", or pastes an error. Fixes the cause, never the symptom.
+  "debug this", pastes an error, or invokes /ecomono-debug. Fixes the cause,
+  never the symptom.
 ---
 
 A debugging session is the highest-rot context there is: dead hypotheses, stale
