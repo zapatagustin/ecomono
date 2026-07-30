@@ -1,6 +1,6 @@
 ---
 name: ecomono-sdd-design
-description: "Create the SDD technical design and architecture approach. Trigger: orchestrator launches design for a change."
+description: "Produce the technical design: architecture decisions, data flow, file changes. Trigger: orchestrator launches design for a change."
 disable-model-invocation: true
 user-invocable: false
 license: MIT
@@ -12,177 +12,107 @@ metadata:
   delegate_only: true
 ---
 
-## Executor Override
+**You are the executor.** Design it yourself, do not delegate, do not call the Skill
+tool. Reached this through `Skill`? You are the orchestrator — stop and delegate to the
+`ecomono-sdd-design` sub-agent instead.
 
-If you ARE the sub-agent (NOT the orchestrator), the gate below does NOT apply to you. Continue with the phase work below. Do NOT delegate. Do NOT call the Skill tool. You are the executor — execute.
-
-> **ORCHESTRATOR GATE**: If you loaded this skill via the `skill()` tool, you are
-> the ORCHESTRATOR — STOP. Do NOT execute these instructions inline. Delegate to
-> the dedicated `ecomono-sdd-design` sub-agent using your platform's delegation primitive
-> (e.g., `task(...)`, sub-agent invocation, etc.). This skill is for EXECUTORS
-> only.
-
-
-
-## Language Domain Contract
-
-Generated technical artifacts default to English. Do not inherit the user's conversational language or the active persona's regional voice for SDD artifacts unless the user explicitly requests that artifact language or the project convention requires it.
-
-If Spanish technical artifacts are explicitly requested, use neutral/professional Spanish unless the user explicitly asks for a regional variant.
-
-Public/contextual comments follow the target context language by default. Explicit user language or tone overrides win; Spanish comments default to neutral/professional Spanish unless the user or target context clearly calls for regional tone.
+Skill loading, retrieval, persistence and the return envelope are sections A–D of
+[sdd-phase-common.md](../ecomono-sdd-shared/sdd-phase-common.md). Artifacts default to
+English.
 
 ## Purpose
 
-You are a sub-agent responsible for TECHNICAL DESIGN. You take the proposal and specs, then produce a `design.md` that captures HOW the change will be implemented — architecture decisions, data flow, file changes, and technical rationale.
+Take the proposal and produce **how** the change gets built: architecture decisions,
+data flow, file changes, rationale. The spec says what must be true; you say how.
 
-## What You Receive
+**Reads:** `sdd/{change-name}/proposal` (required),
+`sdd/{change-name}/spec` (optional — may not exist yet if spec and design run in
+parallel).
+**Writes:** artifact `design`, at `sdd/{change-name}/design`.
 
-From the orchestrator:
-- Change name
-- Artifact store mode (`ecomono-memory | openspec | hybrid | none`)
+## Sequence
 
-## Execution and Persistence Contract
+### 1. Read the actual code
 
-> Follow **Section B** (retrieval) and **Section C** (persistence) from `agent-skills/ecomono-sdd-shared/sdd-phase-common.md`.
+Before designing anything: entry points and module structure, existing patterns and
+conventions, dependencies and interfaces, the test infrastructure.
 
-- **ecomono-memory**: Read `sdd/{change-name}/proposal` (required) and `sdd/{change-name}/spec` (optional — may not exist if running in parallel with ecomono-sdd-spec). Save as `sdd/{change-name}/design`.
-- **openspec**: Read and follow `agent-skills/ecomono-sdd-shared/openspec-convention.md`.
-- **hybrid**: Follow BOTH conventions — persist to ecomono-memory AND write `design.md` to filesystem. Retrieve dependencies from ecomono-memory (primary) with filesystem fallback.
-- **none**: Return result only. Never create or modify project files.
+A design written against an imagined codebase is worse than no design — apply will
+follow it, and the mismatch surfaces as failing tests nobody predicted.
 
-## What to Do
+### 2. Design
 
-### Step 1: Load Skills
-Follow **Section A** from `agent-skills/ecomono-sdd-shared/sdd-phase-common.md`.
-
-### Step 2: Read the Codebase
-
-Before designing, read the actual code that will be affected:
-- Entry points and module structure
-- Existing patterns and conventions
-- Dependencies and interfaces
-- Test infrastructure (if any)
-
-### Step 3: Write design.md
-
-**IF mode is `openspec` or `hybrid`:** Create the design document:
-
-```
-openspec/changes/{change-name}/
-├── proposal.md
-├── specs/
-└── design.md              ← You create this
-```
-
-**IF mode is `ecomono-memory` or `none`:** Do NOT create any `openspec/` directories or files. Compose the design content in memory — you will persist it in Step 4.
-
-#### Design Document Format
+**Size budget: under 800 words.** Decisions as tables, code snippets only for a
+non-obvious pattern. A design longer than the change is a design nobody reads before
+implementing.
 
 ```markdown
 # Design: {Change Title}
 
 ## Technical Approach
-
-{Concise description of the overall technical strategy.
-How does this map to the proposal's approach? Reference specs.}
+{The overall strategy, and how it maps to the proposal's approach}
 
 ## Architecture Decisions
-
-### Decision: {Decision Title}
-
-**Choice**: {What we chose}
-**Alternatives considered**: {What we rejected}
-**Rationale**: {Why this choice over alternatives}
-
-### Decision: {Decision Title}
-
-**Choice**: {What we chose}
-**Alternatives considered**: {What we rejected}
-**Rationale**: {Why this choice over alternatives}
+### {Decision title}
+**Choice**: {what} · **Rejected**: {alternatives} · **Why**: {rationale}
 
 ## Data Flow
-
-{Describe how data moves through the system for this change.
-Use ASCII diagrams when helpful.}
+{How data moves for this change. Simple ASCII when it helps — clarity over beauty}
 
     Component A ──→ Component B ──→ Component C
-         │                              │
-         └──────── Store ───────────────┘
+         └──────── Store ───────────┘
 
 ## File Changes
-
 | File | Action | Description |
-|------|--------|-------------|
-| `path/to/new-file.ext` | Create | {What this file does} |
-| `path/to/existing.ext` | Modify | {What changes and why} |
-| `path/to/old-file.ext` | Delete | {Why it's being removed} |
+|---|---|---|
+| `path/new.ext` | Create | {what it does} |
+| `path/existing.ext` | Modify | {what changes and why} |
+| `path/old.ext` | Delete | {why it goes} |
 
 ## Interfaces / Contracts
-
-{Define any new interfaces, API contracts, type definitions, or data structures.
-Use code blocks with the project's language.}
+{New interfaces, API contracts, types, data structures — in the project's language}
 
 ## Testing Strategy
-
-| Layer | What to Test | Approach |
-|-------|-------------|----------|
-| Unit | {What} | {How} |
-| Integration | {What} | {How} |
-| E2E | {What} | {How} |
+| Layer | What to test | Approach |
+|---|---|---|
 
 ## Migration / Rollout
-
-{If this change requires data migration, feature flags, or phased rollout, describe the plan.
-If not applicable, state "No migration required."}
+{Data migration, feature flags, phased rollout — or "No migration required."}
 
 ## Open Questions
-
-- [ ] {Any unresolved technical question}
-- [ ] {Any decision that needs team input}
+- [ ] {unresolved technical question}
 ```
 
-### Step 4: Persist Artifact
+### 3. Persist and return
 
-**This step is MANDATORY — do NOT skip it.**
-
-Follow **Section C** from `agent-skills/ecomono-sdd-shared/sdd-phase-common.md`.
-- artifact: `design`
-- topic_key: `sdd/{change-name}/design`
-- type: `architecture`
-
-### Step 5: Return Summary
-
-Return to the orchestrator:
+Section C, artifact `design`, topic key `sdd/{change-name}/design`.
 
 ```markdown
 ## Design Created
 
 **Change**: {change-name}
-**Location**: `openspec/changes/{change-name}/design.md` (openspec/hybrid) | ecomono-memory `sdd/{change-name}/design` (ecomono-memory) | inline (none)
 
 ### Summary
-- **Approach**: {one-line technical approach}
-- **Key Decisions**: {N decisions documented}
-- **Files Affected**: {N new, M modified, K deleted}
-- **Testing Strategy**: {unit/integration/e2e coverage planned}
+- Approach: {one line}
+- Key decisions: {N} documented
+- Files affected: {N} new, {M} modified, {K} deleted
+- Testing: {planned coverage}
 
 ### Open Questions
-{List any unresolved questions, or "None"}
+{List, or "None"}
 
-### Next Step
+### Next
 Ready for tasks (ecomono-sdd-tasks).
 ```
 
 ## Rules
 
-- ALWAYS read the actual codebase before designing — never guess
-- Every decision MUST have a rationale (the "why")
-- Include concrete file paths, not abstract descriptions
-- Use the project's ACTUAL patterns and conventions, not generic best practices
-- If you find the codebase uses a pattern different from what you'd recommend, note it but FOLLOW the existing pattern unless the change specifically addresses it
-- Keep ASCII diagrams simple — clarity over beauty
-- Apply any `rules.design` from `openspec/config.yaml`
-- If you have open questions that BLOCK the design, say so clearly — don't guess
-- **Size budget**: Design artifact MUST be under 800 words. Architecture decisions as tables (option | tradeoff | decision). Code snippets only for non-obvious patterns.
-- Return envelope per **Section D** from `agent-skills/ecomono-sdd-shared/sdd-phase-common.md`.
+- Read the codebase before designing. Never guess at what is there.
+- Every decision carries its **why**. A choice without a rationale cannot be
+  re-evaluated later, so it hardens into folklore.
+- Concrete file paths, not abstract descriptions. Apply needs to act on this.
+- Use the project's **actual** patterns, not generic best practice. Where the codebase
+  does something you would not have chosen, note it and follow it anyway — unless this
+  change is specifically about fixing that.
+- An open question that **blocks** the design → say so and stop. A guessed decision
+  looks identical to a made one three phases downstream.

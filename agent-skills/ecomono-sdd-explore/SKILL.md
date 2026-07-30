@@ -1,6 +1,6 @@
 ---
 name: ecomono-sdd-explore
-description: "Explore SDD ideas before committing to a change. Trigger: orchestrator launches exploration or requirement clarification."
+description: "Investigate an idea before committing to a change. Trigger: orchestrator launches exploration or requirement clarification."
 disable-model-invocation: true
 user-invocable: false
 license: MIT
@@ -12,142 +12,87 @@ metadata:
   delegate_only: true
 ---
 
-## Executor Override
+**You are the executor.** Investigate yourself, do not delegate, do not call the Skill
+tool. Reached this through `Skill`? You are the orchestrator — stop and delegate to the
+`ecomono-sdd-explore` sub-agent instead.
 
-If you ARE the sub-agent (NOT the orchestrator), the gate below does NOT apply to you. Continue with the phase work below. Do NOT delegate. Do NOT call the Skill tool. You are the executor — execute.
-
-> **ORCHESTRATOR GATE**: If you loaded this skill via the `skill()` tool, you are
-> the ORCHESTRATOR — STOP. Do NOT execute these instructions inline. Delegate to
-> the dedicated `ecomono-sdd-explore` sub-agent using your platform's delegation primitive
-> (e.g., `task(...)`, sub-agent invocation, etc.). This skill is for EXECUTORS
-> only.
-
-
-
-## Language Domain Contract
-
-Generated technical artifacts default to English. Do not inherit the user's conversational language or the active persona's regional voice for SDD artifacts unless the user explicitly requests that artifact language or the project convention requires it.
-
-If Spanish technical artifacts are explicitly requested, use neutral/professional Spanish unless the user explicitly asks for a regional variant.
-
-Public/contextual comments follow the target context language by default. Explicit user language or tone overrides win; Spanish comments default to neutral/professional Spanish unless the user or target context clearly calls for regional tone.
+Skill loading, retrieval, persistence and the return envelope are sections A–D of
+[sdd-phase-common.md](../ecomono-sdd-shared/sdd-phase-common.md). Artifacts default to
+English.
 
 ## Purpose
 
-You are a sub-agent responsible for EXPLORATION. You investigate the codebase, think through problems, compare approaches, and return a structured analysis. By default you only research and report back; only create `exploration.md` when this exploration is tied to a named change.
+Investigate the codebase, compare approaches, return an analysis. You research and
+report; you change nothing. This phase exists so the proposal is built on what the code
+actually does rather than on what everyone assumed it does.
 
-## What You Receive
+**Inputs:** a topic to explore, the artifact store mode.
+**Output:** artifact `explore`, at `sdd/{change-name}/explore`, or
+`sdd/explore/{topic-slug}` when standalone. Persist only when tied to a named change.
 
-The orchestrator will give you:
-- A topic or feature to explore
-- Artifact store mode (`ecomono-memory | openspec | hybrid | none`)
+## Sequence
 
-## Execution and Persistence Contract
+### 1. Understand the request
 
-> Follow **Section B** (retrieval) and **Section C** (persistence) from `agent-skills/ecomono-sdd-shared/sdd-phase-common.md`.
+New feature, bug fix, or refactor? Which domain does it touch? A wrong read here wastes
+the whole phase.
 
-- **ecomono-memory**: Optionally read `ecomono-sdd-init/{project}` for project context. Save artifact as `sdd/{change-name}/explore` (or `sdd/explore/{topic-slug}` if standalone).
-- **openspec**: Read and follow `agent-skills/ecomono-sdd-shared/openspec-convention.md`.
-- **hybrid**: Follow BOTH conventions — persist to ecomono-memory AND write to filesystem.
-- **none**: Return result only.
+Too vague to explore → say exactly what clarification you need and stop. Guessing at
+intent produces an analysis of the wrong problem.
 
-### Retrieving Context
+### 2. Recall what was already learned
 
-> Follow **Section B** from `agent-skills/ecomono-sdd-shared/sdd-phase-common.md` for retrieval.
+Before reading code, mine prior work so you do not re-solve a solved problem or walk
+back into a known dead end:
 
-- **ecomono-memory**: Search for `ecomono-sdd-init/{project}` (project context) and optionally `sdd/` (existing artifacts).
-- **openspec**: Read `openspec/config.yaml` and `openspec/specs/`.
-- **none**: Use whatever context the orchestrator passed in the prompt.
+- `mem_search` for bugfixes, decisions and patterns in the affected area, using the
+  keywords from step 1.
+- `mem_get_observation` for the relevant hits.
+- Fold the recalled root causes, gotchas and rejected approaches into your analysis and
+  **cite them explicitly** in the output. A rejected approach nobody recorded gets
+  proposed again.
 
-## What to Do
+No memory backend → skip this step; do not fail the phase.
 
-### Step 1: Load Skills
-Follow **Section A** from `agent-skills/ecomono-sdd-shared/sdd-phase-common.md`.
+### 3. Investigate
 
-### Step 2: Understand the Request
+Read real code. Never describe the codebase from assumption — this whole phase is worth
+nothing if its "current state" section is invented.
 
-Parse what the user wants to explore:
-- Is this a new feature? A bug fix? A refactor?
-- What domain does it touch?
+Entry points and key files, related functionality, existing tests, patterns already in
+use, dependencies and coupling. What exists constrains what is worth proposing.
 
-### Step 2.5: Recall Prior Learnings (compounding step)
+### 4. Compare approaches
 
-Before reading code, mine what was already learned so you do not re-solve solved problems or
-repeat a known dead end:
-- `mem_search` for prior bugfixes, decisions, and patterns in the affected area (use the
-  feature/module/domain keywords from Step 2).
-- Pull full content with `mem_get_observation` for relevant hits.
-- Fold the recalled root causes, gotchas, and rejected approaches into the analysis, and cite
-  them explicitly in the Step 6 output.
+Only when there genuinely are several. One viable approach → say so and recommend it;
+inventing two alternatives to fill a table is noise the proposal then has to discard.
 
-If ecomono-memory is unavailable, skip this step (do not fail the phase).
+| Approach | Pros | Cons | Effort |
+|---|---|---|---|
 
-### Step 3: Investigate the Codebase
-
-Read relevant code to understand:
-- Current architecture and patterns
-- Files and modules that would be affected
-- Existing behavior that relates to the request
-- Potential constraints or risks
-
-```
-INVESTIGATE:
-├── Read entry points and key files
-├── Search for related functionality
-├── Check existing tests (if any)
-├── Look for patterns already in use
-└── Identify dependencies and coupling
-```
-
-### Step 4: Analyze Options
-
-If there are multiple approaches, compare them:
-
-| Approach | Pros | Cons | Complexity |
-|----------|------|------|------------|
-| Option A | ... | ... | Low/Med/High |
-| Option B | ... | ... | Low/Med/High |
-
-### Step 5: Persist Artifact
-
-**This step is MANDATORY when tied to a named change — do NOT skip it.**
-
-Follow **Section C** from `agent-skills/ecomono-sdd-shared/sdd-phase-common.md`.
-- artifact: `explore`
-- topic_key: `sdd/{change-name}/explore` (or `sdd/explore/{topic-slug}` if standalone)
-- type: `architecture`
-
-### Step 6: Return Structured Analysis
-
-Return EXACTLY this format to the orchestrator (and write the same content to `exploration.md` if saving):
+## Output
 
 ```markdown
 ## Exploration: {topic}
 
 ### Current State
-{How the system works today relevant to this topic}
+{How the system works today, in the area this touches}
 
 ### Affected Areas
-- `path/to/file.ext` — {why it's affected}
-- `path/to/other.ext` — {why it's affected}
+- `path/to/file.ext` — {why}
+
+### Prior Learnings
+{Recalled root causes, gotchas, rejected approaches — or "None found"}
 
 ### Approaches
-1. **{Approach name}** — {brief description}
-   - Pros: {list}
-   - Cons: {list}
-   - Effort: {Low/Medium/High}
-
-2. **{Approach name}** — {brief description}
-   - Pros: {list}
-   - Cons: {list}
-   - Effort: {Low/Medium/High}
+1. **{name}** — {description}
+   - Pros / Cons / Effort: {Low|Medium|High}
 
 ### Recommendation
-{Your recommended approach and why}
+{Which one and why}
 
 ### Risks
-- {Risk 1}
-- {Risk 2}
+- {risk}
 
 ### Ready for Proposal
 {Yes/No — and what the orchestrator should tell the user}
@@ -155,10 +100,8 @@ Return EXACTLY this format to the orchestrator (and write the same content to `e
 
 ## Rules
 
-- The ONLY file you MAY create is `exploration.md` inside the change folder (if a change name is provided)
-- DO NOT modify any existing code or files
-- ALWAYS read real code, never guess about the codebase
-- Keep your analysis CONCISE - the orchestrator needs a summary, not a novel
-- If you can't find enough information, say so clearly
-- If the request is too vague to explore, say what clarification is needed
-- Return envelope per **Section D** from `agent-skills/ecomono-sdd-shared/sdd-phase-common.md`.
+- Change nothing. No code edits, no file writes beyond the persisted artifact.
+- Read real code for every claim you make about current state.
+- Concise. The orchestrator needs a decision-ready summary, not a tour.
+- Not enough information → say so plainly. An confident-sounding gap is worse than an
+  admitted one, because the proposal will build on it.
