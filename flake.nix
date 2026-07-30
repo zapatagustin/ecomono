@@ -10,11 +10,6 @@
       forAll = f: nixpkgs.lib.genAttrs systems (s: f nixpkgs.legacyPackages.${s});
     in
     {
-      # gentle-ai — managed separately (engram removed, now the native memory plugin)
-      packages = forAll (pkgs: {
-        gentle-ai = pkgs.callPackage ./nix/gentle-ai.nix { };
-      });
-
       # home-manager module: lays down the same config the install.sh script
       # does, the declarative way. Wire it into your host config with:
       #   inputs.ecomono.url = "github:zapatagustin/ecomono";
@@ -22,15 +17,13 @@
       homeModules.default =
         { config, pkgs, lib, ... }:
         let
-          gentle-ai = pkgs.callPackage ./nix/gentle-ai.nix { };
-
           homeDir = config.home.homeDirectory;
           # A couple of vendored files hardcode the authoring machine's home;
           # rewrite it to the target host so any username works.
           patch = builtins.replaceStrings [ "/home/agustin" ] [ homeDir ];
           readCfg = f: builtins.removeAttrs (builtins.fromJSON (patch (builtins.readFile f))) [ "$schema" ];
 
-          # One skill tree. The vendored gentle-ai skills were forked into
+          # One skill tree. The vendored third-party skills were forked into
           # agent-skills/ under the ecomono prefix (see NOTICE.md), so the split
           # between a claude-only tree and a shared tree no longer exists.
           claudeSkills = pkgs.runCommand "ecomono-claude-skills" { } ''
@@ -41,7 +34,7 @@
         {
           # bun runs ecomono-memory (opencode plugin + the bundled
           # Claude Code MCP server).
-          home.packages = [ pkgs.nodejs pkgs.bun gentle-ai ];
+          home.packages = [ pkgs.nodejs pkgs.bun ];
 
           programs.claude-code = {
             enable = true;

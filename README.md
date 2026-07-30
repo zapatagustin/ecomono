@@ -6,7 +6,7 @@ from any NixOS/home-manager setup. One repo, installable on **Arch**, **Debian**
 
 It ships the output style, agents, skills, commands, hooks, MCP wiring, and opencode
 plugins as plain files (markdown / JS / JSON), plus a POSIX installer that symlinks them
-into place and fetches the custom binary (`gentle-ai`).
+into place. No external binary: everything it needs is in this repo.
 
 ## Layout
 
@@ -16,7 +16,6 @@ agent-skills/    Every skill (ecomono*, find-skills, proxy-manager) → ~/.claud
 claude/          CLAUDE.md, agents/, commands/, hooks/, output-styles/, themes/,
                  settings.template.json
 opencode/        AGENTS.md, opencode.json, tui.json, commands/, plugins/, tui-plugins/
-nix/             gentle-ai package definition (GitHub-release binary)
 lib/common.sh    installer helpers
 install.sh       Arch/Debian/generic-Linux installer
 flake.nix        NixOS / home-manager module
@@ -34,11 +33,14 @@ The installer is **idempotent** and **non-destructive**: it symlinks config into
 from the template **only if absent** (never clobbers the runtime file); backs up any
 pre-existing real dir to `*.pre-ecomono.bak` before linking.
 
-It **fetches** `gentle-ai` (GitHub-release binary) into `~/.local/bin`, and
-**registers** the `context7` MCP server and the native **ecomono-memory** MCP
-server (a self-contained bun bundle — no external Go binary, replaces the old
-`engram@engram` plugin, which it uninstalls). It also uninstalls the
-`superpowers` plugin, whose process skills now ship from `agent-skills/`.
+It **registers** the `context7` MCP server and the native **ecomono-memory** MCP
+server (a self-contained bun bundle, replacing the old `engram@engram` plugin,
+which it uninstalls). It also uninstalls the `superpowers` plugin, whose process
+skills now ship from `agent-skills/`.
+
+It fetches **no binaries**. The `gentle-ai` dependency is gone: its skill-registry
+generator was reimplemented as `claude/hooks/ecomono-skill-registry.js`, and its
+SDD dispatchers only ever read an `openspec/` layout this setup does not use.
 
 It **checks** — but does not install — `node`, `claude`, `opencode`, and `bun`,
 printing a distro-specific hint if any is missing (those belong to your package
@@ -50,7 +52,6 @@ manager).
 |-----|--------|
 | `BIN_DIR` | binary install dir (default `~/.local/bin`) |
 | `GENTLE_AI_VERSION` | pin a release tag (default: latest) |
-| `ECOMONO_SKIP_BINARIES=1` | skip fetching gentle-ai |
 | `ECOMONO_SKIP_PLUGINS=1` | skip plugin/MCP registration |
 
 ### Prerequisites
@@ -75,7 +76,7 @@ inputs.ecomono.url = "github:zapatagustin/ecomono";
 imports = [ inputs.ecomono.homeModules.default ];
 ```
 
-The module manages the config declaratively, adds `nodejs` + `gentle-ai`, and
+The module manages the config declaratively, adds `nodejs` + `bun`, and
 registers plugins/MCP on activation. `settings.json` is left unmanaged (Claude Code
 rewrites it at runtime) — seed it once:
 

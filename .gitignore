@@ -11,5 +11,5 @@ opencode/plugins/**/node_modules/
 result
 result-*
 
-# gentle-ai skill-registry hook output (regenerated every prompt)
+# skill-registry output (regenerated every prompt by ecomono-skill-registry.js)
 .atl/

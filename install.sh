@@ -7,16 +7,12 @@
 #   ./install.sh
 #
 # Env overrides:
-#   BIN_DIR=~/.local/bin            where gentle-ai binary goes
-#   GENTLE_AI_VERSION               pin a release tag (default: latest)
-#   ECOMONO_SKIP_BINARIES=1         skip fetching gentle-ai
 #   ECOMONO_SKIP_PLUGINS=1          skip claude plugin/mcp registration
 
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=lib/common.sh
 . "$REPO/lib/common.sh"
 
-BIN_DIR="${BIN_DIR:-$HOME/.local/bin}"
 CLAUDE="$HOME/.claude"
 OC="$HOME/.config/opencode"
 AGENTS="$HOME/.agents/skills"
@@ -67,20 +63,6 @@ copy_patched "$REPO/opencode/tui.json" "$OC/tui.json"
 # plugins/ must stay a writable real dir (opencode installs node_modules there);
 # link each entry individually, mirroring the Nix layout.
 link_children "$REPO/opencode/plugins" "$OC/plugins"
-
-# ---- 2. binaries ------------------------------------------------------------
-if [ "${ECOMONO_SKIP_BINARIES:-}" = 1 ]; then
-  info "skipping gentle-ai (ECOMONO_SKIP_BINARIES=1)"
-elif have curl && have tar; then
-  log "installing gentle-ai -> $BIN_DIR"
-  install_gh_binary Gentleman-Programming/gentle-ai gentle-ai GENTLE_AI_VERSION
-else
-  warn "curl and tar are required to fetch binaries — skipping (install them, re-run)"
-fi
-case ":$PATH:" in
-  *":$BIN_DIR:"*) ;;
-  *) warn "$BIN_DIR is not on PATH — add it to your shell rc (export PATH=\"$BIN_DIR:\$PATH\")" ;;
-esac
 
 # ---- 3. prerequisites (check only; distro package managers own these) -------
 log "checking prerequisites"
@@ -169,4 +151,4 @@ else
   info "claude not on PATH — skipping plugin/mcp registration"
 fi
 
-log "done. open a new shell (or source your rc) so PATH picks up $BIN_DIR"
+log "done."

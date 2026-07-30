@@ -94,7 +94,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "gentle-ai skill-registry refresh --quiet --no-gitignore --cwd \"${CLAUDE_PROJECT_DIR:-$PWD}\" || true"
+            "command": "node \"$HOME/.claude/hooks/ecomono-skill-registry.js\" --quiet --cwd \"${CLAUDE_PROJECT_DIR:-$PWD}\" || true"
           }
         ]
       }
