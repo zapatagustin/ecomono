@@ -1,6 +1,6 @@
 ---
 name: ecomono-sdd-verify
-description: "Trigger: SDD verification phase, verify change. Execute tests and prove implementation matches specs, design, and tasks."
+description: "Validate implementation against spec, design and tasks. Trigger: orchestrator launches verification for a change."
 disable-model-invocation: true
 user-invocable: false
 license: MIT
@@ -12,88 +12,107 @@ metadata:
   delegate_only: true
 ---
 
-## Executor Override
+## Who runs this
 
-If you ARE the sub-agent (NOT the orchestrator), the gate below does NOT apply to you. Continue with the phase work below. Do NOT delegate. Do NOT call the Skill tool. You are the executor — execute.
+**You are the executor.** Verify yourself. Do not delegate, do not call the Skill
+tool, do not fix anything.
 
-> **ORCHESTRATOR GATE**: If you loaded this skill via the `skill()` tool, you are
-> the ORCHESTRATOR — STOP. Do NOT execute these instructions inline. Delegate to
-> the dedicated `ecomono-sdd-verify` sub-agent using your platform's delegation primitive
-> (e.g., `task(...)`, sub-agent invocation, etc.). This skill is for EXECUTORS
-> only.
+> **If you reached this through the `Skill` tool you are the ORCHESTRATOR — stop.**
+> Delegate to the `ecomono-sdd-verify` sub-agent. Verifying inline also costs you the
+> independence that makes the verdict worth anything.
 
+Artifacts default to **English** — see the Language section of
+[sdd-orchestrator.md](../ecomono-sdd-shared/sdd-orchestrator.md).
 
+## Activation
 
-## Language Domain Contract
+Run when the orchestrator launches verification. You are the quality gate: prove
+completion with source inspection **plus real execution evidence**.
 
-Generated technical artifacts default to English. Do not inherit the user's conversational language or the active persona's regional voice for SDD artifacts unless the user explicitly requests that artifact language or the project convention requires it.
+Consume the structured status per
+[sdd-status-contract.md](../ecomono-sdd-shared/sdd-status-contract.md) before judging
+anything — artifact states, task progress, dependency states, `actionContext`.
 
-If Spanish technical artifacts are explicitly requested, use neutral/professional Spanish unless the user explicitly asks for a regional variant.
+Skills: section A of
+[sdd-phase-common.md](../ecomono-sdd-shared/sdd-phase-common.md). Retrieval: section
+B. Persistence: section C. Return envelope: section D.
 
-Public/contextual comments follow the target context language by default. Explicit user language or tone overrides win; Spanish comments default to neutral/professional Spanish unless the user or target context clearly calls for regional tone.
+## Hard rules
 
-## Activation Contract
+- **Execution, not inspection.** Static reading is never verification. A spec
+  scenario is compliant only when a covering test **passed at runtime**. Source that
+  looks correct is a hypothesis, not evidence.
+- Read every available artifact before judging. Partial sets degrade as below; they
+  do not license guessing at the missing dimension.
+- Order matters: spec first, design second, task completion third. Task checkboxes
+  are the weakest signal — they record intent, not behaviour.
+- **Do not fix anything.** Report for the orchestrator. A verifier that patches what
+  it found has no independent verdict left to give.
+- Verify against the artifacts you fetch **this run**, never a prior `verify-report`
+  or a summary of one. A report from before the last apply describes code that no
+  longer exists — it costs what current evidence costs and misleads. Re-derive its
+  findings or drop them; never carry one forward on the strength of having been said
+  once.
+- Strict TDD active → load [strict-tdd-verify.md](strict-tdd-verify.md). Inactive →
+  never load it, so it costs nothing.
 
-Run when the orchestrator launches verification for an SDD change. You are the quality gate: prove completion with source inspection plus real execution evidence.
-
-The orchestrator should provide structured status from `agent-skills/ecomono-sdd-shared/sdd-status-contract.md`. Use its `schemaName`, `planningHome`, `changeRoot`, `artifactPaths`, `contextFiles`, task progress, dependency states, and `actionContext` before judging artifacts.
-
-## Hard Rules
-
-- Read all available status `contextFiles` before judging implementation. Full spec-driven verification reads proposal, specs, design, and tasks; partial artifact sets degrade as described below.
-- Execute relevant tests; static analysis alone is never verification.
-- A spec scenario is compliant only when a covering test passed at runtime.
-- Compare specs first, design second, task completion third.
-- Do not fix issues; report them for the orchestrator/user.
-- Verify against the artifacts you fetch this run, never against a prior `verify-report` or a
-  summary of one. A report from before the last apply describes code that no longer exists: it
-  costs the same as current evidence and misleads. Findings it listed are re-derived or dropped,
-  never carried forward on the strength of having been said once.
-- Persist `verify-report` according to mode: ecomono-memory, openspec file, hybrid both, or inline-only for `none`.
-- If Strict TDD is active, load `strict-tdd-verify.md` from this skill directory; if inactive, never load it.
-- Return the Section D envelope from `../_shared/sdd-phase-common.md`.
-
-## Decision Gates
+## Decision gates
 
 | Condition | Action |
 |---|---|
-| Orchestrator says `STRICT TDD MODE IS ACTIVE` | Treat as authoritative. |
-| Cached/config `strict_tdd: true` and runner exists | Strict TDD verify; load module. |
-| Strict TDD false or no runner | Standard verify; skip TDD checks. |
-| `actionContext.mode: workspace-planning` | STOP; full workspace implementation verification is not supported in this slice. |
-| Only tasks artifact exists | Verify task completion only; skip spec/design correctness and record skipped checks. |
-| Tasks + specs exist | Verify completeness and correctness; skip design coherence and record skipped checks. |
-| Proposal/specs/design/tasks exist | Verify all dimensions. |
-| Task incomplete | CRITICAL for core task, WARNING for cleanup task. |
-| Test command exits non-zero | CRITICAL. |
-| Spec scenario has no passing covering test | CRITICAL `UNTESTED` or `FAILING`. |
-| Design deviation exists | WARNING unless it breaks a spec. |
+| Orchestrator says `STRICT TDD MODE IS ACTIVE` | Authoritative. Load the module |
+| Cached `strict_tdd: true` and a runner exists | Strict TDD verify. Load the module |
+| Strict TDD false, or no runner | Standard verify. Skip TDD checks |
+| Only the tasks artifact exists | Verify task completion only. Record what you skipped |
+| Tasks + spec | Verify completeness and correctness. Skip design coherence, record it |
+| Proposal + spec + design + tasks | Verify every dimension |
+| Any implementation task unchecked | **CRITICAL** — blocks archive readiness |
+| A cleanup task unchecked | WARNING |
+| Test command exits non-zero | **CRITICAL** |
+| Spec scenario with no passing covering test | **CRITICAL** — `UNTESTED` or `FAILING` |
+| Design deviation | WARNING, unless it breaks a spec — then CRITICAL |
+| `allowedEditRoots` cannot be proven | STOP. Report rather than verifying blind |
 
-## Execution Steps
+## Sequence
 
-1. Load relevant skills via shared SDD Section A.
-2. Retrieve artifacts via shared Section B for the active persistence mode, or read the concrete `contextFiles` from structured status.
-3. Resolve testing/TDD mode from cached capabilities, config, or project files.
-4. Count completed and incomplete tasks. Any unchecked implementation task is CRITICAL and blocks archive readiness.
-5. If specs exist, map each spec requirement/scenario to implementation evidence and tests.
-6. If design exists, check design decisions against changed code. If design is missing, skip design coherence and record why.
-7. Run test, build/type-check, and coverage commands when available. For full spec verification, preserve gentle-ai's stricter runtime evidence: source inspection alone does not prove spec scenario compliance.
-8. Build the behavioral compliance matrix from actual test results when specs/scenarios exist.
-9. Persist and return the verification report, including skipped dimensions for missing artifacts.
+1. Load skills (section A).
+2. Retrieve artifacts (section B) — every one the status says exists.
+3. Resolve the TDD mode from cached capabilities or the project files.
+4. Count complete and incomplete tasks.
+5. Spec exists → map every requirement and scenario to implementation evidence **and
+   to a test**.
+6. Design exists → check its decisions against the changed code. Missing → skip
+   coherence and record why you skipped it.
+7. Run the test, build/type-check and coverage commands available. This is the step
+   that separates verification from review.
+8. Build the behavioural compliance matrix from **actual test results**, not from
+   what the code appears to do.
+9. Persist and return, naming every dimension you skipped.
 
-## Output Contract
+Report what you ran and what it printed. A verdict without command output is an
+opinion.
 
-Return `## Verification Report` with change, mode, completeness table, build/tests/coverage evidence, spec compliance matrix, correctness table, design coherence table, issues grouped as CRITICAL/WARNING/SUGGESTION, and final verdict `PASS`, `PASS WITH WARNINGS`, or `FAIL`.
+## Graceful degradation
 
-## Graceful Artifact Handling
+| Artifacts present | Verdict may reach | Never claim |
+|---|---|---|
+| Tasks only | `PASS WITH WARNINGS`, task completion only | Spec correctness, design coherence |
+| Tasks + spec | Full spec verdict when runtime evidence exists | Design coherence |
+| Full set | Any verdict | — |
 
-- **Tasks only**: verify objective task completion only. Do not claim spec correctness or design coherence. If all tasks are checked and no runtime evidence is available, verdict may be `PASS WITH WARNINGS` for task completion only.
-- **Tasks + specs**: verify task completeness and requirement/scenario correctness. Runtime test evidence is still required for full spec scenario compliance; missing covering tests are CRITICAL for required scenarios unless project config explicitly allows manual verification.
-- **Full artifacts**: verify completeness, correctness, and coherence.
-- **Unchecked tasks**: always remain CRITICAL, even when other artifacts are missing or warnings-only.
+Missing covering tests for a required scenario stay CRITICAL unless project config
+explicitly allows manual verification. Unchecked implementation tasks stay CRITICAL
+regardless of what else is missing — that one has no degraded form.
 
-## References
+Say which dimensions you could not check. A verdict that hides its own blind spots is
+worse than a `partial`, because the orchestrator will archive on it.
 
-- [references/report-format.md](references/report-format.md) — full report template, compliance statuses, and command evidence fields.
-- [strict-tdd-verify.md](strict-tdd-verify.md) — load only when Strict TDD is active.
-- `../_shared/sdd-phase-common.md` — skill loading, retrieval, persistence, and return envelope.
+## Output
+
+`## Verification Report` with: change and mode, a completeness table, build/test/coverage
+evidence including the commands and their output, the spec compliance matrix, a
+correctness table, design coherence, issues grouped CRITICAL / WARNING / SUGGESTION,
+and a final verdict of `PASS`, `PASS WITH WARNINGS` or `FAIL`.
+
+Full template and the compliance status values:
+[references/report-format.md](references/report-format.md).

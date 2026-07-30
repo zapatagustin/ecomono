@@ -1,6 +1,6 @@
 ---
 name: ecomono-sdd-apply
-description: "Implement SDD tasks from specs and design. Trigger: orchestrator launches apply for one or more change tasks."
+description: "Implement SDD tasks from spec and design. Trigger: orchestrator launches apply for one or more change tasks."
 disable-model-invocation: true
 user-invocable: false
 license: MIT
@@ -12,195 +12,147 @@ metadata:
   delegate_only: true
 ---
 
-## Executor Override
+## Who runs this
 
-If you ARE the sub-agent (NOT the orchestrator), the gate below does NOT apply to you. Continue with the phase work below. Do NOT delegate. Do NOT call the Skill tool. You are the executor — execute.
+**You are the executor.** Implement the assigned tasks yourself. Do not delegate, do
+not call the Skill tool, do not spawn sub-agents.
 
-> **ORCHESTRATOR GATE**: If you loaded this skill via the `skill()` tool, you are
-> the ORCHESTRATOR — STOP. Do NOT execute these instructions inline. Delegate to
-> the dedicated `ecomono-sdd-apply` sub-agent using your platform's delegation primitive
-> (e.g., `task(...)`, sub-agent invocation, etc.). This skill is for EXECUTORS
-> only.
+> **If you reached this through the `Skill` tool you are the ORCHESTRATOR — stop.**
+> Delegate to the `ecomono-sdd-apply` sub-agent instead. Running a phase inline is
+> how an orchestrator's context ends up holding every file the phase touched.
 
+Artifacts default to **English** — see the Language section of
+[sdd-orchestrator.md](../ecomono-sdd-shared/sdd-orchestrator.md). Do not inherit the
+conversation's language or the persona's voice into code, comments or artifacts.
 
+## Inputs
 
-## Language Domain Contract
+From the orchestrator: change name, the specific tasks to implement, artifact store
+mode, the structured status per
+[sdd-status-contract.md](../ecomono-sdd-shared/sdd-status-contract.md), and the
+resolved delivery decision (`delivery_strategy`, `chain_strategy`, and any accepted
+`size:exception`).
 
-Generated technical artifacts default to English. Do not inherit the user's conversational language or the active persona's regional voice for SDD artifacts unless the user explicitly requests that artifact language or the project convention requires it.
+Skills: section A of
+[sdd-phase-common.md](../ecomono-sdd-shared/sdd-phase-common.md). Retrieval: section
+B. Persistence: section C. Return envelope: section D.
 
-If Spanish technical artifacts are explicitly requested, use neutral/professional Spanish unless the user explicitly asks for a regional variant.
+## Gate before any edit
 
-Public/contextual comments follow the target context language by default. Explicit user language or tone overrides win; Spanish comments default to neutral/professional Spanish unless the user or target context clearly calls for regional tone.
+Consume the structured status first, or rebuild it from artifacts. Readiness is never
+inferred from the conversation.
 
-## Purpose
+| `applyState` | Do |
+|---|---|
+| `blocked` | STOP. Return `blocked` naming the missing artifact or unsafe context |
+| `all_done` | Do not edit. Return `success`, `next_recommended` per dependency state |
+| `ready` | Proceed, on the assigned pending tasks only |
 
-You are a sub-agent responsible for IMPLEMENTATION. You receive specific tasks from `tasks.md` and implement them by writing actual code. You follow the specs and design strictly.
+Edit scope is a safety boundary, not bookkeeping:
 
-## What You Receive
+- `allowedEditRoots` present → edit only inside those roots.
+- A needed edit falls outside them → STOP and report the path. Do not widen your own
+  scope.
+- Cannot prove a file is inside the workspace → STOP and ask.
 
-From the orchestrator:
-- Change name
-- The specific task(s) to implement (e.g., "Phase 1, tasks 1.1-1.3")
-- Artifact store mode (`ecomono-memory | openspec | hybrid | none`)
-- Structured status from `agent-skills/ecomono-sdd-shared/sdd-status-contract.md`: `schemaName`, `planningHome`, `changeRoot`, `artifactPaths`, `contextFiles`, `applyState`, task progress, dependency states, and `actionContext`
-- Delivery strategy and resolved workload decision (`ask-on-risk | auto-chain | single-pr | exception-ok`, plus PR slice or `size:exception` when applicable)
+## Sequence
 
-## Execution and Persistence Contract
+### 1. Read before writing
 
-> Follow **Section B** (retrieval) and **Section C** (persistence) from `agent-skills/ecomono-sdd-shared/sdd-phase-common.md`.
+In this order, because each one constrains the next:
 
-- **ecomono-memory**: Read `sdd/{change-name}/proposal`, `sdd/{change-name}/spec`, `sdd/{change-name}/design`, `sdd/{change-name}/tasks` (all required — keep tasks ID for updates). Mark tasks complete via `mem_update(id: {tasks-observation-id}, content: "...")`. Save progress as `sdd/{change-name}/apply-progress`.
-- **openspec**: Read and follow `agent-skills/ecomono-sdd-shared/openspec-convention.md`. Update `tasks.md` with `[x]` marks.
-- **hybrid**: Follow BOTH conventions — persist progress to ecomono-memory (`mem_update` for tasks) AND update `tasks.md` with `[x]` marks on filesystem.
-- **none**: Return progress only. Do not update project artifacts.
+1. The tasks artifact — what you were asked for.
+2. The spec — what the code must do. These are your acceptance criteria.
+3. The design — how it must be structured. These constrain your approach.
+4. The existing code in the affected files — the patterns you must match.
 
-## Status and Workspace Guard
+Read all four before the first edit. Writing code against a half-read spec produces
+work that passes review and fails verification.
 
-Before reading implementation files or writing code, consume the structured status provided by the orchestrator or build the equivalent status from artifacts.
+### 2. Enforce the workload decision
 
-- If `applyState` is `blocked`, STOP and return `blocked` with the missing artifacts or unsafe context.
-- If `applyState` is `all_done`, do not edit. Return `success` with `next_recommended: ecomono-sdd-verify` or `ecomono-sdd-archive` based on dependency state.
-- If `applyState` is `ready`, proceed only on the assigned pending tasks.
-- Read context from `contextFiles` / `artifactPaths` instead of assuming fixed filenames. For spec-driven OpenSpec, these normally map to proposal, specs, design, and tasks.
-- If `actionContext.mode` is `workspace-planning` and `allowedEditRoots` is empty, STOP before editing. Treat linked repos and folders as read-only planning context.
-- If `allowedEditRoots` is present, edit only files under those roots. If a needed edit is outside the allowed roots, STOP and report the unsafe path.
+Inspect the tasks artifact for `Review Workload Forecast`. If any of
+`400-line budget risk: High`, `Chained PRs recommended: Yes`, or
+`Decision needed before apply: Yes`, a resolved delivery path MUST already be in your
+prompt:
 
-## What to Do
+| Resolution | Do |
+|---|---|
+| `auto-chain`, or a chosen chained/stacked mode | Implement only the assigned work-unit slice. Keep it autonomous. Report the PR boundary |
+| `exception-ok`, or single PR with exception | Continue only if the prompt explicitly records that `size:exception` was accepted |
+| `single-pr` above budget | Continue only after the prompt records `size:exception` |
 
-### Step 1: Load Skills
-Follow **Section A** from `agent-skills/ecomono-sdd-shared/sdd-phase-common.md`.
+Follow `Chain strategy` when present and not `pending`:
 
-### Step 2: Read Context
+- `stacked-to-main` — each PR targets the previous PR's branch, or `main` once that
+  one merged.
+- `feature-branch-chain` — PR #1 targets the tracker branch, each later PR targets
+  the immediately previous PR branch. Only the tracker reaches `main`. A child diff
+  showing earlier slices defeats the point; retarget or rebase until it is clean.
 
-Before writing ANY code:
-1. Read the structured status and confirm `applyState: ready`
-2. Read every applicable artifact path/topic in `contextFiles`
-3. Read the specs — understand WHAT the code must do
-4. Read the design — understand HOW to structure the code
-5. Read existing code in affected files — understand current patterns
-6. Check the project's coding conventions from `config.yaml`
+Neither present → STOP before writing code and return `blocked` with:
+`Workload decision required before apply: estimated work may exceed 400 changed lines. Ask which chain strategy to use (stacked-to-main, feature-branch-chain, or size-exception).`
 
-#### Step 2a: Enforce Review Workload Decision
+### 3. Read previous progress
 
-Before implementing, inspect the tasks artifact for `Review Workload Forecast`.
+Search `sdd/{change-name}/apply-progress`. Found → `mem_get_observation`, read it in
+full, and start from the first incomplete task.
 
-If the forecast says any of the following:
+**If the orchestrator told you previous progress exists, reading it is mandatory.**
+Saving over it without reading permanently loses every batch before yours.
 
-- `400-line budget risk: High`
-- `Chained PRs recommended: Yes`
-- `Decision needed before apply: Yes`
+### 4. Resolve the mode
 
-Then you MUST confirm the orchestrator/user provided a resolved delivery path:
+Read cached testing capabilities from `ecomono-sdd-init/{project}`, falling back to
+the project files (`package.json`, `go.mod`, …).
 
-1. **`auto-chain` or chosen chained/stacked PR mode**: implement only the assigned work-unit slice, keep scope autonomous, and report the intended PR boundary. Follow the `Chain strategy` from the tasks artifact (`stacked-to-main` or `feature-branch-chain`) for branch targeting.
-2. **`exception-ok` or single PR with exception**: continue only if the prompt explicitly says the maintainer accepts `size:exception`.
-3. **`single-pr` above budget**: continue only after the prompt explicitly records `size:exception`.
+- `strict_tdd: true` **and** a test runner exists → **strict TDD**. Read
+  [strict-tdd.md](strict-tdd.md) and follow its cycle instead of step 5.
+- Otherwise → **standard**. `strict-tdd.md` is never read, so it costs nothing.
 
-Also check for `Chain strategy` in the tasks artifact. If present and not `pending`, follow it consistently:
-- `stacked-to-main`: each PR targets the previous PR's branch (or `main` after the previous merges).
-- `feature-branch-chain`: PR #1 targets the feature/tracker branch; later PRs target the immediate previous PR branch. The tracker PR aggregates the feature branch to `main`; child PR diffs must stay focused on only the current work unit and must never target `main` directly.
+Cache the resolved mode for your return summary.
 
-If neither delivery decision nor chain strategy is present, STOP before writing code and return `blocked` with: `Workload decision required before apply: estimated work may exceed 400 changed lines. Ask the user which chain strategy to use (stacked-to-main, feature-branch-chain, or size-exception).`
+**Strict TDD has no silent fallback.** If you resolved it active, you follow it or
+you report failure. Quietly switching to standard mode makes the verify phase's
+evidence check meaningless.
 
-#### Step 2b: Read Previous Apply-Progress (if exists)
+Under strict TDD you MUST emit a **TDD Cycle Evidence** table in apply-progress, one
+row per task with RED (test written first) → GREEN (implementation passes) →
+REFACTOR. A task completed without a test written first is marked FAILED in that
+table, honestly. Verify rejects work whose evidence table is missing or incomplete.
 
-Before starting work, check for existing apply-progress:
+### 5. Implement (standard mode)
 
-1. `mem_search(query: "sdd/{change-name}/apply-progress", project: "{project}")`
-2. If found: `mem_get_observation(id)` → read the full content
-3. Parse which tasks are already marked complete
-4. Skip those tasks — start from the first incomplete task
-5. When saving your apply-progress in Step 6, MERGE: include all previously completed tasks PLUS your newly completed tasks in a single combined artifact
+Per task: read the task, then its spec scenarios, then the design constraints, then
+the surrounding code patterns. Write the code. Mark the task `[x]` in the persisted
+tasks artifact **immediately**, not at the end of the batch — a crash between task 3
+and the final save otherwise loses three tasks of state.
 
-**CRITICAL**: If the orchestrator told you previous progress exists, you MUST read it. If you overwrite without reading, completed work from prior batches is permanently lost.
+Note deviations and issues as they happen; reconstructing them at the end loses the
+reason.
 
-### Step 3: Read Testing Capabilities and Resolve Mode
+### 6. Persist
 
-Read the cached testing capabilities to determine implementation mode:
+Mandatory. Section C, artifact `apply-progress`, topic key
+`sdd/{change-name}/apply-progress`. Also mark the completed tasks `[x]` in the tasks
+artifact via `mem_update(id: {tasks-observation-id}, …)`.
 
-```
-Read testing capabilities from:
-├── ecomono-memory: mem_search("sdd/{project}/testing-capabilities") → mem_get_observation(id)
-├── openspec: openspec/config.yaml → strict_tdd + testing section
-└── Fallback: check project files directly (package.json, go.mod, etc.)
+**Merge, never overwrite.** Your saved artifact must carry every previously completed
+task — status and evidence — plus your own, as one cumulative record across all
+batches.
 
-Resolve mode:
-├── IF strict_tdd: true AND test runner exists
-│   └── STRICT TDD MODE → Load and follow strict-tdd.md module
-│       (read the file: agent-skills/ecomono-sdd-apply/strict-tdd.md)
-│
-├── IF strict_tdd: false OR no test runner
-│   └── STANDARD MODE → use Step 4 below (no TDD module loaded)
-│
-└── Cache the resolved mode for the return summary
-```
+Once merged and saved, the previous apply-progress is superseded: carry its task
+status forward and stop quoting its reasoning. A task closed in batch 1 does not get
+re-litigated in batch 3, and superseded rationale costs exactly what current
+rationale costs while pointing at code that has moved. Need its detail again →
+re-fetch the current artifact rather than citing the copy from earlier in the thread.
 
-**Key principle**: If Strict TDD Mode is not active, ZERO TDD instructions are loaded. The `strict-tdd.md` module is never read, never processed, never consumes tokens.
+### 7. Return
 
-#### Hard Gate (Strict TDD Only)
-
-If Strict TDD Mode is active (either from orchestrator injection or self-discovery):
-- You MUST produce a **TDD Cycle Evidence** table in your apply-progress artifact
-- Each task row MUST have: RED (test written first) → GREEN (implementation passes) → REFACTOR columns
-- If you complete a task WITHOUT writing tests first, mark it as FAILED in the evidence table
-- The verify phase WILL reject your work if the TDD Evidence table is missing or incomplete
-
-**There is no silent fallback.** If you resolved Strict TDD as active, you follow it or you report failure. You do NOT quietly switch to Standard Mode.
-
-### Step 4: Implement Tasks (Standard Workflow)
-
-This step is used when Strict TDD Mode is NOT active:
-
-```
-FOR EACH TASK:
-├── Read the task description
-├── Read relevant spec scenarios (these are your acceptance criteria)
-├── Read the design decisions (these constrain your approach)
-├── Read existing code patterns (match the project's style)
-├── Write the code
-├── Mark task as complete [x] in the persisted tasks artifact immediately
-└── Note any issues or deviations
-```
-
-### Step 5: Mark Tasks Complete
-
-Update `tasks.md` — change `- [ ]` to `- [x]` for completed tasks:
-
-```markdown
-## Phase 1: Foundation
-
-- [x] 1.1 Create `internal/auth/middleware.go` with JWT validation
-- [x] 1.2 Add `AuthConfig` struct to `internal/config/config.go`
-- [ ] 1.3 Add auth routes to `internal/server/server.go`  ← still pending
-```
-
-### Step 6: Persist Progress
-
-**This step is MANDATORY — do NOT skip it.**
-
-Follow **Section C** from `agent-skills/ecomono-sdd-shared/sdd-phase-common.md`.
-- artifact: `apply-progress`
-- topic_key: `sdd/{change-name}/apply-progress`
-- type: `architecture`
-- Also update the tasks artifact with `[x]` marks via `mem_update` (ecomono-memory) or file edit (openspec/hybrid).
-
-#### Merge Protocol
-
-When saving apply-progress:
-1. If you read previous progress in Step 2b, your artifact MUST include ALL previously completed tasks (copy their status and evidence) PLUS your new completions
-2. The final artifact should show the cumulative state of ALL tasks across ALL batches
-3. Format: keep the same structure but ensure no completed task is lost from prior batches
-4. Once the merged artifact is saved, the previous apply-progress is superseded: carry its task
-   status forward, but stop quoting its reasoning. Superseded rationale costs the same as current
-   rationale and misleads — a task closed in batch 1 does not get re-litigated in batch 3. Need
-   its detail again? Re-fetch the current artifact rather than citing the copy earlier in the
-   thread.
-
-### Step 7: Return Summary
-
-Before returning, re-read the persisted tasks artifact and confirm every task you report as completed is marked `[x]` there. If the artifact still shows a completed task as `- [ ]`, fix the checkbox before returning. Do not report `Ready for verify` while completed work is only reflected in internal todos or apply-progress.
-
-Return to the orchestrator:
+Before returning, re-read the persisted tasks artifact and confirm every task you
+report complete is actually `[x]` there. Fix any that are not. Internal todo state is
+not completion evidence, and reporting `Ready for verify` while completion exists
+only in your own notes sends verify looking for work that was never recorded.
 
 ```markdown
 ## Implementation Progress
@@ -208,57 +160,46 @@ Return to the orchestrator:
 **Change**: {change-name}
 **Mode**: {Strict TDD | Standard}
 
-### Completed Tasks
-- [x] {task 1.1 description}
-- [x] {task 1.2 description}
+### Completed
+- [x] {task 1.1}
 
-### Files Changed
-| File | Action | What Was Done |
-|------|--------|---------------|
-| `path/to/file.ext` | Created | {brief description} |
-| `path/to/other.ext` | Modified | {brief description} |
+### Files changed
+| File | Action | What |
+|---|---|---|
+| `path/to/file.ext` | Created \| Modified | {brief} |
 
-{IF Strict TDD Mode → include TDD Cycle Evidence table from strict-tdd.md}
+{Strict TDD → the TDD Cycle Evidence table}
 
-### Deviations from Design
-{List any places where the implementation deviated from design.md and why.
-If none, say "None — implementation matches design."}
+### Deviations from design
+{Where and why, or "None — implementation matches design."}
 
-### Issues Found
-{List any problems discovered during implementation.
-If none, say "None."}
+### Issues found
+{What surfaced, or "None."}
 
-### Remaining Tasks
-- [ ] {next task}
+### Remaining
 - [ ] {next task}
 
-### Workload / PR Boundary
-- Mode: {single PR | chained PR slice | stacked PR slice | size:exception}
-- Current work unit: {unit name or "N/A"}
-- Boundary: {what this apply batch starts from and ends with}
-- Estimated review budget impact: {brief note}
+### Workload / PR boundary
+- Mode: {single PR | chained slice | stacked slice | size:exception}
+- Work unit: {name or N/A}
+- Boundary: {what this batch starts from and ends with}
 
 ### Status
-{N}/{total} tasks complete. {Ready for next batch / Ready for verify / Blocked by X}
+{N}/{total} complete. {Ready for next batch | Ready for verify | Blocked by X}
 ```
 
 ## Rules
 
-- ALWAYS read specs before implementing — specs are your acceptance criteria
-- ALWAYS follow the design decisions — don't freelance a different approach
-- ALWAYS match existing code patterns and conventions in the project
-- ALWAYS consume or produce structured status before implementation; do not infer readiness from conversation alone
-- STOP on `applyState: blocked` and do not edit; STOP on unsafe `actionContext` or edit roots
-- In `openspec` mode, mark tasks complete in `tasks.md` AS you go, not at the end
-- Before returning, re-read the persisted tasks artifact and ensure completed tasks are visibly marked `[x]`; internal todos are not completion evidence
-- If you discover the design is wrong or incomplete, NOTE IT in your return summary — don't silently deviate
-- If a task is blocked by something unexpected, STOP and report back
-- If workload forecast requires a decision and none was provided, STOP before writing code
-- When applying a chained/stacked PR slice, keep the batch autonomous: one deliverable scope, verification included, and clear rollback boundary
-- When applying `size:exception`, state it explicitly in apply-progress and the return summary
-- NEVER implement tasks that weren't assigned to you
-- Skill loading is handled in Step 1 — follow any loaded skills strictly when writing code
-- Apply any `rules.apply` from `openspec/config.yaml`
-- If Strict TDD Mode is active (Step 3), load `strict-tdd.md` and follow its cycle INSTEAD of Step 4
-- When Strict TDD is active, the `strict-tdd.md` module's rules OVERRIDE Step 4 entirely
-- Return envelope per **Section D** from `agent-skills/ecomono-sdd-shared/sdd-phase-common.md`.
+- Spec before implementation. It is the acceptance criteria, not background reading.
+- Follow the design. Finding a better approach mid-task is not licence to take it —
+  note it and continue, or stop and report.
+- Match the project's existing patterns over your own preference.
+- Implement only what was assigned. Adjacent work that "was right there" is scope
+  creep and lands unreviewed.
+- Design wrong or incomplete → say so in the return summary. Never silently deviate;
+  a deviation nobody was told about becomes the next phase's mystery.
+- Task blocked by something unexpected → STOP and report. Do not improvise around it.
+- Applying a slice → keep the batch autonomous: one deliverable scope, its
+  verification, a clean rollback boundary.
+- Applying `size:exception` → state it in both apply-progress and the return summary.
+- Follow every skill loaded in section A strictly while writing code.
