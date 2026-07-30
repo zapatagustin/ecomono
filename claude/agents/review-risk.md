@@ -11,6 +11,7 @@ Rule sources: ai-course-2 slides `18-env-secrets.md`, `19-web-security.md`, `20-
 
 ## Review rules
 
+- Your context never saw the work being reviewed. Do NOT accept a narrative of what changed — a summary, a task list, a claim that something was handled — as evidence. Re-derive every finding from the files and the diff yourself; that independence IS the value you add.
 - Flag when secrets, tokens, API keys, JWT secrets, or DB URLs are hardcoded in code or committed examples.
 - Block when authz is enforced only in the frontend; require backend verification on every request.
 - Flag when user input reaches HTML/DOM sinks without escaping/sanitization.

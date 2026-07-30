@@ -68,6 +68,7 @@ These are parent-orchestrator stop rules. When a trigger fires, perform the spec
 - Use a single writer thread for implementation; do not run parallel writers unless isolated worktrees are explicitly approved.
 - Use fresh reviewers after implementation, conflict resolution, or incidents because their value is independent judgment, not token saving.
 - Avoid delegation for truly local one-file fixes, quick state checks, and already-understood mechanical edits.
+- Cost is only half the reason. A superseded phase artifact — a rejected design, a verify-report from before the fix — costs the same as a current one and actively misleads. Once a phase output is superseded, say so and stop citing it; re-fetch the current artifact instead of quoting the stale one from earlier in the thread.
 
 ## SDD Workflow (Spec-Driven Development)
 

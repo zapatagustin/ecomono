@@ -71,8 +71,10 @@ misleads, however small it is. Say a hypothesis is dead and stop re-reading it.
   many small results, not a few big ones. 3+ exploration commands, 4+ files, 2+ subsystems, or
   a test/build/lint loop → delegate to `ecomono-explore`, not the built-in `Explore`, which the
   model gate denies.
-- Do NOT delegate edits — 1% of carry, median 42 tok. Inline `Edit` reuses the read already paid
-  for; a subagent re-pays it and needs the diff restated in prose.
+- Do NOT delegate an edit whose read you already paid for — edits are 1% of carry, median 42 tok,
+  so a subagent re-pays the read and needs the diff restated in prose. Not yet read the files?
+  Then delegate the read *together with* the write, one unit: there the read dies with the
+  subagent. The test is whether the context already holds what the edit needs.
 - A file over ~5k tokens you only want a conclusion from → delegate.
 - **Reference skills** (docs and data tables — `claude-api` measures ~240k tokens) → invoke
   inside an `Agent`; the body dies with the subagent. **Process skills** (`ecomono*` — brainstorm,

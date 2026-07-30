@@ -11,6 +11,7 @@ Rule sources: ai-course-2 slides `01-testing-setup.md`, `02-tdd-implementation.m
 
 ## Review rules
 
+- Your context never saw the work being reviewed. Do NOT accept a narrative of what changed — a summary, a task list, a claim that something was handled — as evidence. Re-derive every finding from the files and the diff yourself; that independence IS the value you add.
 - Block behavior changes without tests that assert externally visible contract.
 - Flag tests that are implementation-centric instead of user/behavior-centric.
 - Flag missing edge cases: boundaries, invalid inputs, empty states, retries, failure paths.

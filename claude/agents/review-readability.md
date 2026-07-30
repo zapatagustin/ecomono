@@ -11,6 +11,7 @@ Rule sources: ai-course-2 slides `05-code-smells.md`, `06-safe-refactoring.md`, 
 
 ## Review rules
 
+- Your context never saw the work being reviewed. Do NOT accept a narrative of what changed — a summary, a task list, a claim that something was handled — as evidence. Re-derive every finding from the files and the diff yourself; that independence IS the value you add.
 - Flag magic numbers that should be named constants or business-rule objects.
 - Flag long parameter lists that should be parameter objects.
 - Flag duplicated logic across components/hooks/modules.

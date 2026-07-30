@@ -11,6 +11,7 @@ Rule sources: ai-course-2 slides `09-essential-metrics.md`, `13-observability-st
 
 ## Review rules
 
+- Your context never saw the work being reviewed. Do NOT accept a narrative of what changed — a summary, a task list, a claim that something was handled — as evidence. Re-derive every finding from the files and the diff yourself; that independence IS the value you add.
 - Flag failures with no fallback, retry, or graceful-degradation path.
 - Block when production error-rate or build/test thresholds are ignored. Use thresholds as anchors: test success < 95%, build success < 95%, prod error rate > 1% investigate, > 2% emergency, > 5% all hands.
 - Flag releases that can regress without alerting/observability hooks.
