@@ -1,6 +1,6 @@
 ---
 name: ecomono-sdd-archive
-description: "Archive a completed SDD change by syncing delta specs. Trigger: orchestrator launches archive after implementation and verification."
+description: "Merge delta specs into the main specs and close the change. Trigger: orchestrator launches archive after verification passes."
 disable-model-invocation: true
 user-invocable: false
 license: MIT
@@ -12,199 +12,148 @@ metadata:
   delegate_only: true
 ---
 
-## Executor Override
+**You are the executor.** Archive it yourself, do not delegate, do not call the Skill
+tool. Reached this through `Skill`? You are the orchestrator — stop and delegate to the
+`ecomono-sdd-archive` sub-agent instead.
 
-If you ARE the sub-agent (NOT the orchestrator), the gate below does NOT apply to you. Continue with the phase work below. Do NOT delegate. Do NOT call the Skill tool. You are the executor — execute.
-
-> **ORCHESTRATOR GATE**: If you loaded this skill via the `skill()` tool, you are
-> the ORCHESTRATOR — STOP. Do NOT execute these instructions inline. Delegate to
-> the dedicated `ecomono-sdd-archive` sub-agent using your platform's delegation primitive
-> (e.g., `task(...)`, sub-agent invocation, etc.). This skill is for EXECUTORS
-> only.
-
-
-
-## Language Domain Contract
-
-Generated technical artifacts default to English. Do not inherit the user's conversational language or the active persona's regional voice for SDD artifacts unless the user explicitly requests that artifact language or the project convention requires it.
-
-If Spanish technical artifacts are explicitly requested, use neutral/professional Spanish unless the user explicitly asks for a regional variant.
-
-Public/contextual comments follow the target context language by default. Explicit user language or tone overrides win; Spanish comments default to neutral/professional Spanish unless the user or target context clearly calls for regional tone.
+Skill loading, retrieval, persistence and the return envelope are sections A–D of
+[sdd-phase-common.md](../ecomono-sdd-shared/sdd-phase-common.md). Artifacts default to
+English.
 
 ## Purpose
 
-You are a sub-agent responsible for ARCHIVING. You merge delta specs into the main specs (source of truth), then move the change folder to the archive. You complete the SDD cycle.
+Merge the change's delta specs into the **main specs** — the accumulated baseline at
+`spec/{capability}` — then record closure. This is the phase that makes SDD cumulative
+rather than a pile of per-change tickets.
 
-## What You Receive
+**Reads:** every artifact for the change, plus `spec/{capability}` for each capability
+the delta touches.
+**Writes:** `spec/{capability}` (merged), `spec/{capability}/prev` (pre-merge revision),
+and artifact `archive-report` at `sdd/{change-name}/archive-report`.
 
-From the orchestrator:
-- Change name
-- Artifact store mode (`ecomono-memory | openspec | hybrid | none`)
-- Structured status from `agent-skills/ecomono-sdd-shared/sdd-status-contract.md`, including artifact paths, task progress, dependency states, and actionContext
-- Any explicit intentional archive override text from the user/orchestrator
+**This is the only phase that destroys data.** Every gate below exists because of that.
 
-## Execution and Persistence Contract
+## Gates — all must pass before touching a main spec
 
-> Follow **Section B** (retrieval) and **Section C** (persistence) from `agent-skills/ecomono-sdd-shared/sdd-phase-common.md`.
+### Task completion
 
-- **ecomono-memory**: Read `sdd/{change-name}/proposal`, `sdd/{change-name}/spec`, `sdd/{change-name}/design`, `sdd/{change-name}/tasks`, `sdd/{change-name}/verify-report` (all required). Record all observation IDs in the archive report for traceability. Save as `sdd/{change-name}/archive-report`.
-- **openspec**: Read and follow `agent-skills/ecomono-sdd-shared/openspec-convention.md`. Perform merge and archive folder moves.
-- **hybrid**: Follow BOTH conventions — persist archive report to ecomono-memory (with observation IDs) AND perform filesystem merge + archive folder moves.
-- **none**: Return closure summary only. Do not perform archive file operations.
+`ecomono-sdd-apply` owns marking tasks; you validate the persisted artifact reflects
+reality. Read the full `sdd/{change-name}/tasks` observation.
 
-### Task Completion Gate
+Any implementation task still `- [ ]` → STOP, return `blocked`, and report that apply
+must be re-run or corrected. Do not merge, do not claim the cycle is complete.
 
-`ecomono-sdd-apply` is responsible for marking completed tasks in the persisted tasks artifact. `ecomono-sdd-archive` is responsible for validating that the persisted artifact reflects the final state before closing the cycle.
+The one exception: the orchestrator explicitly instructs a stale-checkbox
+reconciliation **and** `apply-progress` / `verify-report` prove every unchecked task is
+actually done. Record the exact reconciliation reason in the archive report. Internal
+todo state is never proof.
 
-Before syncing specs or moving any archive folder, inspect the tasks artifact:
+### Verification
 
-- **ecomono-memory**: read the full `sdd/{change-name}/tasks` observation.
-- **openspec/hybrid**: read `openspec/changes/{change-name}/tasks.md`.
+CRITICAL issues in `verify-report` **always** block. There is no override, and no
+instruction from the orchestrator changes that — a CRITICAL that gets archived becomes
+the baseline's problem forever.
 
-If any implementation task remains unchecked (`- [ ]`):
+Missing proposal, spec or design → report it. Continue only when the user explicitly
+chooses a partial archive, and record what was missing.
 
-1. STOP and return `blocked`; do not sync specs, move the change folder, or claim the SDD cycle is complete.
-2. Report that `ecomono-sdd-apply` must be rerun or corrected so it marks completed tasks in the persisted tasks artifact.
-3. Only proceed if the orchestrator explicitly instructs you to reconcile stale checkboxes and `apply-progress`/`verify-report` prove every unchecked task is complete. If you do this exceptional repair, record the exact reconciliation reason in the archive report.
+### Edit scope
 
-The archived audit trail MUST NOT contain stale unchecked tasks for completed work. Internal todo state is not enough; the persisted SDD task artifact is the source of truth for completion visibility.
+`allowedEditRoots` present → stay inside them. Cannot prove scope → STOP and ask.
 
-### Strict-vs-OpenSpec Archive Policy
+## Merging
 
-OpenSpec permits archiving with incomplete artifacts or tasks after a user confirmation. gentle-ai is stricter by default:
+For each delta, match requirements **by name**:
 
-- Incomplete implementation tasks block archive unless they are stale checkboxes and apply-progress/verify-report prove completion.
-- CRITICAL issues in `verify-report` always block archive. Do not accept an override for CRITICAL verification issues.
-- `ecomono-sdd-archive` does not own normal task completion. `ecomono-sdd-apply` owns checkbox completion; archive may only perform exceptional mechanical reconciliation with proof from apply-progress and verify-report.
-- Missing proposal/spec/design artifacts should be reported. Archive may continue only when the user explicitly chooses an intentional partial archive and the archive report records what was missing.
+| Delta section | Action | Risk |
+|---|---|---|
+| `ADDED` | Append to the main spec's requirements | Safe |
+| `RENAMED` | Rename in place, preserving scenarios unless the delta also modifies them | Safe. Requires explicit old → new |
+| `REMOVED` | Delete the requirement, after recording `Reason` and `Migration` | Explicit. Refuse without both notes |
+| `MODIFIED` | **Replace** the matching requirement wholesale | **Destructive** |
 
-### Action Context Guard
+Preserve every requirement the delta does not mention. Keep the heading hierarchy
+intact.
 
-- If structured status reports `actionContext.mode: workspace-planning`, STOP. Do not move workspace changes into repo-local archives or edit linked repos.
-- If `allowedEditRoots` is present, archive operations must stay inside those roots.
+No main spec exists for a capability → the delta is a full spec. Write it to
+`spec/{capability}` directly.
 
-## What to Do
+### The MODIFIED guard
 
-### Step 1: Load Skills
-Follow **Section A** from `agent-skills/ecomono-sdd-shared/sdd-phase-common.md`.
+A `MODIFIED` block replaces a requirement entirely, so a partially copied block silently
+deletes the scenarios it omitted. Because the main spec is a memory upsert, there is no
+git history to recover from.
 
-### Step 2: Sync Delta Specs to Main Specs
+**Before writing, count.** For each MODIFIED requirement, compare the scenario count in
+the delta block against the one in the current main spec:
 
-Do not start this step until the **Task Completion Gate** above passes.
+- **Fewer scenarios in the delta → STOP.** Return `blocked` naming the requirement and
+  both counts. Do not merge, do not "merge the parts that look complete". Either the
+  delta is truncated and spec must fix it, or the drop was intentional and belongs in
+  `REMOVED` with its notes.
+- Same or more → proceed.
 
-**IF mode is `ecomono-memory`:** Skip filesystem sync — artifacts live in ecomono-memory only. The archive report (Step 5) records all observation IDs for traceability.
+Report the accounting for every merged requirement (`user-auth / Session Expiration: 4 → 5`).
+A merge that reports no counts cannot be audited.
 
-**IF mode is `none`:** Skip — no artifacts to sync.
+This check is not advisory. Earlier phases check the same thing — spec at authoring time,
+verify before you run — and this is the last place it can be caught, on the one
+operation that cannot be undone.
 
-**IF mode is `openspec` or `hybrid`:** For each delta spec in `openspec/changes/{change-name}/specs/`:
+### Keep one revision
 
-#### If Main Spec Exists (`openspec/specs/{domain}/spec.md`)
+Before upserting `spec/{capability}`, save the current content to
+`spec/{capability}/prev`. One revision per capability, overwritten each merge.
 
-Read the existing main spec and apply the delta:
+`ecomono: single-revision rollback, not history — the ceiling is that only the last merge is recoverable. Upgrade path: version the key per change (spec/{capability}@{change}) if audits ever need the full chain.`
 
-```
-FOR EACH SECTION in delta spec:
-├── ADDED Requirements → Append to main spec's Requirements section
-├── MODIFIED Requirements → Replace the matching requirement in main spec
-├── REMOVED Requirements → Delete the matching requirement from main spec after recording Reason/Migration
-└── RENAMED Requirements → Rename the matching requirement while preserving scenarios unless the delta also modifies them
-```
+That restores the safety net files got from git, at the cost of one extra key per
+capability rather than one per change.
 
-**Merge carefully:**
-- Match requirements by name (e.g., "### Requirement: Session Expiration")
-- Preserve all OTHER requirements that aren't in the delta
-- Maintain proper Markdown formatting and heading hierarchy
-- For REMOVED requirements, require `(Reason: ...)` and `(Migration: ...)` notes in the delta before deleting from main specs
-- For RENAMED requirements, require the old and new requirement names to be explicit
+## Closing
 
-#### If Main Spec Does NOT Exist
+Verify before reporting success:
 
-The delta spec IS a full spec (not a delta). Copy it directly:
+- [ ] Every merged main spec re-read and holding what you intended
+- [ ] Scenario accounting recorded for every MODIFIED requirement
+- [ ] `spec/{capability}/prev` written for each merged capability
+- [ ] Tasks artifact has no unchecked implementation tasks (or the recorded exception)
+- [ ] Every artifact observation ID captured for lineage
 
-```bash
-# Copy new spec to main specs
-openspec/changes/{change-name}/specs/{domain}/spec.md
-  → openspec/specs/{domain}/spec.md
-```
-
-### Step 3: Move to Archive
-
-**IF mode is `ecomono-memory`:** Skip — there are no `openspec/` directories to move. The archive report in ecomono-memory serves as the audit trail.
-
-**IF mode is `none`:** Skip — no filesystem operations.
-
-**IF mode is `openspec` or `hybrid`:** Move the entire change folder to archive with date prefix:
-
-```
-openspec/changes/{change-name}/
-  → openspec/changes/archive/YYYY-MM-DD-{change-name}/
-```
-
-Use today's date in ISO format (e.g., `2026-02-16`).
-
-### Step 4: Verify Archive
-
-**IF mode is `openspec` or `hybrid`:** Confirm:
-- [ ] Main specs updated correctly
-- [ ] Change folder moved to archive
-- [ ] Archive contains all artifacts (proposal, specs, design, tasks)
-- [ ] Archived `tasks.md` has no unchecked implementation tasks, unless the orchestrator explicitly approved archive-time stale-checkbox reconciliation backed by apply-progress/verify-report proof
-- [ ] Active changes directory no longer has this change
-
-**IF mode is `ecomono-memory`:** Confirm all artifact observation IDs are recorded in the archive report and the tasks observation has no unchecked implementation tasks unless the orchestrator explicitly approved archive-time stale-checkbox reconciliation backed by apply-progress/verify-report proof.
-
-**IF mode is `none`:** Skip verification — no persisted artifacts.
-
-### Step 5: Persist Archive Report
-
-**This step is MANDATORY — do NOT skip it.**
-
-Follow **Section C** from `agent-skills/ecomono-sdd-shared/sdd-phase-common.md`.
-- artifact: `archive-report`
-- topic_key: `sdd/{change-name}/archive-report`
-- type: `architecture`
-
-### Step 6: Return Summary
-
-Return to the orchestrator:
+## Output
 
 ```markdown
-## Change Archived
+## Archive Complete
 
 **Change**: {change-name}
-**Archived to**: `openspec/changes/archive/{YYYY-MM-DD}-{change-name}/` (openspec/hybrid) | ecomono-memory archive report (ecomono-memory) | inline (none)
 
-### Specs Synced
-| Domain | Action | Details |
-|--------|--------|---------|
-| {domain} | Created/Updated | {N added, M modified, K removed requirements} |
+### Specs Merged
+| Capability | Delta | Scenarios | Revision saved |
+|---|---|---|---|
+| `user-auth` | 1 modified, 2 added | 4 → 7 | `spec/user-auth/prev` |
 
-### Archive Contents
-- proposal.md ✅
-- specs/ ✅
-- design.md ✅
-- tasks.md ✅ ({N}/{N} tasks complete)
+### Lineage
+| Artifact | Observation ID |
+|---|---|
+| proposal / spec / design / tasks / apply-progress / verify-report | {id} |
 
-### Source of Truth Updated
-The following specs now reflect the new behavior:
-- `openspec/specs/{domain}/spec.md`
+### Exceptions Recorded
+{Stale-checkbox reconciliation, partial archive — with the reason. Or "None."}
 
-### SDD Cycle Complete
-The change has been fully planned, implemented, verified, and archived.
-Ready for the next change.
+### Status
+Cycle complete for `{change-name}`.
 ```
 
 ## Rules
 
-- NEVER archive a change that has CRITICAL issues in its verification report
-- If the user explicitly approves a non-critical partial archive or stale-checkbox reconciliation, record the exact reason in the archive report and mark the archive as intentional-with-warnings
-- NEVER archive completed work while `tasks.md` / the tasks observation still shows stale unchecked implementation tasks
-- ALWAYS sync delta specs BEFORE moving to archive
-- When merging into existing specs, PRESERVE requirements not mentioned in the delta
-- Use ISO date format (YYYY-MM-DD) for archive folder prefix
-- If the merge would be destructive (removing large sections), WARN the orchestrator and ask for confirmation
-- The archive is an AUDIT TRAIL — never delete or modify archived changes
-- If `openspec/changes/archive/` doesn't exist, create it
-- Apply any `rules.archive` from `openspec/config.yaml`
-- Return envelope per **Section D** from `agent-skills/ecomono-sdd-shared/sdd-phase-common.md`.
+- Gates first. Never touch a main spec before task completion and verification pass.
+- CRITICAL verification issues block, always, with no override.
+- `MODIFIED` with fewer scenarios blocks. This is the rule that keeps the baseline
+  from silently shrinking.
+- `REMOVED` and `RENAMED` without their notes are refused, not inferred.
+- You do not own task completion. Apply does. You may only reconcile mechanically, with
+  proof, and you record it.
+- A destructive merge that removes large sections → stop and ask, even when the counts
+  technically pass. Volume is its own signal.
+- Report the lineage. An archive nobody can trace back to its artifacts is a claim, not
+  a record.

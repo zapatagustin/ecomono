@@ -71,7 +71,22 @@ B. Persistence: section C. Return envelope: section D.
 | Test command exits non-zero | **CRITICAL** |
 | Spec scenario with no passing covering test | **CRITICAL** — `UNTESTED` or `FAILING` |
 | Design deviation | WARNING, unless it breaks a spec — then CRITICAL |
+| `MODIFIED` block with fewer scenarios than the main spec's requirement | **CRITICAL** — see below |
 | `allowedEditRoots` cannot be proven | STOP. Report rather than verifying blind |
+
+### Delta completeness
+
+You run **before** archive, which is the last chance to catch a truncated delta before a
+destructive merge.
+
+For every `MODIFIED` requirement in `sdd/{change-name}/spec`, read the current
+`spec/{capability}` and compare scenario counts. Fewer in the delta → **CRITICAL**,
+naming the requirement and both counts. Archive replaces the requirement wholesale, so
+the omitted scenarios would be deleted from the baseline with no git history to recover
+them.
+
+A deliberate drop belongs in `REMOVED` with its `Reason` and `Migration`, not in a
+shorter MODIFIED block. Report the accounting either way — `{capability} / {requirement}: 4 → 5`.
 
 ## Sequence
 

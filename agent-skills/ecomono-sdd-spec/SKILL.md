@@ -1,6 +1,6 @@
 ---
 name: ecomono-sdd-spec
-description: "Write SDD delta specs with requirements and scenarios. Trigger: orchestrator launches spec work for a change."
+description: "Write delta specs: requirements and scenarios added, modified, removed or renamed. Trigger: orchestrator launches spec for a change."
 disable-model-invocation: true
 user-invocable: false
 license: MIT
@@ -12,202 +12,133 @@ metadata:
   delegate_only: true
 ---
 
-## Executor Override
+**You are the executor.** Write the specs yourself, do not delegate, do not call the
+Skill tool. Reached this through `Skill`? You are the orchestrator — stop and delegate to
+the `ecomono-sdd-spec` sub-agent instead.
 
-If you ARE the sub-agent (NOT the orchestrator), the gate below does NOT apply to you. Continue with the phase work below. Do NOT delegate. Do NOT call the Skill tool. You are the executor — execute.
-
-> **ORCHESTRATOR GATE**: If you loaded this skill via the `skill()` tool, you are
-> the ORCHESTRATOR — STOP. Do NOT execute these instructions inline. Delegate to
-> the dedicated `ecomono-sdd-spec` sub-agent using your platform's delegation primitive
-> (e.g., `task(...)`, sub-agent invocation, etc.). This skill is for EXECUTORS
-> only.
-
-
-
-## Language Domain Contract
-
-Generated technical artifacts default to English. Do not inherit the user's conversational language or the active persona's regional voice for SDD artifacts unless the user explicitly requests that artifact language or the project convention requires it.
-
-If Spanish technical artifacts are explicitly requested, use neutral/professional Spanish unless the user explicitly asks for a regional variant.
-
-Public/contextual comments follow the target context language by default. Explicit user language or tone overrides win; Spanish comments default to neutral/professional Spanish unless the user or target context clearly calls for regional tone.
+Skill loading, retrieval, persistence and the return envelope are sections A–D of
+[sdd-phase-common.md](../ecomono-sdd-shared/sdd-phase-common.md). Artifacts default to
+English.
 
 ## Purpose
 
-You are a sub-agent responsible for writing SPECIFICATIONS. You take the proposal and produce delta specs — structured requirements and scenarios that describe what's being ADDED, MODIFIED, REMOVED, or RENAMED from the system's behavior.
+Turn the proposal into **delta specs**: what is being added, modified, removed or renamed
+in the system's specified behaviour.
 
-## What You Receive
+**Reads:** `sdd/{change-name}/proposal` (required), and the main spec
+`spec/{capability}` for every capability the proposal lists as modified.
+**Writes:** artifact `spec`, at `sdd/{change-name}/spec`. Several domains → one artifact
+with domain headers, not several artifacts.
 
-From the orchestrator:
-- Change name
-- Artifact store mode (`ecomono-memory | openspec | hybrid | none`)
+## Main specs are the baseline
 
-## Execution and Persistence Contract
+`spec/{capability}` holds the current specified behaviour of the system, accumulated
+across changes. Your delta describes changes **to that**, and `ecomono-sdd-archive` merges
+it in once the change is verified.
 
-> Follow **Section B** (retrieval) and **Section C** (persistence) from `agent-skills/ecomono-sdd-shared/sdd-phase-common.md`.
+This is why the capability names matter: they are the key. Invent a new name for an
+existing capability and you fork the baseline into two specs that disagree.
 
-- **ecomono-memory**: Read `sdd/{change-name}/proposal` (required). If specs span multiple domains, concatenate into a single artifact with domain headers. Save as `sdd/{change-name}/spec`.
-- **openspec**: Read and follow `agent-skills/ecomono-sdd-shared/openspec-convention.md`.
-- **hybrid**: Follow BOTH conventions — persist to ecomono-memory (single concatenated artifact) AND write domain files to filesystem.
-- **none**: Return result only. Never create or modify project files.
+## Sequence
 
-## What to Do
+### 1. Map capabilities from the proposal
 
-### Step 1: Load Skills
-Follow **Section A** from `agent-skills/ecomono-sdd-shared/sdd-phase-common.md`.
+The proposal's **Capabilities** section is your contract:
 
-### Step 2: Identify Affected Domains
+| Proposal says | You write |
+|---|---|
+| Under `New` | A **full spec** for that capability. Nothing to be a delta against |
+| Under `Modified` | A **delta**. Read `spec/{capability}` first — your delta modifies it |
 
-Read the proposal's **Capabilities section** — this is your primary contract:
+No Capabilities section (older proposal) → infer from `Affected Areas`, but prefer the
+explicit mapping whenever it exists. Inferring is how a capability gets missed.
 
-```
-FOR EACH entry under "New Capabilities":
-├── This becomes a NEW full spec: openspec/specs/<capability-name>/spec.md
-└── Write a complete spec (not a delta) — no existing behavior to reference
+### 2. Read the existing main spec
 
-FOR EACH entry under "Modified Capabilities":
-├── This becomes a DELTA spec: openspec/changes/{change-name}/specs/<capability-name>/spec.md
-└── Read existing openspec/specs/<capability-name>/spec.md first — your delta modifies it
-```
+For every modified capability, read `spec/{capability}` in full before writing. You
+cannot write a correct delta against a spec you have not read, and you need its scenario
+counts for the check in step 4.
 
-If the proposal has no Capabilities section (older format), fall back to inferring from "Affected Areas". But always prefer the explicit Capabilities mapping when present.
+### 3. Write the delta
 
-### Step 3: Read Existing Specs
-
-**IF mode is `openspec` or `hybrid`:** If `openspec/specs/{domain}/spec.md` exists, read it to understand CURRENT behavior. Your delta specs describe CHANGES to this behavior.
-
-**IF mode is `ecomono-memory`:** Existing specs were already retrieved from ecomono-memory in the Persistence Contract. Skip filesystem reads.
-
-**IF mode is `none`:** Skip — no existing specs to read.
-
-### Step 4: Write Delta Specs
-
-**IF mode is `openspec` or `hybrid`:** Create specs inside the change folder:
-
-```
-openspec/changes/{change-name}/
-├── proposal.md              ← (already exists)
-└── specs/
-    └── {domain}/
-        └── spec.md          ← Delta spec
-```
-
-**IF mode is `ecomono-memory` or `none`:** Do NOT create any `openspec/` directories or files. Compose the spec content in memory — you will persist it in Step 5.
-
-#### MODIFIED Requirements Workflow (CRITICAL — read before writing deltas)
-
-When writing a `## MODIFIED Requirements` section, follow this exact workflow:
-
-```
-1. Locate the requirement in openspec/specs/{domain}/spec.md
-2. COPY the ENTIRE requirement block — from `### Requirement:` through ALL its scenarios
-3. PASTE it under `## MODIFIED Requirements`
-4. EDIT the copy to reflect the new behavior
-5. Add "(Previously: {one-line summary of what changed})" under the requirement text
-
-Why copy-full-then-edit?
-→ The archive step REPLACES the requirement in main specs with your MODIFIED block
-→ If your block is partial, the archive will lose scenarios you didn't copy
-→ Common pitfall: only writing the changed scenario and losing the rest
-→ If adding NEW behavior WITHOUT changing existing behavior, use ADDED instead
-```
-
-#### Delta Spec Format
+RFC 2119 keywords — MUST, SHALL, SHOULD, MAY. Scenarios as GIVEN / WHEN / THEN.
 
 ```markdown
-# Delta for {Domain}
+# Delta for {capability}
 
 ## ADDED Requirements
 
-### Requirement: {Requirement Name}
+### Requirement: {name}
+The system MUST {specific behaviour}.
 
-{Description using RFC 2119 keywords: MUST, SHALL, SHOULD, MAY}
-
-The system {MUST/SHALL/SHOULD} {do something specific}.
-
-#### Scenario: {Happy path scenario}
-
+#### Scenario: {happy path}
 - GIVEN {precondition}
 - WHEN {action}
-- THEN {expected outcome}
-- AND {additional outcome, if any}
+- THEN {outcome}
 
-#### Scenario: {Edge case scenario}
-
+#### Scenario: {edge case}
 - GIVEN {precondition}
 - WHEN {action}
-- THEN {expected outcome}
+- THEN {outcome}
 
 ## MODIFIED Requirements
 
-### Requirement: {Existing Requirement Name}
+### Requirement: {existing name}
+{Full updated requirement text — this REPLACES the existing one entirely}
+(Previously: {what changed, one line})
 
-{Full updated requirement text — replaces the existing one entirely}
-(Previously: {what it was before, in one line})
+#### Scenario: {unchanged scenario — copied, still valid}
+- GIVEN / WHEN / THEN
 
-#### Scenario: {Unchanged scenario — keep if still valid}
-
-- GIVEN {precondition}
-- WHEN {action}
-- THEN {outcome}
-
-#### Scenario: {Updated or new scenario}
-
-- GIVEN {updated precondition}
-- WHEN {updated action}
-- THEN {updated outcome}
+#### Scenario: {updated scenario}
+- GIVEN / WHEN / THEN
 
 ## REMOVED Requirements
 
-### Requirement: {Requirement Being Removed}
-
-(Reason: {why this requirement is being deprecated/removed})
-(Migration: {what replaces it, or "None" if no migration is needed})
+### Requirement: {name}
+(Reason: {why it is going})
+(Migration: {what replaces it, or "None"})
 
 ## RENAMED Requirements
 
-### Requirement: {Old Requirement Name} → {New Requirement Name}
-
-(Reason: {why the requirement is being renamed})
-(Migration: {how references/tests/docs should update, or "None" if no migration is needed})
+### Requirement: {old name} → {new name}
+(Reason: {why})
+(Migration: {how references, tests and docs update, or "None"})
 ```
 
-#### For NEW Specs (No Existing Spec)
+A brand-new capability gets a full spec instead: purpose, then requirements with their
+scenarios. No delta headers.
 
-If this is a completely new domain, create a FULL spec (not a delta):
+### 4. MODIFIED: copy whole, then edit
 
-```markdown
-# {Domain} Specification
+This is the one operation in the system that **destroys** data, so it gets its own rule.
 
-## Purpose
+1. Locate the requirement in `spec/{capability}`.
+2. **Copy the entire block** — from `### Requirement:` through *every* scenario.
+3. Paste it under `## MODIFIED Requirements`.
+4. Edit the copy to the new behaviour.
+5. Add `(Previously: …)`.
 
-{High-level description of this spec's domain.}
+**Why whole:** archive REPLACES the requirement in the main spec with your block. A
+partial block silently deletes the scenarios you did not copy. The main spec is a memory
+upsert — there is no git history to recover it from, only the single previous revision
+archive keeps.
 
-## Requirements
+**Self-check before persisting.** For each MODIFIED requirement, compare your block's
+scenario count against the original you read in step 2:
 
-### Requirement: {Name}
+- Fewer scenarios → you truncated. Copy the missing ones, or move the intent to
+  `REMOVED` with its `Reason` and `Migration`. Never leave a silent drop.
+- Same or more → fine.
 
-The system {MUST/SHALL/SHOULD} {behavior}.
+State the counts in your return summary (`{name}: 4 → 4 scenarios`). Verify and archive
+both re-check this; you are the cheapest place to catch it.
 
-#### Scenario: {Name}
+Adding behaviour **without** changing existing behaviour → use `ADDED`, not `MODIFIED`.
+Reaching for MODIFIED when ADDED would do is what creates the truncation risk in the
+first place.
 
-- GIVEN {precondition}
-- WHEN {action}
-- THEN {outcome}
-```
-
-### Step 5: Persist Artifact
-
-**This step is MANDATORY — do NOT skip it.**
-
-Follow **Section C** from `agent-skills/ecomono-sdd-shared/sdd-phase-common.md`.
-- artifact: `spec`
-- topic_key: `sdd/{change-name}/spec`
-- type: `architecture`
-
-### Step 6: Return Summary
-
-Return to the orchestrator:
+## Output
 
 ```markdown
 ## Specs Created
@@ -215,44 +146,26 @@ Return to the orchestrator:
 **Change**: {change-name}
 
 ### Specs Written
-| Domain | Type | Requirements | Scenarios |
-|--------|------|-------------|-----------|
-| {domain} | Delta/New | {N added, M modified, K removed} | {total scenarios} |
+| Capability | Type | Requirements | Scenarios | Baseline |
+|---|---|---|---|---|
+| `user-auth` | Delta | 2 modified | 4 → 5 | `spec/user-auth` |
+| `data-export` | Full | 3 added | 7 | new capability |
 
-### Coverage
-- Happy paths: {covered/missing}
-- Edge cases: {covered/missing}
-- Error states: {covered/missing}
+### Scenario Accounting
+{Per MODIFIED requirement: original count → delta count. Any drop declared as REMOVED.}
 
-### Next Step
-Ready for design (ecomono-sdd-design). If design already exists, ready for tasks (ecomono-sdd-tasks).
+### Next
+Ready for tasks (ecomono-sdd-tasks), or design if it has not run.
 ```
 
 ## Rules
 
-- ALWAYS use Given/When/Then format for scenarios
-- ALWAYS use RFC 2119 keywords (MUST, SHALL, SHOULD, MAY) for requirement strength
-- Read the proposal's **Capabilities section** first — it tells you exactly which spec files to create
-- If existing specs exist, write DELTA specs (ADDED/MODIFIED/REMOVED sections)
-- If NO existing specs exist for the domain, write a FULL spec
-- Every requirement MUST have at least ONE scenario
-- Include both happy path AND edge case scenarios
-- Keep scenarios TESTABLE — someone should be able to write an automated test from each one
-- DO NOT include implementation details in specs — specs describe WHAT, not HOW
-- **MODIFIED requirements MUST be the FULL block** — copy entire requirement + all scenarios from main spec, then edit. Partial MODIFIED blocks lose content at archive time.
-- If adding new behavior without changing existing behavior → use ADDED, not MODIFIED
-- REMOVED requirements MUST include Reason and SHOULD include Migration when consumers, persisted behavior, docs, or tests are affected
-- RENAMED requirements MUST state both old and new names explicitly and SHOULD include Migration guidance for references/tests/docs
-- Apply any `rules.specs` from `openspec/config.yaml`
-- **Size budget**: Spec artifact MUST be under 650 words. Prefer requirement tables over narrative descriptions. Each scenario: 3-5 lines max.
-- Return envelope per **Section D** from `agent-skills/ecomono-sdd-shared/sdd-phase-common.md`.
-
-## RFC 2119 Keywords Quick Reference
-
-| Keyword | Meaning |
-|---------|---------|
-| **MUST / SHALL** | Absolute requirement |
-| **MUST NOT / SHALL NOT** | Absolute prohibition |
-| **SHOULD** | Recommended, but exceptions may exist with justification |
-| **SHOULD NOT** | Not recommended, but may be acceptable with justification |
-| **MAY** | Optional |
+- Every requirement needs at least one scenario. A requirement with no scenario cannot
+  be verified, so it is a wish.
+- Scenarios are testable: concrete preconditions, one action, an observable outcome.
+  "THEN it works" is not an outcome.
+- RFC 2119 keywords, deliberately. MUST and SHOULD mean different things to verify.
+- MODIFIED copies whole. This is the rule that prevents irreversible loss.
+- REMOVED and RENAMED always carry `Reason` and `Migration`. Archive refuses them
+  otherwise, and it is right to.
+- Do not rename a capability to fit your delta. The name is the baseline's key.

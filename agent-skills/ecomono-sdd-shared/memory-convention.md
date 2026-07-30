@@ -42,6 +42,26 @@ off. Old engram documentation still shows it; do not reintroduce it.
 One key per type per change. A phase inventing a new type strands its output —
 nothing downstream searches for it.
 
+## Main specs
+
+Everything above is scoped to one change and archived with it. The **baseline** is not:
+
+| Key | Holds | Written by |
+|---|---|---|
+| `spec/{capability}` | Current specified behaviour of that capability, accumulated across changes | `ecomono-sdd-archive`, on merge |
+| `spec/{capability}/prev` | The pre-merge revision, one deep | `ecomono-sdd-archive`, before each merge |
+
+This is what makes SDD cumulative instead of a pile of per-change tickets:
+`ecomono-sdd-spec` writes deltas against these, `ecomono-sdd-propose` reads them to see
+what already exists, and `ecomono-sdd-verify` can check behaviour against the system's
+baseline rather than only against the change in front of it.
+
+The capability name is the key. Renaming a capability to fit a delta forks the baseline
+into two specs that disagree, and nothing detects it.
+
+`prev` exists because a merge is an upsert with no git behind it. It is a rollback for
+the last merge, not a history — see the ceiling noted in `ecomono-sdd-archive`.
+
 ## Reading
 
 Two steps, always. `mem_search` returns a truncated preview; the preview is not the
