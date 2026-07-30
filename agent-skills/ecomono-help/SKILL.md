@@ -32,7 +32,6 @@ Mode stick until changed or session end.
 | **ecomono-compress** | `/ecomono-compress <file>` | Compress .md files to ecomono prose. Saves ~46% input tokens. |
 | **ecomono-cut** | `/ecomono-cut` | Over-engineering review of a diff. What to delete, one line each. |
 | **ecomono-audit** | `/ecomono-audit` | Over-engineering audit of the whole repo. Ranked list of what to cut. |
-| **ecomono-debt** | `/ecomono-debt` | Harvest `ecomono:` shortcut markers into a debt ledger. |
 | **ecomono-help** | `/ecomono-help` | This card. |
 
 ## Deactivate

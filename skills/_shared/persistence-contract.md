@@ -145,7 +145,7 @@ Sub-agents must NOT call `mem_session_summary` — that's reserved for top-level
 
 The orchestrator pre-resolves skill paths from the skill registry and injects them as `## Skills to load before work` in your launch prompt. Sub-agents read those exact `SKILL.md` files before task-specific work.
 
-To generate/update: run the `skill-registry` skill, or run `sdd-init`.
+To generate/update: run `gentle-ai skill-registry refresh`, or run `sdd-init`.
 
 Sub-agent skill loading: check for a `## Skills to load before work` block in your prompt — if present, read those exact files. If not present, check for `SKILL: Load` instructions as a fallback. If neither exists, proceed without — this is not an error.
 
