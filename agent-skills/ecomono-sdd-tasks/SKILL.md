@@ -1,6 +1,6 @@
 ---
 name: ecomono-sdd-tasks
-description: "Break an SDD change into implementation tasks. Trigger: orchestrator launches task planning for a change."
+description: "Break a change into ordered, verifiable tasks and forecast the review budget. Trigger: orchestrator launches tasks after spec and design."
 disable-model-invocation: true
 user-invocable: false
 license: MIT
@@ -12,160 +12,85 @@ metadata:
   delegate_only: true
 ---
 
-## Executor Override
+**You are the executor.** Write the breakdown yourself, do not delegate, do not call the
+Skill tool. Reached this through `Skill`? You are the orchestrator — stop and delegate to
+the `ecomono-sdd-tasks` sub-agent instead.
 
-If you ARE the sub-agent (NOT the orchestrator), the gate below does NOT apply to you. Continue with the phase work below. Do NOT delegate. Do NOT call the Skill tool. You are the executor — execute.
-
-> **ORCHESTRATOR GATE**: If you loaded this skill via the `skill()` tool, you are
-> the ORCHESTRATOR — STOP. Do NOT execute these instructions inline. Delegate to
-> the dedicated `ecomono-sdd-tasks` sub-agent using your platform's delegation primitive
-> (e.g., `task(...)`, sub-agent invocation, etc.). This skill is for EXECUTORS
-> only.
-
-
-
-## Language Domain Contract
-
-Generated technical artifacts default to English. Do not inherit the user's conversational language or the active persona's regional voice for SDD artifacts unless the user explicitly requests that artifact language or the project convention requires it.
-
-If Spanish technical artifacts are explicitly requested, use neutral/professional Spanish unless the user explicitly asks for a regional variant.
-
-Public/contextual comments follow the target context language by default. Explicit user language or tone overrides win; Spanish comments default to neutral/professional Spanish unless the user or target context clearly calls for regional tone.
+Skill loading, retrieval, persistence and the return envelope are sections A–D of
+[sdd-phase-common.md](../ecomono-sdd-shared/sdd-phase-common.md). Artifacts default to
+English.
 
 ## Purpose
 
-You are a sub-agent responsible for creating the TASK BREAKDOWN. You take the proposal, specs, and design, then produce a `tasks.md` with concrete, actionable implementation steps organized by phase.
+Turn proposal, spec and design into ordered, actionable tasks — and forecast whether the
+implementation will blow the review budget, because that decision has to happen here,
+before anyone writes code.
 
-## What You Receive
+**Reads:** `sdd/{change-name}/proposal`, `sdd/{change-name}/spec`,
+`sdd/{change-name}/design` — all three required.
+**Also receives:** `delivery_strategy` from the orchestrator.
+**Writes:** artifact `tasks`, at `sdd/{change-name}/tasks`.
 
-From the orchestrator:
-- Change name
-- Artifact store mode (`ecomono-memory | openspec | hybrid | none`)
-- Delivery strategy (`ask-on-risk | auto-chain | single-pr | exception-ok`)
+## Every task must be
 
-## Execution and Persistence Contract
+| Criterion | Yes | No |
+|---|---|---|
+| Specific | "Create `internal/auth/middleware.go` with JWT validation" | "Add auth" |
+| Actionable | "Add `ValidateToken()` to `AuthService`" | "Handle tokens" |
+| Verifiable | "Test: `POST /login` returns 401 without token" | "Make sure it works" |
+| Small | One file, or one logical unit | "Implement the feature" |
 
-> Follow **Section B** (retrieval) and **Section C** (persistence) from `agent-skills/ecomono-sdd-shared/sdd-phase-common.md`.
+A task apply cannot start without asking a question is not a task. Apply runs in a fresh
+context and cannot ask.
 
-- **ecomono-memory**: Read `sdd/{change-name}/proposal` (required), `sdd/{change-name}/spec` (required), `sdd/{change-name}/design` (required). Save as `sdd/{change-name}/tasks`.
-- **openspec**: Read and follow `agent-skills/ecomono-sdd-shared/openspec-convention.md`.
-- **hybrid**: Follow BOTH conventions — persist to ecomono-memory AND write `tasks.md` to filesystem. Retrieve dependencies from ecomono-memory (primary) with filesystem fallback.
-- **none**: Return result only. Never create or modify project files.
+## Phases, by dependency
 
-## What to Do
+Order by what unblocks what, not by importance:
 
-### Step 1: Load Skills
-Follow **Section A** from `agent-skills/ecomono-sdd-shared/sdd-phase-common.md`.
+1. **Foundation** — new types, interfaces, schema, config. What other tasks depend on.
+2. **Core** — the main logic and business rules.
+3. **Integration** — wiring, routes, UI. Making the pieces meet.
+4. **Testing** — against spec scenarios specifically, not against the implementation.
+5. **Cleanup** — docs, dead code. Only if there is any.
 
-### Step 2: Analyze the Design
+Skip a phase that has nothing in it. Empty phases are scaffolding.
 
-From the design document, identify:
-- All files that need to be created/modified/deleted
-- The dependency order (what must come first)
-- Testing requirements per component
+## Review workload forecast
 
-### Step 3: Write tasks.md
+Estimate whether implementation will exceed the **400 changed-line** review budget
+(`additions + deletions`). This is a planning guard, not a diff count — signals are file
+count, phases, integration points, tests, docs, generated artifacts, migrations, and how
+many concerns the change crosses.
 
-**IF mode is `openspec` or `hybrid`:** Create the task file:
+**High, or likely over 400:**
 
-```
-openspec/changes/{change-name}/
-├── proposal.md
-├── specs/
-├── design.md
-└── tasks.md               ← You create this
-```
+1. Mark `Chained PRs recommended: Yes`.
+2. Split into **work units** that can each become a PR — each with a clear start, a clear
+   finish, its own verification, and autonomous scope. Split along deliverables, never
+   along line counts.
+3. Ask which chain strategy applies. This is a team decision, not yours:
+   - **`stacked-to-main`** — each PR merges to main in order. Fast, fix as you go. Best
+     for independent slices.
+   - **`feature-branch-chain`** — PR #1 targets the tracker branch, each later PR targets
+     the previous PR's branch, only the tracker reaches main. Best for rollback control.
+   - **`size-exception`** — one PR with maintainer approval. Best for generated code,
+     migrations, vendor diffs.
+4. Set `Decision needed before apply` from `delivery_strategy`:
 
-**IF mode is `ecomono-memory` or `none`:** Do NOT create any `openspec/` directories or files. Compose the tasks content in memory — you will persist it in Step 4.
+| Strategy | Decision needed | Because |
+|---|---|---|
+| `ask-on-risk` | `Yes` | Orchestrator asks before apply |
+| `auto-chain` | `No` | Orchestrator proceeds with the first slice |
+| `single-pr` | `Yes` | `size:exception` must be recorded first |
+| `exception-ok` | `No` | Maintainer already accepted it |
 
-#### Task File Format
+Put the forecast at the **top** of the artifact. Buried in prose, the user sees it after
+implementation started, which is too late for it to be a decision.
 
-```markdown
-# Tasks: {Change Title}
+### The guard contract
 
-## Review Workload Forecast
-
-| Field | Value |
-|-------|-------|
-| Estimated changed lines | <rough estimate or range> |
-| 400-line budget risk | Low / Medium / High |
-| Chained PRs recommended | Yes / No |
-| Suggested split | <single PR or PR 1 → PR 2 → PR 3> |
-| Delivery strategy | <ask-on-risk / auto-chain / single-pr / exception-ok> |
-| Chain strategy | <stacked-to-main / feature-branch-chain / size-exception / pending> |
-
-Decision needed before apply: <Yes|No>
-Chained PRs recommended: <Yes|No>
-Chain strategy: <stacked-to-main|feature-branch-chain|size-exception|pending>
-400-line budget risk: <Low|Medium|High>
-
-### Suggested Work Units
-
-| Unit | Goal | Likely PR | Notes |
-|------|------|-----------|-------|
-| 1 | <standalone deliverable> | PR 1 | <base branch; tests/docs included> |
-| 2 | <standalone deliverable> | PR 2 | <immediate parent/base branch boundary; depends on PR 1 or independent> |
-
-## Phase 1: {Phase Name} (e.g., Infrastructure / Foundation)
-
-- [ ] 1.1 {Concrete action — what file, what change}
-- [ ] 1.2 {Concrete action}
-- [ ] 1.3 {Concrete action}
-
-## Phase 2: {Phase Name} (e.g., Core Implementation)
-
-- [ ] 2.1 {Concrete action}
-- [ ] 2.2 {Concrete action}
-- [ ] 2.3 {Concrete action}
-- [ ] 2.4 {Concrete action}
-
-## Phase 3: {Phase Name} (e.g., Testing / Verification)
-
-- [ ] 3.1 {Write tests for ...}
-- [ ] 3.2 {Write tests for ...}
-- [ ] 3.3 {Verify integration between ...}
-
-## Phase 4: {Phase Name} (e.g., Cleanup / Documentation)
-
-- [ ] 4.1 {Update docs/comments}
-- [ ] 4.2 {Remove temporary code}
-```
-
-### Task Writing Rules
-
-Each task MUST be:
-
-| Criteria | Example ✅ | Anti-example ❌ |
-|----------|-----------|----------------|
-| **Specific** | "Create `internal/auth/middleware.go` with JWT validation" | "Add auth" |
-| **Actionable** | "Add `ValidateToken()` method to `AuthService`" | "Handle tokens" |
-| **Verifiable** | "Test: `POST /login` returns 401 without token" | "Make sure it works" |
-| **Small** | One file or one logical unit of work | "Implement the feature" |
-
-### Review Workload Forecast Rules
-
-Before finalizing tasks, estimate whether implementation is likely to exceed the **400 changed-line review budget** (`additions + deletions`). This is a planning guard, not an exact diff count.
-
-Use available signals: number of files, phases, integration points, tests, docs, generated artifacts, migrations, and how many concerns the change crosses.
-
-If the estimate is **High** or likely above 400 lines:
-
-1. Mark `Chained PRs recommended` as `Yes`.
-2. Split tasks into **work units** that can become chained or stacked PRs.
-3. Each suggested PR must have a clear start, clear finish, verification, and autonomous scope.
-4. **Ask the user which chain strategy to use** (this is a team decision):
-   - **Stacked PRs to main** — each PR merges to main in order. Fast iteration, fix on the go. Best for speed-first teams and independent slices.
-   - **Feature Branch Chain** — the feature/tracker branch accumulates the final integration; PR #1 targets the tracker branch, later PRs target the immediate previous PR branch so each child diff stays focused. Only the tracker merges to main. Best for rollback control and coordinated releases.
-   - **size:exception** — keep it as a single PR with maintainer approval. Best for generated code, migrations, or vendor diffs.
-5. Cache the user's choice and set `Decision needed before apply` from delivery strategy:
-   - `ask-on-risk`: `Yes` — orchestrator asks before apply.
-   - `auto-chain`: `No` — orchestrator proceeds with the first slice using the chosen chain strategy.
-   - `single-pr`: `Yes` — orchestrator must require `size:exception` before apply.
-   - `exception-ok`: `No` — maintainer has accepted `size:exception`.
-
-Do not bury this in prose. Put the forecast near the top of the tasks artifact so the user sees it before implementation starts.
-
-The forecast MUST include these exact plain-text lines so downstream guards can match them literally:
+These four lines must appear **verbatim**. Downstream guards match them literally, so
+rephrasing silently disables the guard:
 
 ```text
 Decision needed before apply: Yes|No
@@ -174,85 +99,54 @@ Chain strategy: stacked-to-main|feature-branch-chain|size-exception|pending
 400-line budget risk: Low|Medium|High
 ```
 
-You may keep the table for readability, but the plain-text lines are the guard contract.
+Keep the readable table too if you like — but the plain lines are the contract.
 
-For `feature-branch-chain`, suggested work units SHOULD name the intended base boundary: PR #1 base = feature/tracker branch; PR #2 base = PR #1 branch; PR #3 base = PR #2 branch. If a child PR would show previous PR changes, the base is wrong and must be retargeted/rebased before review.
+For `feature-branch-chain`, each work unit names its intended base: PR #1 → tracker
+branch, PR #2 → PR #1's branch, and so on. A child PR showing previous slices means the
+base is wrong; it gets retargeted or rebased before review.
 
-### Phase Organization Guidelines
-
-```
-Phase 1: Foundation / Infrastructure
-  └─ New types, interfaces, database changes, config
-  └─ Things other tasks depend on
-
-Phase 2: Core Implementation
-  └─ Main logic, business rules, core behavior
-  └─ The meat of the change
-
-Phase 3: Integration / Wiring
-  └─ Connect components, routes, UI wiring
-  └─ Make everything work together
-
-Phase 4: Testing
-  └─ Unit tests, integration tests, e2e tests
-  └─ Verify against spec scenarios
-
-Phase 5: Cleanup (if needed)
-  └─ Documentation, remove dead code, polish
-```
-
-### Step 4: Persist Artifact
-
-**This step is MANDATORY — do NOT skip it.**
-
-Follow **Section C** from `agent-skills/ecomono-sdd-shared/sdd-phase-common.md`.
-- artifact: `tasks`
-- topic_key: `sdd/{change-name}/tasks`
-- type: `architecture`
-
-### Step 5: Return Summary
-
-Return to the orchestrator:
+## Artifact
 
 ```markdown
-## Tasks Created
+# Tasks: {Change Title}
 
-**Change**: {change-name}
-**Location**: `openspec/changes/{change-name}/tasks.md` (openspec/hybrid) | ecomono-memory `sdd/{change-name}/tasks` (ecomono-memory) | inline (none)
+## Review Workload Forecast
 
-### Breakdown
-| Phase | Tasks | Focus |
-|-------|-------|-------|
-| Phase 1 | {N} | {Phase name} |
-| Phase 2 | {N} | {Phase name} |
-| Phase 3 | {N} | {Phase name} |
-| Total | {N} | |
+| Field | Value |
+|---|---|
+| Estimated changed lines | {estimate or range} |
+| 400-line budget risk | Low \| Medium \| High |
+| Chained PRs recommended | Yes \| No |
+| Suggested split | {single PR, or PR 1 → PR 2 → PR 3} |
+| Delivery strategy | {as passed} |
+| Chain strategy | {chosen, or pending} |
 
-### Implementation Order
-{Brief description of the recommended order and why}
+Decision needed before apply: {Yes|No}
+Chained PRs recommended: {Yes|No}
+Chain strategy: {…}
+400-line budget risk: {…}
 
-### Review Workload Forecast
-- Estimated changed lines: {estimate or range}
-- 400-line budget risk: {Low | Medium | High}
-- Chained PRs recommended: {Yes | No}
-- Delivery strategy: {ask-on-risk | auto-chain | single-pr | exception-ok}
-- Decision needed before apply: {Yes | No}
-- Suggested work-unit PR split: {brief list or "Not needed"}
+### Suggested Work Units
+| Unit | Goal | Likely PR | Base branch | Notes |
+|---|---|---|---|---|
+| 1 | {standalone deliverable} | PR 1 | {tracker} | tests and docs included |
 
-### Next Step
-{Ready for implementation (ecomono-sdd-apply) OR ask the user whether to use chained PRs before ecomono-sdd-apply.}
+## Phase 1: Foundation
+- [ ] 1.1 {concrete action — which file, which change}
+
+## Phase 2: Core
+- [ ] 2.1 {concrete action}
 ```
 
 ## Rules
 
-- ALWAYS reference concrete file paths in tasks
-- Tasks MUST be ordered by dependency — Phase 1 tasks shouldn't depend on Phase 2
-- Testing tasks should reference specific scenarios from the specs
-- Each task should be completable in ONE session (if a task feels too big, split it)
-- Use hierarchical numbering: 1.1, 1.2, 2.1, 2.2, etc.
-- NEVER include vague tasks like "implement feature" or "add tests"
-- Apply any `rules.tasks` from `openspec/config.yaml`
-- If the project uses TDD, integrate test-first tasks: RED task (write failing test) → GREEN task (make it pass) → REFACTOR task (clean up)
-- **Size budget**: Tasks artifact MUST be under 530 words. Each task: 1-2 lines max. Use checklist format, not paragraphs.
-- **Review workload guard**: ALWAYS include the Review Workload Forecast. If likely above 400 changed lines, recommend chained PRs and honor the received delivery strategy for whether a decision/exception is needed before apply.
-- Return envelope per **Section D** from `agent-skills/ecomono-sdd-shared/sdd-phase-common.md`.
+- Every task traces to a spec requirement or a design decision. A task tracing to
+  neither is scope creep with a checkbox.
+- Cover the spec completely. A requirement with no task is how a change ships missing
+  behaviour that verify then flags as CRITICAL.
+- Tests are tasks, written against spec scenarios. Not "add tests" — which scenario.
+- Order by dependency and say so where it is not obvious.
+- The forecast is mandatory even when the answer is `Low`. A missing forecast reads
+  identical to a small change.
+- Do not decide the chain strategy yourself. Forecast, recommend, and let the team
+  choose.

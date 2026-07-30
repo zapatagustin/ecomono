@@ -1,6 +1,6 @@
 ---
 name: ecomono-sdd-onboard
-description: "Walk users through the SDD workflow on the real codebase. Trigger: orchestrator launches onboarding for the full SDD cycle."
+description: "Teach SDD by running one real cycle on the user's own codebase. Trigger: user asks to learn SDD or for a guided walkthrough."
 disable-model-invocation: true
 user-invocable: false
 license: MIT
@@ -12,222 +12,80 @@ metadata:
   delegate_only: false
 ---
 
-> **ORCHESTRATOR NOTE**: This skill is designed to be executed INLINE by the
-> orchestrator. It is an interactive walkthrough — no sub-agent delegation
-> needed.
+> Runs **inline**, not delegated. It is an interactive walkthrough: the value is the
+> conversation, and a sub-agent cannot have it.
 
-## Executor Override
-
-If you ARE the `ecomono-sdd-onboard` sub-agent (NOT the orchestrator), the gate above does NOT apply to you. Continue with the phase work below. Do NOT delegate. Do NOT call the Skill tool. You are the executor — execute.
-
-
-## Language Domain Contract
-
-Generated technical artifacts default to English. Do not inherit the user's conversational language or the active persona's regional voice for SDD artifacts unless the user explicitly requests that artifact language or the project convention requires it.
-
-If Spanish technical artifacts are explicitly requested, use neutral/professional Spanish unless the user explicitly asks for a regional variant.
-
-Public/contextual comments follow the target context language by default. Explicit user language or tone overrides win; Spanish comments default to neutral/professional Spanish unless the user or target context clearly calls for regional tone.
+Artifacts default to English — see the Language section of
+[sdd-orchestrator.md](../ecomono-sdd-shared/sdd-orchestrator.md).
 
 ## Purpose
 
-You are a sub-agent responsible for ONBOARDING. You guide the user through a complete SDD cycle — from exploration to archive — using their actual codebase. This is a real change with real artifacts, not a toy example. The goal is to teach by doing.
+Take the user through one complete SDD cycle — explore to archive — on **their real
+codebase**, producing real artifacts. Not a toy example. Teaching by doing, because the
+point that lands is seeing their own code go through the pipeline.
 
-## What You Receive
+Narrate every phase: what you are doing, and *why* the phase exists. The why is the part
+they keep.
 
-From the orchestrator:
-- Artifact store mode (`ecomono-memory | openspec | hybrid | none`)
-- Optional: a suggested improvement or area to focus on
+## 1. Pick something real
 
-## What to Do
+Explain what is about to happen, then scan for a genuine small improvement.
 
-### Phase 1: Welcome and Codebase Analysis
+A good onboarding change is:
 
-Greet the user and explain what's about to happen:
+- **Small** — finishable in one session.
+- **Low risk** — no breaking changes, no data migration.
+- **Genuinely useful** — a toy change teaches the mechanics and none of the judgement.
+- **Spec-worthy** — at least one clear requirement and two scenarios. Without that, spec
+  and verify have nothing to demonstrate.
 
-```
-"Welcome to SDD! I'll walk you through a complete cycle using your actual codebase.
-We'll find something small to improve, build all the artifacts, implement it,
-and archive it. Each step I'll explain what we're doing and why.
+Good candidates: missing input validation on a form or endpoint, inconsistent error
+messages in an auth flow, a utility worth extracting, a missing loading or error state, a
+TODO whose intent is clear.
 
-Let me scan your codebase for opportunities..."
-```
+Offer 2–3 options. Let them pick, or take their own suggestion — their idea beats yours
+here, because they will care about the outcome.
 
-Then scan the codebase for a real, small improvement opportunity:
+## 2. Run the cycle, narrating each phase
 
-```
-Criteria for a good onboarding change:
-├── Small scope — completable in one session (30-60 min)
-├── Low risk — no breaking changes, no data migrations
-├── Real value — something genuinely useful, not a toy
-├── Spec-worthy — has at least 1 clear requirement and 2 scenarios
-└── Examples:
-    ├── Missing input validation on a form or API endpoint
-    ├── Inconsistent error messages in an auth flow
-    ├── A utility function that could be extracted and reused
-    ├── Missing loading/error state in an async component
-    └── A TODO or FIXME comment in the code with clear intent
-```
+Follow each phase skill's actual format. The artifacts must be real, not illustrations.
 
-Present 2-3 options to the user. Let them choose or suggest their own.
+| Phase | Say what it is for | Point out |
+|---|---|---|
+| **Explore** | We investigate before committing to anything | What the code actually does, versus what you assumed |
+| **Propose** | We write down what and why. This is the contract | The Capabilities section — it tells spec exactly what to write |
+| **Spec** | What the system must do, in testable terms. No implementation | GIVEN/WHEN/THEN — each scenario is a future test, and what verify checks |
+| **Design** | How we build it | The decisions section: every choice carries its why, so it can be re-evaluated later |
+| **Tasks** | The work, broken into checkable steps | "Implement feature" is not a task. "Create `src/utils/validate.ts` with `validateEmail()`" is |
+| **Apply** | Now the code. Tasks guide, specs define done | Each task marked complete as it lands, not at the end |
+| **Verify** | Prove it, do not assert it | Tests actually run. Source that looks correct is a hypothesis |
+| **Archive** | Merge the delta into the baseline and close | The main spec is now the accumulated behaviour — this is what makes it spec-*driven* |
 
-### Phase 2: Explore (narrated)
+Strict TDD active during apply → walk the RED → GREEN → REFACTOR cycle out loud. Watching
+a test fail first is the moment TDD stops being an abstraction.
 
-Narrate as you explore:
+Pause after each phase. Show what was produced, ask whether they want to adjust before
+continuing. Approval is per phase — "continue" means this next one, not the rest.
 
-```
-"Step 1: Explore — Before we commit to any change, we investigate.
- Let me look at the relevant code..."
-```
+## 3. Close
 
-Run `ecomono-sdd-explore` behavior inline — investigate the chosen area, understand current state, identify what needs to change. Explain your findings to the user in plain language.
+Recap what exists now that did not before: the artifacts, the code, the merged baseline.
+Then name what they can do next — `/ecomono-sdd-new` for their own change,
+`/ecomono-sdd-status` to see where one stands.
 
-Conclude with:
-```
-"Good — I understand what we're working with. Now let's start a real change."
-```
-
-### Phase 3: Propose (narrated)
-
-```
-"Step 2: Propose — We write down WHAT we're building and WHY.
- This becomes the contract for everything that follows."
-```
-
-Create the change folder and write `proposal.md` following `ecomono-sdd-propose` format. After creating it:
-
-```
-"Here's the proposal I wrote. Notice the Capabilities section —
- this tells the next step exactly which spec files to create."
-```
-
-Show the user the proposal and let them review it. Ask if they want to adjust anything before continuing.
-
-### Phase 4: Specs (narrated)
-
-```
-"Step 3: Specs — We define WHAT the system should do, in testable terms.
- No implementation details — just observable behavior."
-```
-
-Write the delta specs following `ecomono-sdd-spec` format. After creating them:
-
-```
-"See the Given/When/Then format? Each scenario is a potential test case.
- These scenarios will drive the verify phase later."
-```
-
-### Phase 5: Design (narrated)
-
-```
-"Step 4: Design — We decide HOW to build it. Architecture decisions, file changes, rationale."
-```
-
-Write `design.md` following `ecomono-sdd-design` format. Highlight the key decisions:
-
-```
-"Notice the Decisions section — we document WHY we chose this approach
- over alternatives. Future you (and teammates) will thank you."
-```
-
-### Phase 6: Tasks (narrated)
-
-```
-"Step 5: Tasks — We break the work into concrete, checkable steps."
-```
-
-Write `tasks.md` following `ecomono-sdd-tasks` format. Explain the structure:
-
-```
-"Each task is specific enough that you know when it's done.
- 'Implement feature' is not a task. 'Create src/utils/validate.ts with validateEmail()' is."
-```
-
-### Phase 7: Apply (narrated)
-
-```
-"Step 6: Apply — Now we write actual code. The tasks guide us, the specs tell us what 'done' means."
-```
-
-Implement the tasks following `ecomono-sdd-apply` behavior. Narrate each task as you complete it:
-
-```
-"Implementing task 1.1: [description]
- ✓ Done — [brief note on what was created/changed]"
-```
-
-If Strict TDD mode is active, apply the TDD cycle and explain it:
-
-```
-"Notice: RED → GREEN → TRIANGULATE → REFACTOR.
- We write the failing test FIRST, then write the minimum code to pass it."
-```
-
-### Phase 8: Verify (narrated)
-
-```
-"Step 7: Verify — We check that what we built matches what we specified."
-```
-
-Run `ecomono-sdd-verify` behavior. Explain the compliance matrix:
-
-```
-"Each spec scenario gets a verdict: COMPLIANT, FAILING, or UNTESTED.
- This is the moment where specs pay off — they tell us exactly what to check."
-```
-
-### Phase 9: Archive (narrated)
-
-```
-"Step 8: Archive — We merge our delta specs into the main specs and close the change.
- The specs now describe the new behavior. The change becomes the audit trail."
-```
-
-Run `ecomono-sdd-archive` behavior. Show the result:
-
-```
-"Done! The change is archived at openspec/changes/archive/YYYY-MM-DD-{name}/
- And openspec/specs/ now reflects the new behavior."
-```
-
-### Phase 10: Summary
-
-Close the session with a recap:
-
-```markdown
-## Onboarding Complete! 🎉
-
-Here's what we built together:
-
-**Change**: {change-name}
-**Artifacts created**:
-- proposal.md — the WHY
-- specs/{capability}/spec.md — the WHAT
-- design.md — the HOW
-- tasks.md — the STEPS
-
-**Code changed**:
-- {list of files}
-
-**The SDD cycle in one line**:
-explore → propose → spec → design → tasks → apply → verify → archive
-
-**When to use SDD**: Any change where you want to agree on WHAT before writing code.
-Small tweaks? Just code. Features, APIs, architecture decisions? SDD first.
-
-**Next steps**:
-- Try /ecomono-sdd-new for your next real feature
-- Check openspec/specs/ — that's your growing source of truth
-- Questions? The orchestrator is always available
-```
+Be honest about the ceiling too. SDD is worth this overhead for substantial changes and
+is pure friction for a one-line fix; someone who learns it as a ritual for everything
+will abandon it. Say which of their real upcoming changes would suit it.
 
 ## Rules
 
-- This is a REAL change — not a demo. The artifacts and code must be production-quality.
-- Keep each phase narration SHORT — 1-3 sentences. Teach, don't lecture.
-- Always ask before continuing past Phase 3 (proposal) — let the user review and adjust.
-- If the user picks their own improvement, validate it fits the "small and safe" criteria before proceeding.
-- If anything blocks the cycle (tests fail, design is unclear, codebase is too complex), STOP and explain — don't push through.
-- Adapt the tone to the user — if they're experienced, skip basics; if they're new, explain more.
-- Follow all format rules from the individual skills (ecomono-sdd-propose, ecomono-sdd-spec, ecomono-sdd-design, ecomono-sdd-tasks, ecomono-sdd-apply, ecomono-sdd-verify, ecomono-sdd-archive).
-- Return envelope per **Section D** from `agent-skills/ecomono-sdd-shared/sdd-phase-common.md`.
+- Real artifacts, real code, real archive. A simulated cycle teaches nothing they can
+  repeat.
+- Explain **why** before **how**, every phase. The mechanics are discoverable; the
+  reasoning is not.
+- Never skip verify to save time. It is the phase that makes the rest mean anything, and
+  skipping it teaches that it is optional.
+- Do not pick a change that needs a migration or touches auth, payments or security. The
+  first cycle should not also be a risk conversation.
+- Stop if they lose the thread. Finishing the checklist with a confused user is a
+  completed demo and a failed onboarding.
