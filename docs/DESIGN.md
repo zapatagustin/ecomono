@@ -268,6 +268,61 @@ The actionable split is by skill *kind*, since size is unknowable before invocat
 - **Reference skills** (docs, data tables) are large and get consulted → invoke inside an
   `Agent`, whose context dies on return.
 
+### Where the context actually goes: 283 transcripts, carry-weighted
+
+The corpus sweep above ranked categories by raw payload. Raw payload is the wrong unit: an
+injection is re-read on every *later* API call in the session, so a small result landing early
+outweighs a large one landing last. Re-measured across 283 sessions and 12,479 main-thread
+assistant calls, weighting each payload by the turns that follow it (`carry`, in token-turns):
+
+```
+ 83.7M  18.1%  bash_search      2,116 calls  median   106 tok   <- delegatable
+ 79.3M  17.2%  read_file          578 calls  median   570 tok   <- delegatable
+ 65.5M  14.2%  skill_listing      264 inj.   median 3,435 tok
+ 36.9M   8.0%  SessionStart hooks               plugin loaders
+ 29.3M   6.3%  agent_listing                 median 2,126 tok
+ 27.5M   6.0%  deferred_tools (MCP)          median   998 tok
+ 20.5M   4.4%  bash_test_build    572 calls  median   108 tok   <- delegatable
+ 14.5M   3.1%  nested_memory       28 inj.   max   21,531 tok
+  4.9M   1.1%  edit_write         765 calls  median    42 tok
+  2.4M   0.5%  mcp_docs (context7) 13 calls  max    1,646 tok
+  1.3M   0.3%  web_fetch_search    44 calls  max    1,278 tok
+```
+
+Two conclusions, both of which cut against the intuitive read:
+
+**~44% of carry cannot be delegated at all.** `skill_listing`, hook loaders, `agent_listing` and
+`deferred_tools` are fixed per-session injection — no subagent touches them. They are a config
+diet, not a delegation problem. Median structural overhead is **5,827 tok** per session (p90
+15,029), paid on every call before any tool runs.
+
+**Fetching is not a driver.** `WebFetch`/`WebSearch` cap at 1,278 tokens and context7 at 1,646 —
+results arrive already distilled, not as raw pages. Screenshots: 2 in the entire corpus. Rules
+for either would be speculative weight; none were added.
+
+`edit_write` at 1.1% of carry (median 42 tok, 765 calls) confirms the asymmetry the delegation
+rules rest on: **reads are expensive and discardable, writes are neither.** Routing edits to a
+cheaper subagent would add a cold file read and a prompt restating the diff, to isolate 1% of
+carry. 42.9% of all tool-result payload already lives in sidechains, so isolation works where
+it is applied — the gap is compliance, not mechanism.
+
+Usage data from the same sweep, for pruning the fixed 44%:
+
+```
+skills      91 ever listed    17 ever invoked   74 never    ~56 tok each per turn
+MCP         claude_ai_*: 6 of 7 servers at 0 calls, listed in ~144 sessions each
+agents      general-purpose 69 spawns   vs   ecomono-explore 7
+```
+
+The `caveman`/`ck`/`ponytail`/`engram` skill families in that "never invoked" set are historical —
+`installed_plugins.json` now holds only `superpowers` and `typescript-lsp`, so those 31 listings
+are already gone. The live residue is the zero-call `claude_ai_*` servers and this repo's own
+unused skills.
+
+The agent split is a real finding: the rule names `ecomono-explore`, but delegation actually
+routes to `general-purpose` 10x more often. `ecomono-explore` is read-only, so any task that
+ends in an edit cannot use it — there is no general writer agent to fall back to.
+
 ### Effort: measured, then left alone
 
 A third arm ran the same four tasks on Opus at `effortLevel: medium`. Behaviour changed

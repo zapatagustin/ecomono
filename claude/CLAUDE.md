@@ -63,8 +63,12 @@ Multiple skills can apply at once. Match by file context (extensions, paths) and
 Re-read context is ~50% of session cost, and an injection is paid on *every* later turn, not
 once. Before pulling anything into the main thread: will I need it verbatim later?
 
-- 4+ files to read, 3+ exploration commands, or 2+ subsystems without prior context → delegate
-  to the `ecomono-explore` agent — not the built-in `Explore`, which the model gate denies.
+- Shell exploration (`ls`/`cat`/`grep`/`find`/`jq`) and file reads are 35% of measured carry —
+  many small results, not a few big ones. 3+ exploration commands, 4+ files, 2+ subsystems, or
+  a test/build/lint loop → delegate to `ecomono-explore`, not the built-in `Explore`, which the
+  model gate denies.
+- Do NOT delegate edits — 1% of carry, median 42 tok. Inline `Edit` reuses the read already paid
+  for; a subagent re-pays it and needs the diff restated in prose.
 - A file over ~5k tokens you only want a conclusion from → delegate.
 - **Reference skills** (docs and data tables — `claude-api` measures ~240k tokens) → invoke
   inside an `Agent`; the body dies with the subagent. **Process skills** (`brainstorming`,
