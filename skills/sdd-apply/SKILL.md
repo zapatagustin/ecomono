@@ -188,6 +188,11 @@ When saving apply-progress:
 1. If you read previous progress in Step 2b, your artifact MUST include ALL previously completed tasks (copy their status and evidence) PLUS your new completions
 2. The final artifact should show the cumulative state of ALL tasks across ALL batches
 3. Format: keep the same structure but ensure no completed task is lost from prior batches
+4. Once the merged artifact is saved, the previous apply-progress is superseded: carry its task
+   status forward, but stop quoting its reasoning. Superseded rationale costs the same as current
+   rationale and misleads — a task closed in batch 1 does not get re-litigated in batch 3. Need
+   its detail again? Re-fetch the current artifact rather than citing the copy earlier in the
+   thread.
 
 ### Step 7: Return Summary
 

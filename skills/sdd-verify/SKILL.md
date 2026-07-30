@@ -43,6 +43,10 @@ The orchestrator should provide structured status from `skills/_shared/sdd-statu
 - A spec scenario is compliant only when a covering test passed at runtime.
 - Compare specs first, design second, task completion third.
 - Do not fix issues; report them for the orchestrator/user.
+- Verify against the artifacts you fetch this run, never against a prior `verify-report` or a
+  summary of one. A report from before the last apply describes code that no longer exists: it
+  costs the same as current evidence and misleads. Findings it listed are re-derived or dropped,
+  never carried forward on the strength of having been said once.
 - Persist `verify-report` according to mode: ecomono-memory, openspec file, hybrid both, or inline-only for `none`.
 - If Strict TDD is active, load `strict-tdd-verify.md` from this skill directory; if inactive, never load it.
 - Return the Section D envelope from `../_shared/sdd-phase-common.md`.
