@@ -1,77 +1,103 @@
-# SDD Verify Report Format
+# Verify report format
 
-## Compliance Statuses
+The template `ecomono-sdd-verify` returns, and what its status values mean.
 
-- ✅ `COMPLIANT`: covering test exists and passed.
-- ❌ `FAILING`: covering test exists but failed.
-- ❌ `UNTESTED`: no covering test found.
-- ⚠️ `PARTIAL`: test passes but covers only part of the scenario.
+## Compliance status
 
-## Report Template
+A scenario's status is decided by **what a test did at runtime**, never by reading the
+implementation:
+
+| Status | Means |
+|---|---|
+| `COMPLIANT` | A covering test exists and passed |
+| `FAILING` | A covering test exists and failed |
+| `UNTESTED` | No covering test found |
+| `PARTIAL` | The test passed but covers only part of the scenario |
+
+`UNTESTED` and `PARTIAL` are the two that get talked away. Neither is a pass: untested
+behaviour is unverified whatever the code looks like, and a partial cover is the shape of
+a test written to the implementation rather than to the scenario.
+
+## Template
 
 ~~~markdown
 ## Verification Report
 
 **Change**: {change-name}
-**Version**: {spec version or N/A}
 **Mode**: {Strict TDD | Standard}
 
 ### Completeness
 | Metric | Value |
-|--------|-------|
+|---|---|
 | Tasks total | {N} |
 | Tasks complete | {N} |
 | Tasks incomplete | {N} |
 
-### Build & Tests Execution
-**Build**: ✅ Passed / ❌ Failed
+### Execution
+Include the command and its output, not a verdict about it. A claim with no output is an
+opinion.
+
+**Build**: {passed | failed}
 ```text
-{build command and relevant output}
+{command and relevant output}
 ```
 
-**Tests**: ✅ {N} passed / ❌ {N} failed / ⚠️ {N} skipped
+**Tests**: {N} passed, {N} failed, {N} skipped
 ```text
-{test command and failure details}
+{command and failure detail}
 ```
 
-**Coverage**: {N}% / threshold: {N}% → ✅ Above / ⚠️ Below / ➖ Not available
+**Coverage**: {N}% against threshold {N}% → {above | below | not available}
 
 ### Spec Compliance Matrix
 | Requirement | Scenario | Test | Result |
-|-------------|----------|------|--------|
-| {REQ-01} | {Scenario} | `{file} > {test}` | ✅ COMPLIANT |
-| {REQ-02} | {Scenario} | (none found) | ❌ UNTESTED |
+|---|---|---|---|
+| {REQ-01} | {scenario} | `{file} > {test}` | COMPLIANT |
+| {REQ-02} | {scenario} | (none found) | UNTESTED |
 
-**Compliance summary**: {N}/{total} scenarios compliant
+**Compliance**: {N}/{total} scenarios
 
 ### Delta Completeness
-Every `MODIFIED` requirement, delta scenario count against the current main spec.
+Per `MODIFIED` requirement: the delta's scenario count against the current main spec.
 Fewer in the delta is CRITICAL — archive replaces the requirement wholesale, so the
-omitted scenarios would be deleted from the baseline.
+omitted scenarios would be deleted from the baseline with no history behind them.
 
 | Capability | Requirement | Main spec | Delta | Result |
 |---|---|---|---|---|
-| `user-auth` | Session Expiration | 4 | 5 | ✅ |
-| `user-auth` | Token Refresh | 6 | 3 | ❌ CRITICAL — 3 scenarios dropped, not declared REMOVED |
+| `user-auth` | Session Expiration | 4 | 5 | ok |
+| `user-auth` | Token Refresh | 6 | 3 | CRITICAL — 3 dropped, not declared REMOVED |
 
-### Correctness (Static Evidence)
+### Correctness (static evidence)
 | Requirement | Status | Notes |
-|------------|--------|-------|
-| {Req name} | ✅ Implemented | {brief note} |
+|---|---|---|
 
-### Coherence (Design)
-| Decision | Followed? | Notes |
-|----------|-----------|-------|
-| {Decision} | ✅ Yes | |
+Static evidence supports a verdict; it never establishes one on its own.
 
-### Issues Found
+### Coherence (design)
+| Decision | Followed | Notes |
+|---|---|---|
+
+### Skipped
+{Every dimension you could not check, and why. "None" only when you checked all of them.}
+
+### Issues
 **CRITICAL**: {list or None}
 **WARNING**: {list or None}
 **SUGGESTION**: {list or None}
 
 ### Verdict
-{PASS / PASS WITH WARNINGS / FAIL}
-{one-line reason}
+{PASS | PASS WITH WARNINGS | FAIL} — {one line}
 ~~~
 
-When Strict TDD is active, insert the TDD compliance, test layer distribution, changed-file coverage, and quality metrics sections from `strict-tdd-verify.md`.
+## Notes
+
+**Skipped is not optional.** A report that omits its own blind spots reads as complete, and
+the orchestrator archives on it. Name what you could not check even when the answer is
+awkward.
+
+Strict TDD active → insert the TDD compliance, test layer distribution, changed-file
+coverage and quality metrics sections from
+[strict-tdd-verify.md](../strict-tdd-verify.md).
+
+Coverage and quality metrics never reach CRITICAL. Unchecked implementation tasks,
+`FAILING` and `UNTESTED` scenarios, and a short delta always do.
