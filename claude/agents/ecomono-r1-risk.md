@@ -1,5 +1,5 @@
 ---
-name: review-risk
+name: ecomono-r1-risk
 description: R1 Risk reviewer — security, privilege boundaries, data exposure, dependency risks, and merge-blocking vulnerabilities.
 model: sonnet
 tools: Read, Grep, Glob, Bash

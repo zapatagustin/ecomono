@@ -3,11 +3,7 @@ name: ecomono-sdd-spec
 description: "Write delta specs: requirements and scenarios added, modified, removed or renamed. Trigger: orchestrator launches spec for a change."
 disable-model-invocation: true
 user-invocable: false
-license: MIT
 metadata:
-  author: gentleman-programming
-  derived_from: Gentleman-Programming/gentle-ai (sdd-spec)
-  modified: true
   version: "2.0"
   delegate_only: true
 ---

@@ -3,11 +3,7 @@ name: ecomono-sdd-onboard
 description: "Teach SDD by running one real cycle on the user's own codebase. Trigger: user asks to learn SDD or for a guided walkthrough."
 disable-model-invocation: true
 user-invocable: false
-license: MIT
 metadata:
-  author: gentleman-programming
-  derived_from: Gentleman-Programming/gentle-ai (sdd-onboard)
-  modified: true
   version: "1.0"
   delegate_only: false
 ---

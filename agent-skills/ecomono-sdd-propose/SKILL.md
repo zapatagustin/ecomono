@@ -3,11 +3,7 @@ name: ecomono-sdd-propose
 description: "Turn exploration into a change proposal: intent, scope, approach, risks. Trigger: orchestrator launches propose for a change."
 disable-model-invocation: true
 user-invocable: false
-license: MIT
 metadata:
-  author: gentleman-programming
-  derived_from: Gentleman-Programming/gentle-ai (sdd-propose)
-  modified: true
   version: "2.0"
   delegate_only: true
 ---

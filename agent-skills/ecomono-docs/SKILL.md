@@ -1,11 +1,7 @@
 ---
 name: ecomono-docs
 description: "Write docs that reduce cognitive load. Trigger: guides, READMEs, RFCs, onboarding, architecture, PR descriptions, or any doc that reads long and dense."
-license: Apache-2.0
 metadata:
-  author: gentleman-programming
-  derived_from: Gentleman-Programming/gentle-ai (cognitive-doc-design)
-  modified: true
   version: "1.0"
 ---
 

@@ -34,7 +34,7 @@ check() { # check <label> <skill> <extended-regex the decision must match>
 check "heavy skill is denied and routed to an Agent" claude-api '^deny:.*call Agent'
 check "overlap routes to the ecomono equivalent"     simplify   '^deny:.*ecomono-cut'
 check "review routes to ecomono-review"              review     '^deny:.*ecomono-review'
-check "security-review routes to the risk agent"     security-review '^deny:.*review-risk'
+check "security-review routes to the risk agent"     security-review '^deny:.*ecomono-r1-risk'
 check "an ungated skill passes"                      ecomono-docs '^allow$'
 check "an ecomono skill never gates itself"          ecomono-cut     '^allow$'
 

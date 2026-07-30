@@ -1,53 +1,53 @@
 # Notice
 
-This repository contains work derived from third-party open-source projects. The
-sections below record what was taken, from whom, under which licence, and that it
-was modified. Every derived file also carries the same attribution in its own
-frontmatter, so the provenance survives being copied out of the repo.
+What in this repo came from somewhere else, and what is owed for it.
 
-## gentle-ai — Gentleman Programming
+## Lineage: gentle-ai — Gentleman Programming
 
 Upstream: <https://github.com/Gentleman-Programming/gentle-ai>
 
-The Spec-Driven Development skill family and three standalone skills originate
-there. They have been forked into `agent-skills/` under the `ecomono-` prefix and
-**modified**: renamed, rewritten against this repo's context-discipline rules, and
-re-pointed at the `ecomono-memory` persistence backend rather than the upstream
-default. They are no longer upstream files and should not be read as representing
-upstream's current behaviour.
+The Spec-Driven Development workflow here started as fourteen vendored skills from that
+project — the SDD phase family plus `judgment-day`, `branch-pr` and
+`cognitive-doc-design` — which carried `license: MIT` or `Apache-2.0` and
+`metadata.author: gentleman-programming`.
 
-Forked under MIT:
+**Every one of them has since been rewritten from scratch.** Not renamed, not edited:
+each file's text was replaced, and the structure changed with it. The openspec artifact
+layout was removed entirely, the four-mode persistence matrix collapsed to two, a
+cumulative main-spec baseline was introduced where none existed, the native-dispatcher
+integration was deleted along with the binary it called, and roughly half the remaining
+words were duplication of contracts that now live in one place.
 
-| Derived work | Upstream skill |
-|---|---|
-| `agent-skills/ecomono-sdd-explore` | `ecomono-sdd-explore` |
-| `agent-skills/ecomono-sdd-propose` | `ecomono-sdd-propose` |
-| `agent-skills/ecomono-sdd-spec` | `ecomono-sdd-spec` |
-| `agent-skills/ecomono-sdd-design` | `ecomono-sdd-design` |
-| `agent-skills/ecomono-sdd-tasks` | `ecomono-sdd-tasks` |
-| `agent-skills/ecomono-sdd-apply` | `ecomono-sdd-apply` |
-| `agent-skills/ecomono-sdd-verify` | `ecomono-sdd-verify` |
-| `agent-skills/ecomono-sdd-archive` | `ecomono-sdd-archive` |
-| `agent-skills/ecomono-sdd-init` | `ecomono-sdd-init` |
-| `agent-skills/ecomono-sdd-onboard` | `ecomono-sdd-onboard` |
-| `agent-skills/ecomono-sdd-shared` | `_shared` |
+No upstream expression survives, so no attribution is owed and the per-file
+`derived_from` markers have been removed. What was taken and kept is the **idea**: the
+phase sequence, the delta-spec model, blind dual review. Ideas are not owned, and this
+note exists to name the debt anyway, because the workflow was worth learning from and
+saying so costs nothing.
 
-Forked under Apache-2.0:
+The `gentle-ai` binary is no longer used or vendored. Its only live function here — the
+skill-registry generator — was reimplemented as
+`claude/hooks/ecomono-skill-registry.js`; its SDD dispatchers only ever read an
+`openspec/` layout this setup does not use.
 
-| Derived work | Upstream skill |
-|---|---|
-| `agent-skills/ecomono-judgment` | `ecomono-judgment` |
-| `agent-skills/ecomono-pr` | `ecomono-pr` |
-| `agent-skills/ecomono-docs` | `ecomono-docs` |
+## Lineage: superpowers
 
-The `gentle-ai` binary itself is not vendored — it is fetched from upstream
-releases at install time (`nix/gentle-ai.nix`, `install.sh`) and remains upstream's
-work under its own licence.
+`agent-skills/ecomono-brainstorm`, `ecomono-plan`, `ecomono-tdd` and `ecomono-debug`
+replace four skills from the `superpowers` Claude Code plugin. They were written from
+scratch against this repo's rules — no upstream text was reused — so nothing is owed.
+Recorded for the same reason as above: the plugin was retired in their favour and the
+lineage of the idea is worth naming.
+
+## Attribution owed: cave-compress
+
+`opencode/plugins/cave-compress.ts` and `claude/hooks/ecomono-compress.js` **do** carry
+ported code: the pure compression functions from `@juliusbrussee/ecomono-code`, MIT
+licensed, © Julius Brussee. Those functions were kept substantially as written, so the
+attribution stays, in each file's header and here.
 
 ### MIT License
 
 ```
-Copyright (c) 2025 Gentleman Programming
+Copyright (c) Julius Brussee
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal
@@ -68,24 +68,9 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ```
 
-### Apache License 2.0
+## Vendored as-is
 
-The three skills above declare `Apache-2.0` in their own frontmatter, so they are
-carried under those terms. Full text: <https://www.apache.org/licenses/LICENSE-2.0>
-
-As required by section 4(b), note that these files have been changed from their
-original form. Copyright (c) 2025 Gentleman Programming.
-
-## Ported process skills
-
-`agent-skills/ecomono-brainstorm`, `ecomono-plan`, `ecomono-tdd` and
-`ecomono-debug` replace four skills from the `superpowers` Claude Code plugin. They
-were **written from scratch** against this repo's rules rather than copied — no
-upstream text was reused — so no attribution is owed. Recorded here only because
-the plugin was retired in their favour and the lineage of the idea is worth naming.
-
-## cave-compress
-
-`opencode/plugins/cave-compress.ts` and `claude/hooks/ecomono-compress.js` port the
-pure compression functions from `@juliusbrussee/ecomono-code`, MIT licensed,
-© Julius Brussee. The per-file attribution is in each header.
+`agent-skills/find-skills` is a third-party skill kept as received. It carries no
+licence header of its own; it is a discovery front-end for the community skill
+ecosystem (`skills.sh`, `anthropics/skills`, `vercel-labs`) rather than original work
+here.

@@ -1,5 +1,5 @@
 ---
-name: review-readability
+name: ecomono-r2-readability
 description: R2 Readability reviewer — naming, complexity, intention, maintainability, review size, and context clarity.
 model: sonnet
 tools: Read, Grep, Glob, Bash

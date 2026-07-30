@@ -3,11 +3,7 @@ name: ecomono-sdd-archive
 description: "Merge delta specs into the main specs and close the change. Trigger: orchestrator launches archive after verification passes."
 disable-model-invocation: true
 user-invocable: false
-license: MIT
 metadata:
-  author: gentleman-programming
-  derived_from: Gentleman-Programming/gentle-ai (sdd-archive)
-  modified: true
   version: "2.0"
   delegate_only: true
 ---

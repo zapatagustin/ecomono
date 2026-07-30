@@ -3,11 +3,7 @@ name: ecomono-sdd-tasks
 description: "Break a change into ordered, verifiable tasks and forecast the review budget. Trigger: orchestrator launches tasks after spec and design."
 disable-model-invocation: true
 user-invocable: false
-license: MIT
 metadata:
-  author: gentleman-programming
-  derived_from: Gentleman-Programming/gentle-ai (sdd-tasks)
-  modified: true
   version: "2.0"
   delegate_only: true
 ---

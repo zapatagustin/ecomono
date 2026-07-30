@@ -3,11 +3,7 @@ name: ecomono-sdd-apply
 description: "Implement SDD tasks from spec and design. Trigger: orchestrator launches apply for one or more change tasks."
 disable-model-invocation: true
 user-invocable: false
-license: MIT
 metadata:
-  author: gentleman-programming
-  derived_from: Gentleman-Programming/gentle-ai (sdd-apply)
-  modified: true
   version: "3.0"
   delegate_only: true
 ---

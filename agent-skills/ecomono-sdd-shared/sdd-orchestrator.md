@@ -316,10 +316,10 @@ context.
 Recommendations, not enforced checkpoints. You decide when to act.
 
 - **pre-commit** and **pre-push**: consider one cheap advisory lens,
-  `review-readability`. One lens, not four — this is an everyday event.
+  `ecomono-r2-readability`. One lens, not four — this is an everyday event.
 - **pre-pr**: when the diff touches `**/auth/**`, `**/update/**`, `**/security/**` or
   `**/payments/**`, or exceeds 400 changed lines, strongly consider the full fan-out —
-  `review-risk`, `review-resilience`, `review-readability`, `review-reliability` in
+  `ecomono-r1-risk`, `ecomono-r4-resilience`, `ecomono-r2-readability`, `ecomono-r3-reliability` in
   parallel. Four lenses cost ~4x, so they are reserved for hot paths and large diffs.
 - **post-design** and **post-apply**: strongly consider `ecomono-judgment`.
   Adversarial verification costs roughly 4 + 3 per finding, which is worth it only at

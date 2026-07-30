@@ -3,11 +3,7 @@ name: ecomono-sdd-verify
 description: "Validate implementation against spec, design and tasks. Trigger: orchestrator launches verification for a change."
 disable-model-invocation: true
 user-invocable: false
-license: MIT
 metadata:
-  author: gentleman-programming
-  derived_from: Gentleman-Programming/gentle-ai (sdd-verify)
-  modified: true
   version: "3.0"
   delegate_only: true
 ---

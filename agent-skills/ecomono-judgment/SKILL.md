@@ -1,11 +1,7 @@
 ---
 name: ecomono-judgment
 description: "Trigger: judgment day, dual review, adversarial review, juzgar. Two blind judges review in parallel, confirmed issues get fixed, then re-judged."
-license: Apache-2.0
 metadata:
-  author: gentleman-programming
-  derived_from: Gentleman-Programming/gentle-ai (judgment-day)
-  modified: true
   version: "1.4"
 ---
 

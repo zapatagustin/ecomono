@@ -3,11 +3,7 @@ name: ecomono-sdd-explore
 description: "Investigate an idea before committing to a change. Trigger: orchestrator launches exploration or requirement clarification."
 disable-model-invocation: true
 user-invocable: false
-license: MIT
 metadata:
-  author: gentleman-programming
-  derived_from: Gentleman-Programming/gentle-ai (sdd-explore)
-  modified: true
   version: "2.0"
   delegate_only: true
 ---

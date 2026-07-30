@@ -3,11 +3,7 @@ name: ecomono-sdd-init
 description: "Bootstrap SDD in a project: detect stack, resolve strict TDD, cache context and registry. Trigger: sdd init, iniciar sdd, or any SDD command finding no init."
 disable-model-invocation: true
 user-invocable: false
-license: MIT
 metadata:
-  author: gentleman-programming
-  derived_from: Gentleman-Programming/gentle-ai (sdd-init)
-  modified: true
   version: "3.0"
   delegate_only: true
 ---

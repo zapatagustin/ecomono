@@ -3,11 +3,7 @@ name: ecomono-sdd-shared
 description: "Shared SDD references for installed skills. Not invokable."
 disable-model-invocation: true
 user-invocable: false
-license: MIT
 metadata:
-  author: gentleman-programming
-  derived_from: Gentleman-Programming/gentle-ai (_shared)
-  modified: true
   version: "1.0"
 ---
 

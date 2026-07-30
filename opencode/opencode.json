@@ -19,10 +19,10 @@
           "ecomono-judge-fix": "allow",
           "ecomono-judge-a": "allow",
           "ecomono-judge-b": "allow",
-          "review-readability": "allow",
-          "review-reliability": "allow",
-          "review-resilience": "allow",
-          "review-risk": "allow",
+          "ecomono-r2-readability": "allow",
+          "ecomono-r3-reliability": "allow",
+          "ecomono-r4-resilience": "allow",
+          "ecomono-r1-risk": "allow",
           "ecomono-sdd-apply": "allow",
           "ecomono-sdd-archive": "allow",
           "ecomono-sdd-design": "allow",
@@ -80,7 +80,7 @@
         "read": true
       }
     },
-    "review-readability": {
+    "ecomono-r2-readability": {
       "description": "R2 Readability reviewer — naming, complexity, intention, maintainability, review size, and context clarity",
       "model": "nvidia/deepseek-ai/deepseek-v4-flash",
       "hidden": true,
@@ -91,7 +91,7 @@
         "read": true
       }
     },
-    "review-reliability": {
+    "ecomono-r3-reliability": {
       "description": "R3 Reliability reviewer — behavior-first tests, coverage value, edge cases, determinism, contracts, and regressions",
       "model": "nvidia/deepseek-ai/deepseek-v4-flash",
       "hidden": true,
@@ -102,7 +102,7 @@
         "read": true
       }
     },
-    "review-resilience": {
+    "ecomono-r4-resilience": {
       "description": "R4 Resilience reviewer — fallbacks, retry/backoff, graceful degradation, observability, load, rollback, and SLO risks",
       "model": "nvidia/deepseek-ai/deepseek-v4-flash",
       "hidden": true,
@@ -113,7 +113,7 @@
         "read": true
       }
     },
-    "review-risk": {
+    "ecomono-r1-risk": {
       "description": "R1 Risk reviewer — security, privilege boundaries, data exposure, dependency risks, and merge-blocking vulnerabilities",
       "model": "nvidia/deepseek-ai/deepseek-v4-flash",
       "hidden": true,

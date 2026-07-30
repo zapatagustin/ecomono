@@ -1,5 +1,5 @@
 ---
-name: review-reliability
+name: ecomono-r3-reliability
 description: R3 Reliability reviewer — behavior-first tests, coverage value, edge cases, determinism, contracts, and regressions.
 model: sonnet
 tools: Read, Grep, Glob, Bash

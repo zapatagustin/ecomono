@@ -31,7 +31,7 @@ lines=${lines:-0}
 
 [ "$lines" -le "$THRESHOLD" ] && exit 0
 
-reason="Branch diff is ${lines} changed lines (> ${THRESHOLD}). Before pushing/opening the PR, run the review-4R agents in parallel: review-risk, review-reliability, review-resilience, review-readability."
+reason="Branch diff is ${lines} changed lines (> ${THRESHOLD}). Before pushing/opening the PR, run the review-4R agents in parallel: ecomono-r1-risk, ecomono-r3-reliability, ecomono-r4-resilience, ecomono-r2-readability."
 msg="⚠ Large diff (${lines} lines > ${THRESHOLD}). Review-4R recommended before push/PR."
 
 # Three signals: permission "ask" (default mode) + additionalContext + systemMessage

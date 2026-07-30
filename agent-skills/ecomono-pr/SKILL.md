@@ -5,11 +5,7 @@ description: >
   body a reviewer can act on, and the review-size budget. Use when creating, opening
   or preparing a PR, when the user says "open a PR" or "prepare this branch", or
   invokes /ecomono-pr.
-license: Apache-2.0
 metadata:
-  author: gentleman-programming
-  derived_from: Gentleman-Programming/gentle-ai (branch-pr)
-  modified: true
   version: "2.0"
 ---
 

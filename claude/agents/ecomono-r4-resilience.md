@@ -1,5 +1,5 @@
 ---
-name: review-resilience
+name: ecomono-r4-resilience
 description: R4 Resilience reviewer — fallbacks, retry/backoff, graceful degradation, observability, load, rollback, and SLO risks.
 model: sonnet
 tools: Read, Grep, Glob, Bash
