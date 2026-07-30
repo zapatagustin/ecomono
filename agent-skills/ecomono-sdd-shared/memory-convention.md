@@ -1,138 +1,106 @@
-# ecomono-memory Artifact Convention (reference documentation)
+# Artifact Convention
 
-NOTE: Critical ecomono-memory calls (`mem_search`, `mem_save`, `mem_get_observation`) are inlined directly in each skill's SKILL.md. This document is supplementary reference — sub-agents do NOT need to read it to function.
+Reference, not required reading. The `mem_search` / `mem_get_observation` /
+`mem_save` calls a phase actually needs are inlined in its own `SKILL.md`. This
+file exists so the naming stays deterministic across phases that never read each
+other's code.
 
-## Naming Rules
+## Naming
 
-ALL SDD artifacts persisted to ecomono-memory MUST follow this deterministic naming:
+Deterministic, because the next phase searches by exact key rather than guessing:
 
 ```
 title:     sdd/{change-name}/{artifact-type}
 topic_key: sdd/{change-name}/{artifact-type}
 type:      architecture
-project:   {detected or current project name}
+project:   {detected or current project}
 scope:     project
 ```
 
-There is no `capture_prompt`. The Go engram took it on `mem_save` to keep automated pipeline writes from also recording the user's in-flight prompt; here prompt capture is the host adapter's job — one row per message, written independently of any save — so there is no save-time side effect left for a flag to switch off. Don't reintroduce it from older engram documentation.
+`topic_key` is what makes a re-run an upsert instead of a second competing copy.
 
-### Artifact Types
+**No `capture_prompt` flag.** The retired Go engram accepted one on `mem_save`, so
+an automated pipeline write would not also record the user's in-flight prompt. Here
+prompt capture belongs to the host adapter — one row per message, written
+independently of any save — so no save-time side effect remains for a flag to switch
+off. Old engram documentation still shows it; do not reintroduce it.
 
-| Artifact Type | Produced By | Description |
-|---------------|-------------|-------------|
-| `explore` | ecomono-sdd-explore | Exploration analysis |
-| `proposal` | ecomono-sdd-propose | Change proposal |
-| `spec` | ecomono-sdd-spec | Delta specifications (all domains concatenated) |
-| `design` | ecomono-sdd-design | Technical design |
-| `tasks` | ecomono-sdd-tasks | Task breakdown |
-| `apply-progress` | ecomono-sdd-apply | Implementation progress (one per batch) |
-| `verify-report` | ecomono-sdd-verify | Verification report |
-| `archive-report` | ecomono-sdd-archive | Archive closure with lineage |
-| `state` | orchestrator | DAG state for recovery after compaction |
+## Artifact types
 
+| Type | Produced by | Holds |
+|---|---|---|
+| `explore` | `ecomono-sdd-explore` | Investigation, options compared |
+| `proposal` | `ecomono-sdd-propose` | Intent, scope, approach |
+| `spec` | `ecomono-sdd-spec` | Delta specs, all domains concatenated |
+| `design` | `ecomono-sdd-design` | Technical design and decisions |
+| `tasks` | `ecomono-sdd-tasks` | Ordered breakdown |
+| `apply-progress` | `ecomono-sdd-apply` | Cumulative implementation state |
+| `verify-report` | `ecomono-sdd-verify` | Verification result |
+| `archive-report` | `ecomono-sdd-archive` | Closure and lineage (all observation IDs) |
+| `state` | orchestrator | DAG state, for recovery after compaction |
 
+One key per type per change. A phase inventing a new type strands its output —
+nothing downstream searches for it.
 
-### State Artifact
+## Reading
+
+Two steps, always. `mem_search` returns a truncated preview; the preview is not the
+artifact, and a phase built on one produces confidently wrong output.
+
+```
+mem_search(query: "sdd/{change-name}/{artifact-type}", project: "{project}")  -> preview + id
+mem_get_observation(id: {id})                                                 -> full content
+```
+
+Several artifacts: batch all searches, then batch all retrievals. Sequential
+round-trips cost turns, and every turn re-reads the whole prefix.
+
+Project context lives at `ecomono-sdd-init/{project}`, read the same way. Browse a
+whole change with `mem_search(query: "sdd/{change-name}/")`.
+
+## Writing
+
+`mem_save` with the same `topic_key` upserts. `mem_update(id, content)` when you
+already hold the exact ID.
 
 ```
 mem_save(
-  title: "sdd/{change-name}/state",
-  topic_key: "sdd/{change-name}/state",
-  type: "architecture",
-  project: "{project}",
-  content: "change: {change-name}\nphase: {last-phase}\nartifact_store: ecomono-memory\nartifacts:\n  proposal: true\n  specs: true\n  design: false\n  tasks: false\ntasks_progress:\n  completed: []\n  pending: []\nlast_updated: {ISO date}"
-)
-```
-
-Recovery: `mem_search("sdd/{change-name}/state")` → `mem_get_observation(id)` → parse YAML → restore state.
-
-## Recovery Protocol (2 steps)
-
-Memory lifecycle rule (when ecomono-memory exposes lifecycle metadata/tooling):
-- At session start or before architecture-sensitive work, call `mem_review` with action `list` for the current project when the tool is available.
-- If `mem_review` is unavailable, do not fail the task. Continue with normal `mem_context`/`mem_search`, and still apply lifecycle metadata from any returned observations when present.
-- `active` memories may be used normally.
-- `needs_review` memories are stale context, not trusted facts.
-- Surface `needs_review` context and verify it against current evidence before relying on it.
-- Do NOT call `mem_review` with action `mark_reviewed` automatically. Only call `mark_reviewed` after explicit user confirmation or through a dedicated memory maintenance command.
-
-```
-Step 1: mem_search(query: "sdd/{change-name}/{artifact-type}", project: "{project}") → truncated preview + ID
-Step 2: mem_get_observation(id: {observation-id}) → complete content
-```
-
-When retrieving multiple artifacts, group all searches first, then all retrievals:
-
-```
-STEP A — SEARCH (get IDs only):
-  mem_search(query: "sdd/{change-name}/proposal", ...) → save ID
-  mem_search(query: "sdd/{change-name}/spec", ...) → save ID
-  mem_search(query: "sdd/{change-name}/design", ...) → save ID
-
-STEP B — RETRIEVE FULL CONTENT (mandatory):
-  mem_get_observation(id: {proposal_id})
-  mem_get_observation(id: {spec_id})
-  mem_get_observation(id: {design_id})
-```
-
-Loading project context:
-```
-mem_search(query: "ecomono-sdd-init/{project}", project: "{project}") → get ID
-mem_get_observation(id) → full project context
-```
-
-## Writing Artifacts
-
-Standard write:
-```
-mem_save(
-  title: "sdd/{change-name}/{artifact-type}",
-  topic_key: "sdd/{change-name}/{artifact-type}",
-  type: "architecture",
-  project: "{project}",
-  content: "{full markdown content}"
-)
-```
-
-Concrete example — saving a proposal for `add-dark-mode`:
-```
-mem_save(
-  title: "sdd/add-dark-mode/proposal",
+  title:     "sdd/add-dark-mode/proposal",
   topic_key: "sdd/add-dark-mode/proposal",
-  type: "architecture",
-  project: "my-app",
-  content: "## Proposal\n\nAdd dark mode toggle..."
+  type:      "architecture",
+  project:   "my-app",
+  content:   "## Proposal\n\nAdd dark mode toggle..."
 )
 ```
 
-Update existing artifact (when you have the observation ID):
-```
-mem_update(id: {observation-id}, content: "{updated full content}")
-```
+**Upsert overwrites.** Same `topic_key` + `project` + `scope` replaces the previous
+content with no revision history. Deliberate — memory is working state, not an audit
+trail — but it means this store cannot answer "what did the first draft say". If you
+need that, the answer is git on real deliverables, not a second artifact store.
 
-Use `mem_update` when you have the exact ID. Use `mem_save` with same `topic_key` for upserts.
+## Project resolution
 
-### Browsing All Artifacts for a Change
+Detected from the working directory's git remote, falling back to the repo root's
+basename, then the directory name. There is no `--project` flag and no env override:
+the Go engram had both, this implementation has neither. Pass `project` explicitly on
+a call to target another one, or `mem_current_project` to see what was detected.
 
-```
-mem_search(query: "sdd/{change-name}/", project: "{project}")
-→ Returns all artifacts for that change
-```
+Saving under a name that does not match existing observations creates a *second
+project* rather than warning about drift — a silent split, not an error. Fold one
+into the other with `mem_merge_projects`; there is no CLI for it.
 
-## Project Name Resolution
+## Stale context
 
-The project name is detected from the git remote of the working directory, falling back to the repository root's basename and then to the directory name. There is no `--project` flag and no env override: the Go engram had both, the native implementation has neither. Pass `project` explicitly on a tool call to target a different one, or call `mem_current_project` to see what was detected.
+A memory flagged `needs_review` is stale context, not a trusted fact. Surface it and
+verify against current evidence before building on it. Never call `mem_review` with
+`mark_reviewed` automatically — only after explicit user confirmation or from a
+dedicated maintenance command; marking unread memory as reviewed is worse than
+leaving it flagged.
 
-Saving under a name that does not match existing observations creates a second project rather than warning about drift. Use `mem_merge_projects` to fold one into the other; there is no CLI.
+When lifecycle tooling is available, list with `mem_review` at session start or
+before architecture-sensitive work. When it is not, do not fail: continue with
+`mem_context`/`mem_search` and honour lifecycle metadata on whatever comes back.
 
-## Upsert Behavior
-
-Same `topic_key` + `project` + `scope` → UPDATE (overwrite), not INSERT. Previous content is lost and no revision history is kept. This is by design — memory is working state, not an audit trail. For iteration history or team collaboration, use `openspec` or `hybrid` mode.
-
-## Why This Convention
-
-- Deterministic titles → recovery works by exact match
-- `topic_key` → enables upserts without duplicates
-- `sdd/` prefix → namespaces all SDD artifacts
-- Two-step recovery → search previews are always truncated; `mem_get_observation` is the only way to get full content
-- Lineage → archive-report includes all observation IDs for complete traceability
+The same discipline applies to superseded artifacts. A design that a later phase
+replaced costs exactly what the current one costs and describes code that has since
+changed. Name it superseded, then stop citing it.

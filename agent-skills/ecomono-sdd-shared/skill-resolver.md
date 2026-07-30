@@ -1,41 +1,37 @@
-# Skill Resolver — Universal Protocol
+# Skill Resolver
 
-Any agent that **delegates work to sub-agents** MUST use this protocol to resolve relevant skills and pass them safely.
+Any agent that launches sub-agents resolves skills through this protocol. A
+sub-agent starts with no project skill context, and the registry is a cheap index
+that gives the delegator enough to pick without rewriting or summarising anything.
 
-## Why This Exists
+Apply before every launch that reads, writes, reviews, tests, documents, or creates
+project artifacts. Skip only for purely mechanical commands.
 
-Sub-agents start with no project skill context. The registry gives delegators a cheap index of available skills without rewriting or summarizing those skills.
+## 1. Get the registry
 
-## When to Apply
+Stop at the first source that answers:
 
-Before every sub-agent launch that involves reading, writing, reviewing, testing, documenting, or creating project artifacts. Skip only for purely mechanical commands.
+1. The session cache, if you already read it this session.
+2. `mem_search(query: "skill-registry", project: "{project}")` →
+   `mem_get_observation(id)`.
+3. `.atl/skill-registry.md` at the project root.
+4. Nothing → launch without project skills and say so. It regenerates with
+   `node ~/.claude/hooks/ecomono-skill-registry.js --cwd <repo>`, and also runs on
+   every user prompt, so an empty registry usually means malformed frontmatter
+   rather than a generator that never ran.
 
-## The Protocol
+## 2. Match
 
-### Step 1: Obtain the Skill Registry
+| Dimension | Match against |
+|---|---|
+| Code / files | The trigger column names the language, framework, tool, or path |
+| Task / action | The trigger column names the action: PR, review, docs, tests, release |
 
-The registry is an **index** of skill names, triggers, scopes, and exact `SKILL.md` paths. It is not a compact-rules bundle.
+Smallest useful set. Past five matches, keep the five most relevant and let code
+context beat task context — a skill about the file being edited outranks a skill
+about the kind of work.
 
-Resolution order:
-1. Use the session cache if present.
-2. `mem_search(query: "skill-registry", project: "{project}")` → `mem_get_observation(id)` for full content.
-3. Fallback: read `.atl/skill-registry.md` from the project root.
-4. No registry found → proceed without project skills and warn the user to run `gentle-ai skill-registry refresh`.
-
-### Step 2: Match Relevant Skills
-
-Match on two dimensions:
-
-| Context | Match against |
-| --- | --- |
-| Code/files | Registry trigger/description mentions the language, framework, tool, or path context |
-| Task/action | Registry trigger/description mentions actions like PR, review, docs, tests, Jira, comments, release |
-
-Prefer the smallest useful set. If more than five skills match, keep the five most relevant and prioritize code context over task context.
-
-### Step 3: Pass Skill Paths
-
-Inject paths, not summaries:
+## 3. Pass paths, never summaries
 
 ```markdown
 ## Skills to load before work
@@ -46,27 +42,34 @@ Read these exact files before reading, writing, reviewing, testing, or creating 
 - /absolute/path/to/agent-skills/ecomono-pr/SKILL.md
 ```
 
-The sub-agent MUST read those files before task-specific work. `SKILL.md` is the runtime contract and source of truth.
+`SKILL.md` is the runtime contract. A summary you generate is a second version of
+someone else's rules with nothing keeping the two equal — it will drift, and the
+sub-agent will follow the drifted copy.
 
-### Step 4: Report Resolution
+## 4. Report resolution
 
-Sub-agents MUST report `skill_resolution`:
+Every sub-agent returns `skill_resolution`:
 
-- `paths-injected` — received exact skill paths from the delegator and loaded them.
-- `fallback-registry` — no paths received, self-loaded paths from the registry.
-- `fallback-path` — loaded an explicit fallback path outside the registry.
-- `none` — no skills loaded.
+| Value | Means |
+|---|---|
+| `paths-injected` | Received exact paths from the delegator and loaded them |
+| `fallback-registry` | No paths received; self-loaded from the registry |
+| `fallback-path` | Loaded an explicit path outside the registry |
+| `none` | No skills loaded |
 
-If a sub-agent reports anything other than `paths-injected`, the orchestrator MUST re-read the registry before the next delegation.
+Anything other than `paths-injected` means the delegator did not do its job: re-read
+the registry before the next launch instead of letting every sub-agent pay to
+rediscover the same paths.
 
-## Compaction Safety
+## Compaction
 
-- The registry persists in ecomono-memory and `.atl/skill-registry.md`.
-- Delegators can recover selected paths after compaction by re-reading the registry.
-- Sub-agents receive exact files to read, so skill meaning is not degraded by generated summaries.
+The registry lives in `ecomono-memory` and in `.atl/skill-registry.md`, so a
+delegator can recover its selection after a compaction by re-reading rather than
+re-deciding. Because sub-agents receive exact files, skill meaning never degrades
+into a generated paraphrase along the way.
 
-## Integration Points
+## Users of this protocol
 
-- **ATL Orchestrator**: resolves paths for all SDD and non-SDD delegations.
-- **ecomono-judgment**: resolves paths before Judge A, Judge B, and Fix Agent.
-- **pr-review and future delegators**: use this protocol when launching sub-agents.
+The SDD orchestrator for every phase and non-SDD delegation, `ecomono-judgment`
+before each judge and the fix agent, and any future delegator. If you are writing a
+new one, resolve here rather than inventing a second selection path.

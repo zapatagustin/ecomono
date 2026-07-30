@@ -1,62 +1,40 @@
-# SDD Status and Instructions Contract
+# Status Contract
 
-Shared OpenSpec-style contract for SDD commands and phase skills. Use this before acting on a change so orchestration does not guess state, paths, or edit scope.
+Any command that selects, continues, applies, verifies or archives a change
+produces this status first. It is the handoff between orchestrator and executor,
+and it exists so orchestration never guesses state, scope, or what is safe to edit.
 
-## Purpose
+## Change selection
 
-Commands that select, continue, apply, verify, or archive an SDD change MUST first produce or consume structured status. The status is the handoff between orchestrator and phase executor.
+| Situation | Do |
+|---|---|
+| A change name was given | Use it, after confirming it exists in the store |
+| No name, exactly one active change | Use it |
+| No name, unambiguous from session state | Use it |
+| Multiple candidates, or unclear | Ask. Do not guess |
+| No active changes | Report none active, suggest `/ecomono-sdd-new <change>` |
 
-## Change Selection
+Guessing a change name is the one failure here that silently writes artifacts into
+the wrong lineage.
 
-- If a change name is provided, use that exact change after confirming it exists in the selected artifact store.
-- If no change name is provided, infer only when the active change is unambiguous from session state or there is exactly one active change.
-- If multiple active changes match or the active change is unclear, ask the user to choose. Do not guess.
-- If no active changes exist, report that no SDD change is active and suggest `/ecomono-sdd-new <change>`.
+## Schema
 
-## Native Engine
-
-- When the session artifact store is `openspec` or `hybrid` and the `gentle-ai` binary is available, prefer `gentle-ai sdd-status [change] --cwd <repo> --json --instructions` for read-only status and `gentle-ai sdd-continue [change] --cwd <repo>` for dispatcher output. When the store is `ecomono-memory`, do not invoke the binary at all (see the next bullet).
-- The native engine reads only OpenSpec file artifacts and always emits `artifactStore: openspec`; it cannot observe ecomono-memory-backed changes. Treat native status as authoritative only when the selected artifact store is `openspec` or `hybrid`. When the selected store is `ecomono-memory`, do not invoke the native dispatcher at all — resolve status from ecomono-memory (`mem_search` + `mem_get_observation` on the change topic keys) using the manual status schema below, and disregard any `blocked`, `Active OpenSpec change not found`, or `nextRecommended: sdd-new` it emits for an ecomono-memory change that exists.
-- For `openspec` and `hybrid` stores, treat native status JSON as authoritative over prompt inference or manually reconstructed state.
-- When `blockedReasons` is non-empty, do not proceed to terminal, archive, or apply work. Return or report `blockedReasons` and stop unless `nextRecommended` is `verify`, in which case verification may run only to remediate or refresh evidence for the blockers. When `nextRecommended` is `resolve-blockers`, always report `blockedReasons` and stop. When `nextRecommended` is a planning token (`propose`, `spec`, `design`, or `tasks`), launch the corresponding planning phase — missing planning artifacts are the expected output of those phases, not genuine blockers.
-- `nextRecommended` is a bounded machine token for routing, not human prose. Route only by `nextRecommended` and dependency states.
-- Human-readable explanation belongs in `blockedReasons`, not `nextRecommended`.
-- If the binary is unavailable, fall back to this prompt contract and the manual status schema below. Manual fallback status MUST stay shape-compatible with native `gentle-ai.sdd-status` JSON even when values are reconstructed manually.
-
-## Status Schema
-
-Return status as markdown with these fields, or as equivalent JSON when the host supports it:
+Artifacts are topic keys, not paths — nothing is written to the project tree.
 
 ```yaml
-schemaName: gentle-ai.sdd-status
+schemaName: ecomono.sdd-status
 schemaVersion: 1
 changeName: <change-name-or-null>
-artifactStore: openspec | ecomono-memory | hybrid
-planningHome:
-  mode: repo-local
-  path: <absolute path to openspec>
-changeRoot: <absolute path to openspec/changes/<change> or null>
-artifactPaths:
-  proposal: [<absolute path>]
-  specs: [<absolute paths>]
-  design: [<absolute path>]
-  tasks: [<absolute path>]
-  applyProgress: [<absolute path>]
-  verifyReport: [<absolute path>]
-contextFiles:
-  proposal: [<absolute readable files>]
-  specs: [<absolute readable files>]
-  design: [<absolute readable files>]
-  tasks: [<absolute readable files>]
-  applyProgress: [<absolute readable files>]
-  verifyReport: [<absolute readable files>]
+artifactStore: ecomono-memory | none
 artifacts:
-  proposal: missing | done | partial
-  specs: missing | done | partial
-  design: missing | done | partial
-  tasks: missing | done | partial
-  applyProgress: missing | done | partial
-  verifyReport: missing | done | partial
+  proposal:       missing | partial | done
+  spec:           missing | partial | done
+  design:         missing | partial | done
+  tasks:          missing | partial | done
+  applyProgress:  missing | partial | done
+  verifyReport:   missing | partial | done
+topicKeys:
+  proposal: sdd/<change>/proposal        # and so on, per memory-convention.md
 taskProgress:
   total: 0
   completed: 0
@@ -64,60 +42,82 @@ taskProgress:
   allComplete: false
 dependencies:
   proposal: blocked | ready | all_done
-  specs: blocked | ready | all_done
-  design: blocked | ready | all_done
-  tasks: blocked | ready | all_done
-  apply: blocked | ready | all_done
-  verify: blocked | ready | all_done
-  archive: blocked | ready | all_done
-applyState: blocked | all_done | ready
+  spec:     blocked | ready | all_done
+  design:   blocked | ready | all_done
+  tasks:    blocked | ready | all_done
+  apply:    blocked | ready | all_done
+  verify:   blocked | ready | all_done
+  archive:  blocked | ready | all_done
+applyState: blocked | ready | all_done
 actionContext:
-  mode: repo-local
   workspaceRoot: <absolute path>
   allowedEditRoots: [<absolute paths>]
-relationships:
-  dependsOn: []
-  supersedes: []
-  amends: []
-  conflictsWith: []
-  sameDomainActiveChanges: []
-phaseInstructions:
-  apply: [<instruction strings>]
-  verify: [<instruction strings>]
-  archive: [<instruction strings>]
-nextRecommended: propose | spec | design | tasks | apply | verify | archive | sdd-new | select-change | resolve-blockers
+nextRecommended: propose | spec | design | tasks | apply | verify | archive
+                 | new | select-change | resolve-blockers
 blockedReasons: []
 ```
 
-`phaseInstructions` is optional and appears only when instructions are requested. It carries only execution-phase keys (`apply`, `verify`, `archive`); planning-phase instructions (`propose`, `spec`, `design`, `tasks`) are surfaced in the dispatcher markdown, not this JSON map, so a consumer routing on a planning `nextRecommended` MUST NOT expect a matching `phaseInstructions` entry. Empty path fields MUST be arrays, not null. `changeName` and `changeRoot` are nullable; all other sections should be present in fallback output so consumers can parse native and manual status the same way. Native status currently emits `artifactStore: openspec`; manual fallback output MUST set `artifactStore` to the session's actual store (`openspec`, `ecomono-memory`, or `hybrid`), not blindly mirror the native token.
+Empty list fields are `[]`, never null. `changeName` is nullable; everything else is
+present so consumers parse one shape.
 
-## Apply State
+`nextRecommended` is a routing token, not prose. Route on it and on `dependencies`,
+nothing else. The human explanation goes in `blockedReasons` — a token carrying
+narrative cannot be matched against.
 
-- `blocked`: Required apply artifacts are missing, task selection is ambiguous, or action context makes edits unsafe.
-- `all_done`: Tasks artifact exists and every implementation task is checked `[x]`.
-- `ready`: Tasks artifact exists, at least one implementation task remains unchecked, and edit scope is safe.
+## Routing
 
-## Dependency States
+- `blockedReasons` non-empty → do not proceed to apply, archive, or any terminal
+  action. Report them and stop.
+- Exception: `nextRecommended: verify` may run against blockers, but only to refresh
+  or remediate their evidence.
+- `nextRecommended: resolve-blockers` → always report and stop.
+- `nextRecommended` is a planning token (`propose`, `spec`, `design`, `tasks`) →
+  launch that phase. A missing planning artifact is that phase's expected output,
+  not a genuine blocker; treating it as one deadlocks the change.
 
-- `proposal`, `specs`, `design`, and `tasks` report whether prerequisite artifacts are blocked, ready, or all done.
-- `apply` is `ready` only when specs, design, and tasks are available and task progress is not all done.
-- `verify` is `ready` when tasks exist and either apply-progress exists or the tasks artifact shows all intended implementation work complete. Incomplete tasks remain blockers for full verification.
-- `archive` is `ready` only when verify-report exists, is clearly passing, and tasks are complete. A clearly passing report needs an explicit PASS/SUCCESS signal and no blocker or negation signals such as FAIL, FAILURE, BLOCKED, CRITICAL, PENDING, TODO, verification blockers, `not passed`, or `pass: no`. CRITICAL verification issues have no override. Explicit recorded exceptions are limited to non-critical partial archives or stale-checkbox reconciliation when apply-progress/verify-report prove completion.
+## Apply state
 
-## Action Context Guard
+| State | Means |
+|---|---|
+| `blocked` | Required artifacts missing, task selection ambiguous, or edit scope unsafe |
+| `ready` | Tasks exist, at least one implementation task unchecked, edit scope safe |
+| `all_done` | Tasks exist and every implementation task is `[x]` |
 
-The orchestrator MUST carry `actionContext` into any phase launch.
+## Dependency states
 
-- If manually reconstructed context cannot prove edit ownership or allowed edit roots, stop before editing.
-- If `allowedEditRoots` is present, only edit files within those roots.
-- If a command cannot prove a file is inside the authoritative workspace or allowed edit roots, stop and ask for clarification.
+- `proposal`, `spec`, `design`, `tasks` — whether their prerequisites are blocked,
+  ready, or done.
+- `apply` is `ready` only when spec, design and tasks exist and task progress is not
+  already complete.
+- `verify` is `ready` when tasks exist and either apply-progress exists or the tasks
+  artifact shows all intended implementation complete. Unchecked tasks stay blockers
+  for full verification.
+- `archive` is `ready` only when a verify-report exists, is *clearly* passing, and
+  tasks are complete. Clearly passing means an explicit PASS/SUCCESS signal and no
+  negation anywhere: FAIL, FAILURE, BLOCKED, CRITICAL, PENDING, TODO, `not passed`,
+  `pass: no`. A CRITICAL issue has no override. The only recorded exceptions are
+  non-critical partial archives, and stale-checkbox reconciliation where
+  apply-progress and verify-report together prove the work was done.
 
-## Status Output
+Archive is where an optimistic read becomes permanent, which is why its gate is the
+strictest one here.
 
-Every command that acts on a change MUST show status before launching an executor or performing archive work:
+## Action context guard
 
-- Active change selection and how it was resolved.
-- Artifact statuses and paths/topics used as context.
-- Task progress and unchecked task list when tasks exist.
-- Next recommended action.
-- `blockedReasons` when `nextRecommended` is not `verify`, plus any edit-root blockers.
+The orchestrator carries `actionContext` into every phase launch. This is a safety
+boundary, not bookkeeping:
+
+- `allowedEditRoots` present → edit only inside those roots.
+- Cannot prove a file sits inside the workspace or an allowed root → stop and ask.
+- Cannot prove edit ownership at all → stop before editing, not after.
+
+## What every command shows
+
+Before launching an executor or archiving:
+
+1. The selected change and how it was resolved.
+2. Artifact states and the topic keys used as context.
+3. Task progress, plus the unchecked list when tasks exist.
+4. `nextRecommended`.
+5. `blockedReasons` whenever `nextRecommended` is not `verify`, plus any edit-root
+   blockers.
