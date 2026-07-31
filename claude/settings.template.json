@@ -36,6 +36,16 @@
         "hooks": [
           {
             "type": "command",
+            "command": "$HOME/.claude/hooks/secret-access-gate.sh",
+            "statusMessage": "Checking for credential paths (secret gate)"
+          }
+        ]
+      },
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
             "command": "$HOME/.claude/hooks/check-diff-size.sh",
             "if": "Bash(git push*)",
             "statusMessage": "Checking diff size (review-4R gate)"

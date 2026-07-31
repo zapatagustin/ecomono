@@ -56,25 +56,44 @@ default. `permissions.deny` in `claude/settings.template.json` is the only thing
 the way, and it is narrower than it looks. Read it as two separate lists:
 
 - Two literal `Bash` strings, `rm -rf /` and `rm -rf ~` (plain and `sudo`). Nothing
-  else typed at a shell is gated.
+  else typed at a shell is gated by the deny list.
 - Credential paths — `.env` / `.env.*`, `.ssh/*`, `.credentials/*`,
   `Library/Keychains/*`, `.aws/credentials`, `.config/gh/hosts.yml`, `**/*.pem`,
   `**/*.key`, `**/secrets/*` — but these bind to the `Read` and `Edit` tools only.
-  **They do not cover `Bash`.** Under `bypassPermissions`, `cat ~/.ssh/id_ed25519`
-  or a `curl` that uploads it runs unprompted, because the shell is auto-approved
-  and the deny list never sees the path.
+  **They do not cover `Bash`.** The deny list never sees a path that only appears
+  inside a shell command.
+
+`claude/hooks/secret-access-gate.sh` covers the second gap, not the first. It is a
+`PreToolUse` hook on `Bash` that matches the command string against the same credential
+paths and returns `permissionDecision: "ask"`, so `cat ~/.ssh/id_ed25519` asks instead of
+running silently. Two things to know about it:
+
+- It matches **substrings of the command**, so `cat $HOME/.ss''h/id_rsa` walks straight
+  through, as does any variable indirection. It catches the careless command and the
+  wildcard that swept up a secret — not an adversary. It also cannot tell a path from a
+  literal, so `echo id_rsa` prompts too.
+- The `"ask"` is honored under `bypassPermissions` — verified with `claude -p --settings`,
+  where the gated command never executed. But **in a non-interactive run there is nobody to
+  answer it, so it lands as a hard block** and retrying is futile. That is the intended
+  posture for a credential gate; if a headless job legitimately needs one of these paths,
+  set `ECOMONO_ALLOW_SECRET_PATHS=1`.
+
+`opencode.json` gets the same paths under `permission.bash`. That side is glob-only with no
+way to express an exception, so `cat .env.example` prompts there while the Claude Code hook
+stays quiet on it.
 
 So treat this as "the agent can do anything a shell can do on this machine, minus two
-`rm -rf` spellings", not as credential protection. It is a deliberate trade for a
-single-user machine. Since `settings.json` is seeded once and never overwritten, if
-you want prompts back, change `defaultMode` in `~/.claude/settings.json` (or in
-`claude/settings.template.json` before installing).
+`rm -rf` spellings and a prompt on obvious credential paths", not as credential protection.
+It is a deliberate trade for a single-user machine. Since `settings.json` is seeded once and
+never overwritten, if you want prompts back everywhere, change `defaultMode` in
+`~/.claude/settings.json` (or in `claude/settings.template.json` before installing).
 
 ### Env overrides
 
 | Var | Effect |
 |-----|--------|
 | `ECOMONO_SKIP_PLUGINS=1` | skip plugin/MCP registration |
+| `ECOMONO_ALLOW_SECRET_PATHS=1` | stand down `secret-access-gate.sh`, for headless runs that must touch a credential path |
 | `ECOMONO_TARGET=<id>` | override detected `OS_ID` (e.g. `nixos`, `arch`, `debian`, `ubuntu`) for unrecognized distros |
 
 ### Prerequisites
