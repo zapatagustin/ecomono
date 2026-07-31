@@ -75,10 +75,96 @@ def extract_code_blocks(text):
                 break
             block_lines.append(lines[i])
             i += 1
-        if closed:
-            blocks.append("\n".join(block_lines))
-        # Unclosed fences are silently skipped — they indicate malformed markdown
-        # and including them would cause false-positive validation failures.
+        # An unclosed fence counts as code too. Skipping it used to be justified
+        # as avoiding false positives, but compress._mask_fenced_blocks now
+        # stashes it, so its body is preserved verbatim and the comparison agrees
+        # — while skipping it left exactly that corruption unchecked.
+        if not closed:
+            # Mirror the masker: an unclosed fence runs to EOF, so drop the
+            # document's trailing blank lines rather than counting them as code.
+            while block_lines and not block_lines[-1].strip():
+                block_lines.pop()
+        blocks.append("\n".join(block_lines))
+    return blocks
+
+
+INDENTED_CODE_INDENT = 4
+
+
+def _blank_fenced_regions(text):
+    """Return `text` as lines with every fenced region blanked out.
+
+    Line count is preserved so blank-line boundaries still line up, which is what
+    extract_indented_blocks needs: an indented line *inside* a fence is fence
+    content, not an indented code block.
+    """
+    lines = text.split("\n")
+    out = list(lines)
+    i, n = 0, len(lines)
+    while i < n:
+        m = FENCE_OPEN_REGEX.match(lines[i])
+        if not m:
+            i += 1
+            continue
+        fence_char, fence_len = m.group(2)[0], len(m.group(2))
+        out[i] = ""
+        i += 1
+        while i < n:
+            close_m = FENCE_OPEN_REGEX.match(lines[i])
+            closed = (
+                close_m
+                and close_m.group(2)[0] == fence_char
+                and len(close_m.group(2)) >= fence_len
+                and close_m.group(3).strip() == ""
+            )
+            out[i] = ""
+            i += 1
+            if closed:
+                break
+    return out
+
+
+def extract_indented_blocks(text):
+    """CommonMark indented code blocks — 4+ spaces, fenced regions excluded.
+
+    A run counts as code only when a blank line or the start of the document
+    precedes it; an indented line continuing the paragraph above is prose. Blank
+    lines interior to a run belong to it, trailing ones do not.
+
+    compress._mask_indented_blocks re-implements this walk. The two must agree —
+    a masker and a validator sharing a blind spot is exactly how a rewritten code
+    block used to validate clean.
+    """
+    pad = " " * INDENTED_CODE_INDENT
+    lines = _blank_fenced_regions(text)
+    blocks = []
+    i, n = 0, len(lines)
+    prev_blank = True
+    while i < n:
+        line = lines[i]
+        if prev_blank and line.startswith(pad) and line.strip():
+            run = []
+            while i < n:
+                cur = lines[i]
+                if cur.startswith(pad) and cur.strip():
+                    run.append(cur)
+                    i += 1
+                elif not cur.strip():
+                    j = i
+                    while j < n and not lines[j].strip():
+                        j += 1
+                    if j < n and lines[j].startswith(pad) and lines[j].strip():
+                        run.extend(lines[i:j])
+                        i = j
+                    else:
+                        break
+                else:
+                    break
+            blocks.append("\n".join(run))
+            prev_blank = False
+            continue
+        prev_blank = not line.strip()
+        i += 1
     return blocks
 
 
@@ -116,8 +202,8 @@ def validate_headings(orig, comp, result):
 
 
 def validate_code_blocks(orig, comp, result):
-    c1 = extract_code_blocks(orig)
-    c2 = extract_code_blocks(comp)
+    c1 = extract_code_blocks(orig) + extract_indented_blocks(orig)
+    c2 = extract_code_blocks(comp) + extract_indented_blocks(comp)
 
     if c1 != c2:
         result.add_error("Code blocks not preserved exactly")

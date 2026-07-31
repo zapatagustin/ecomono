@@ -210,8 +210,39 @@ _PH_OPEN = ""
 _PH_CLOSE = ""
 
 
-def _placeholder(i: int) -> str:
-    return f"{_PH_OPEN}{i}{_PH_CLOSE}"
+INDENTED_CODE_INDENT = 4
+
+
+class _Stash(list):
+    """Masked spans, plus the delimiter pair used to reference them.
+
+    restore() substitutes placeholders with a plain str.replace, so a placeholder
+    that already occurs in the source would splice a stashed block into the prose.
+    The pair is chosen per input (see _sentinels) and carried here, which keeps
+    protect()'s two-value contract that every caller already unpacks.
+    """
+
+    left = _PH_OPEN
+    right = _PH_CLOSE
+
+
+def _sentinels(text: str):
+    """A delimiter pair guaranteed absent from `text`.
+
+    Lengthening the private-use delimiters is deterministic — no nonce — so the
+    same input always compresses to the same output.
+    """
+    left, right = _PH_OPEN, _PH_CLOSE
+    while left in text or right in text:
+        left += _PH_OPEN
+        right += _PH_CLOSE
+    return left, right
+
+
+def _placeholder(i: int, stash=None) -> str:
+    # getattr, not stash.left, so a bare list still works: the fence-scanner
+    # cross-check in test_compress.py calls the maskers with one.
+    return f"{getattr(stash, 'left', _PH_OPEN)}{i}{getattr(stash, 'right', _PH_CLOSE)}"
 
 
 def _mask_fenced_blocks(text: str, stash: list) -> str:
@@ -245,26 +276,86 @@ def _mask_fenced_blocks(text: str, stash: list) -> str:
                 break
             block_lines.append(lines[i])
             i += 1
-        if closed:
-            stash.append("\n".join(block_lines))
-            out.append(_placeholder(len(stash) - 1))
-        else:
-            # Unclosed fence: leave verbatim (matches validator, which skips it).
-            out.extend(block_lines)
+        # Stash the block whether or not it closed. Malformed markdown is still
+        # code: emitting an unclosed fence verbatim let the prose rules rewrite
+        # its body, and nothing downstream complained.
+        trailing = []
+        if not closed:
+            # An unclosed fence runs to EOF, so it would otherwise swallow the
+            # document's trailing blank lines. The closed path ends at its own
+            # fence and never does, and validate mirrors this trim.
+            while block_lines and not block_lines[-1].strip():
+                trailing.insert(0, block_lines.pop())
+        stash.append("\n".join(block_lines))
+        out.append(_placeholder(len(stash) - 1, stash))
+        out.extend(trailing)
+    return "\n".join(out)
+
+
+def _mask_indented_blocks(text: str, stash: list) -> str:
+    """Replace CommonMark indented code blocks (4+ spaces) with placeholders.
+
+    Mirrors validate.extract_indented_blocks — test_compress.py feeds both the
+    same cases and asserts they agree, because a masker and a validator sharing a
+    blind spot is how a rewritten code block used to validate clean. Run this
+    AFTER fenced masking, so a fenced block is already one unindented placeholder
+    line and cannot be rescanned.
+
+    ecomono: a run counts only when a blank line precedes it. That is the
+    CommonMark rule but not all of it — a 4-space-indented continuation inside a
+    list item gets masked as code here. That error direction costs compression,
+    never content, so it is the safe one. Upgrade path if it starts mattering:
+    track list context while walking.
+    """
+    pad = " " * INDENTED_CODE_INDENT
+    lines = text.split("\n")
+    out = []
+    i, n = 0, len(lines)
+    prev_blank = True   # start of document is a boundary
+    while i < n:
+        line = lines[i]
+        if prev_blank and line.startswith(pad) and line.strip():
+            run = []
+            while i < n:
+                cur = lines[i]
+                if cur.startswith(pad) and cur.strip():
+                    run.append(cur)
+                    i += 1
+                elif not cur.strip():
+                    # A blank line stays inside the run only if more code follows.
+                    j = i
+                    while j < n and not lines[j].strip():
+                        j += 1
+                    if j < n and lines[j].startswith(pad) and lines[j].strip():
+                        run.extend(lines[i:j])
+                        i = j
+                    else:
+                        break
+                else:
+                    break
+            stash.append("\n".join(run))
+            out.append(_placeholder(len(stash) - 1, stash))
+            prev_blank = False
+            continue
+        out.append(line)
+        prev_blank = not line.strip()
+        i += 1
     return "\n".join(out)
 
 
 def _mask_regex(text: str, pattern: re.Pattern, stash: list) -> str:
     def repl(m):
         stash.append(m.group(0))
-        return _placeholder(len(stash) - 1)
+        return _placeholder(len(stash) - 1, stash)
     return pattern.sub(repl, text)
 
 
 def protect(text: str):
     """Mask code blocks, inline code, and URLs. Returns (masked_text, stash)."""
-    stash = []
-    text = _mask_fenced_blocks(text, stash)   # blocks first (may contain backticks/URLs)
+    stash = _Stash()
+    stash.left, stash.right = _sentinels(text)
+    text = _mask_fenced_blocks(text, stash)    # blocks first (may hold backticks/URLs)
+    text = _mask_indented_blocks(text, stash)  # then indented code, same reason
     text = _mask_regex(text, INLINE_CODE_REGEX, stash)
     text = _mask_regex(text, URL_REGEX, stash)
     return text, stash
@@ -273,7 +364,7 @@ def protect(text: str):
 def restore(text: str, stash: list) -> str:
     """Reverse protect(). Restore last-first so indices never collide."""
     for i in range(len(stash) - 1, -1, -1):
-        text = text.replace(_placeholder(i), stash[i])
+        text = text.replace(_placeholder(i, stash), stash[i])
     return text
 
 

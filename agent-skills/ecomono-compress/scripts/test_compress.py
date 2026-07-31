@@ -14,9 +14,11 @@ Covers the parts where a mistake is silent rather than loud:
   * detect_file_type() on each class it claims, plus one it must refuse to claim.
   * compress_file()'s guard ladder — every branch that decides NOT to compress.
 
-Asserted behavior is current behavior. Where current behavior is wrong it is
-marked KNOWN BUG with a note, so a future fix breaks this file loudly instead of
-being mistaken for a regression.
+Three corruption bugs were found while writing this file and are now fixed; the
+cases that caught them are the regression tests. Each one was silent because the
+masker and the validator shared a blind spot, so the pair agreed on a wrong
+answer — which is why the fence and indent cases are fed to BOTH and required to
+match rather than each being checked alone.
 """
 import shutil
 import sys
@@ -146,28 +148,39 @@ check("compress", "list indent preserved",
 check("compress", "3-space indent is prose", C.rule_compress("   the  a"), "a")
 check("compress", "4-space indent keeps spacing", C.rule_compress("x\n\n    keep  a"), "x\n\n    keep  a")
 
-# --- KNOWN BUG: 4-space indented code blocks are not protected -------------
-# _clean_line spares their whitespace, but the word rules ran earlier, so the
-# code itself is rewritten. validate.py has no check for indented code blocks,
-# so the corrupted file validates clean. Asserting current behavior.
-check("compress", "KNOWN BUG indented code body rewritten",
+# --- CommonMark indented code blocks are protected like fenced ones --------
+# The word rules run over prose only. A 4-space indented block is code, so its
+# body must survive byte-for-byte, not merely keep its leading whitespace.
+check("compress", "indented code body survives verbatim",
       C.rule_compress("Prose.\n\n    validate the utilize implement\n\nAfter.\n"),
-      "Prose.\n\n    check use build\n\nAfter.")
+      "Prose.\n\n    validate the utilize implement\n\nAfter.")
+check("compress", "indented block reaches the stash",
+      len(C.protect("x\n\n    validate the utilize\n")[1]), 1)
+# Interior blank lines belong to the block; the run ends at real prose.
+check("compress", "indented block spans interior blanks",
+      C.rule_compress("P.\n\n    a the utilize\n\n    b the utilize\n\nQ the utilize.\n"),
+      "P.\n\n    a the utilize\n\n    b the utilize\n\nQ use.")
+# An indented line continuing the paragraph above is prose, not a code block.
+check("compress", "indented continuation is still prose",
+      C.rule_compress("Lead in\n    the utilize of it"),
+      "Lead in\n    use of it")
 
-# --- KNOWN BUG: unclosed fence is left unmasked ----------------------------
-# _mask_fenced_blocks emits the lines verbatim rather than stashing them, so the
-# prose rules rewrite the code inside. The validator also skips unclosed fences,
-# so nothing complains. Asserting current behavior.
-check("compress", "KNOWN BUG unclosed fence body rewritten",
+# --- An unclosed fence is stashed, not emitted verbatim --------------------
+# The markdown is malformed either way, but emitting it let the prose rules
+# rewrite the code inside it.
+check("compress", "unclosed fence body survives verbatim",
       C.rule_compress("intro\n```py\nvalidate the utilize\n"),
-      "intro\n```py\ncheck use")
+      "intro\n```py\nvalidate the utilize")
 
-# --- KNOWN BUG: restore() is a blind str.replace ---------------------------
-# A literal placeholder sequence in the source collides with a generated one, so
-# restore() substitutes the stashed block into prose and duplicates it.
+# --- restore() no longer collides with a literal placeholder ---------------
+# protect() lengthens its delimiters until neither occurs in the input, so a
+# source that already contains a placeholder-shaped run cannot make a stashed
+# block reappear inside the prose.
 inj = C._PH_OPEN + "0" + C._PH_CLOSE + " literal here\n\n```\nBLOCK the\n```\n"
-check("compress", "KNOWN BUG placeholder collision duplicates block",
-      C.rule_compress(inj), "```\nBLOCK the\n``` literal here\n\n```\nBLOCK the\n```")
+check("compress", "literal placeholder does not duplicate the block",
+      C.rule_compress(inj).count("BLOCK the"), 1)
+check("compress", "literal placeholder survives untouched",
+      C._PH_OPEN + "0" + C._PH_CLOSE in C.rule_compress(inj), True)
 
 # ===========================================================================
 # 3. extract_code_blocks — fence scanner off-by-ones
@@ -189,7 +202,10 @@ FENCE_CASES = [
     ("3-space indent is a fence", "   ```\nx\n   ```", ["   ```\nx\n   ```"]),
     ("4-space indent is not a fence", "    ```\nx\n    ```", []),
     # Unclosed fence at EOF is dropped rather than reported as a block.
-    ("unclosed dropped", "a\n```\nx\ny", []),
+    # An unclosed fence is code, not something to skip: the masker stashes it so
+    # the prose rules cannot rewrite its body, and the extractor must agree.
+    ("unclosed kept as code", "a\n```\nx\ny", ["```\nx\ny"]),
+    ("unclosed drops trailing blanks", "a\n```\nx\n\n", ["```\nx"]),
     ("two blocks", "```\na\n```\nmid\n```\nb\n```", ["```\na\n```", "```\nb\n```"]),
     ("no trailing newline", "```\na\n```", ["```\na\n```"]),
     ("empty input", "", []),
@@ -203,6 +219,13 @@ for label, src, want in FENCE_CASES:
     C._mask_fenced_blocks(src, st)
     check("validate", f"mask agrees on {label}", st, want)
 
+# The validator's blind spot is what made indented-code corruption silent: the
+# masker skipped those blocks AND the extractor did, so the two agreed on a wrong
+# answer. validate_code_blocks must see them now.
+check("validate", "indented block extracted",
+      V.extract_indented_blocks("P.\n\n    code the\n\nQ.\n"), ["    code the"])
+check("validate", "indented continuation is not a block",
+      V.extract_indented_blocks("Lead in\n    not code\n"), [])
 # ===========================================================================
 # 4. Extractors
 # ===========================================================================
@@ -247,6 +270,12 @@ VALIDATOR_CASES = [
     ("code blocks identical", V.validate_code_blocks, "```\na\n```", "```\na\n```", (True, 0, 0)),
     ("code blocks changed", V.validate_code_blocks, "```\na\n```", "```\nb\n```", (False, 1, 0)),
     ("code blocks dropped", V.validate_code_blocks, "```\na\n```", "gone", (False, 1, 0)),
+    # Indented blocks count as code too — the twin blind spot that let a rewritten
+    # indented block validate clean.
+    ("indented block identical", V.validate_code_blocks,
+     "P.\n\n    a the\n\nQ.", "P.\n\n    a the\n\nQ.", (True, 0, 0)),
+    ("indented block rewritten", V.validate_code_blocks,
+     "P.\n\n    validate the\n\nQ.", "P.\n\n    check the\n\nQ.", (False, 1, 0)),
     # URLs: an error. Set-compared, so reordering is fine but losing one is not.
     ("urls preserved out of order", V.validate_urls, "https://a.com/x https://b.com/y",
      "https://b.com/y then https://a.com/x", (True, 0, 0)),
@@ -418,7 +447,7 @@ if failures:
     sys.exit(1)
 
 total = sum(counts.values())
-print(f"ok   compress: {counts['compress']} checks — masking round-trip, idempotence, rule families, 3 known bugs pinned")
+print(f"ok   compress: {counts['compress']} checks — masking round-trip, idempotence, rule families, fenced+indented+collision regressions")
 print(f"ok   validate: {counts['validate']} checks — fence scanner edges (masker agrees), every validator accept+reject")
 print(f"ok   detect:   {counts['detect']} checks — 18 file classes plus unknown/backup/missing refusals")
 print(f"ok   pipeline: {counts['pipeline']} checks — guard ladder, backup integrity, secret and sensitive-name gates")
