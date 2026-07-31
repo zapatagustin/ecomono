@@ -57,8 +57,39 @@ mem_save(
 )
 ```
 
-`topic_key` makes this an upsert: saving again updates in place instead of leaving
-two versions to disagree.
+`topic_key` marks this as one evolving topic. It does **not** update in place: the
+save inserts a new observation and the previous one stays active until you say the
+new one replaces it. Re-running a phase without that step leaves two live versions
+of the same artifact, and the next phase's `mem_search` returns both.
+
+So when `mem_save` comes back with `judgment_required: true`, you are not done —
+call `mem_judge` once per entry in `candidates`, passing its `judgment_id` and its
+own `suggested_relation`:
+
+```
+mem_judge(judgment_id: "{candidate.judgment_id}", relation: "{candidate.suggested_relation}")
+```
+
+**Pass the suggestion through; do not pick a relation yourself.** A candidate gives
+you `observation_id`, `judgment_id`, `title`, `suggested_relation` and `confidence`
+— not its `topic_key`, so "is this one the previous version of what I just wrote?"
+is not a question you can answer from the payload. The store already answered it:
+it suggests `supersedes` only for a same-`topic_key` or identical-content match, and
+`related` for something that merely shares wording.
+
+That distinction is the whole game, because `supersedes` is the one relation that
+retires the other observation. Apply it to a text-overlap candidate and you delete a
+live artifact some other phase still needs — including, on an archive run, the change's
+own delta spec. Override the suggestion only when you can say why, in the envelope.
+
+Resolve every candidate before your final output — §D's rule that the last thing
+you emit is text, not a tool call, applies to these calls too.
+
+One caveat the store cannot see: a `supersedes` suggestion assumes one writer per key
+at a time. Two sessions running the same phase on the same project concurrently will
+each look like the other's predecessor, and whoever judges second retires work that is
+still live. Nothing detects that. If you know another session is mid-flight on this
+change, say so in the envelope instead of judging.
 
 Persistence mode `none` (no memory backend available): return the artifact inline
 and write nothing. Say so in the envelope so the orchestrator knows continuity is
@@ -66,7 +97,8 @@ off and the next phase needs the content passed forward.
 
 ## D. Return envelope
 
-**Your final output MUST be text, not a tool call.** Do every `mem_save` before it.
+**Your final output MUST be text, not a tool call.** Do every `mem_save`, and every
+`mem_judge` it triggers, before that final output.
 When a sub-agent's last action is a tool call, the parent receives only the tool
 result and your analysis is lost. Never call `mem_session_summary` — that belongs to
 top-level agents.
@@ -79,7 +111,16 @@ top-level agents.
 | `artifacts` | Keys or paths written |
 | `next_recommended` | Next phase, or `none` |
 | `risks` | What you found, or `None` |
-| `skill_resolution` | `paths-injected` \| `fallback-registry` \| `fallback-path` \| `none` |
+| `skill_resolution` | `paths-injected` \| `fallback-registry` \| `fallback-path` \| `none` — meanings below |
+
+**`skill_resolution` values:**
+
+| Value | Means |
+|---|---|
+| `paths-injected` | Received exact paths from the delegator and loaded them |
+| `fallback-registry` | No paths received; self-loaded from the registry |
+| `fallback-path` | Loaded an explicit path outside the registry |
+| `none` | No skills loaded |
 
 ```markdown
 **Status**: success

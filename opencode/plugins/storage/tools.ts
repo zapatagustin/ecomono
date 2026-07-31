@@ -33,7 +33,7 @@ export const registry: MemTool[] = [
       type: z.enum(["decision", "architecture", "bugfix", "pattern", "config", "discovery", "learning", "manual"]).optional(),
       project: z.string().optional(),
       scope: z.enum(["project", "personal"]).optional(),
-      topic_key: z.string().optional().describe("Stable key to upsert an evolving topic"),
+      topic_key: z.string().optional().describe("Stable key marking an evolving topic. Does not replace the old version on its own: if judgment_required comes back, resolve every candidate via mem_judge using that candidate's own suggested_relation. The supersedes one retires the old version; skip it and both stay active"),
     },
     handler: (a) => Conflicts.saveWithJudgment({ title: a.title, content: a.content, type: a.type, project: proj(a.project), scope: a.scope, topic_key: a.topic_key }),
   },

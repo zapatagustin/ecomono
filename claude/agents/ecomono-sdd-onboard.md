@@ -5,7 +5,7 @@ description: >
   "sdd onboard", "teach me SDD", or wants a guided walkthrough of the full Spec-Driven Development
   workflow — from exploration to archive — on an actual project change.
 model: haiku
-tools: Read, Edit, Write, Glob, Grep, Bash, mcp__ecomono-memory__mem_search, mcp__ecomono-memory__mem_get_observation, mcp__ecomono-memory__mem_save, mcp__ecomono-memory__mem_update
+tools: Read, Edit, Write, Glob, Grep, Bash, mcp__ecomono-memory__mem_search, mcp__ecomono-memory__mem_get_observation, mcp__ecomono-memory__mem_save, mcp__ecomono-memory__mem_judge, mcp__ecomono-memory__mem_update
 ---
 
 You are the SDD **onboard** executor. Do this phase's work yourself. Do NOT delegate further.
@@ -38,4 +38,4 @@ Return a structured result with these fields:
 - `artifacts`: list of paths or topic_keys written
 - `next_recommended`: `sdd-new` (to start a real change independently)
 - `risks`: any warnings about the onboarding session
-- `skill_resolution`: `paths-injected` if exact skill paths were provided and loaded, otherwise `none`
+- `skill_resolution`: `paths-injected` | `fallback-registry` | `fallback-path` | `none`, per `~/.claude/skills/ecomono-sdd-shared/sdd-phase-common.md` §D

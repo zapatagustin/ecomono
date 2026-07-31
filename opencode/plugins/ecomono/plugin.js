@@ -28,16 +28,11 @@ import path from 'node:path';
 const require = createRequire(import.meta.url);
 const here = dirname(fileURLToPath(import.meta.url));
 
-// When installed: ecomono-config.cjs sits next to plugin.js (copied by
-// bin/install.js, renamed to .cjs because this directory's package.json
-// declares "type": "module" — bare .js would be loaded as ESM and break
-// require()). When loaded from the source tree (tests, dev): fall back
-// to the canonical src/hooks/ecomono-config.js, which lives in a directory
-// whose own package.json pins "type": "commonjs". One source of truth
-// either way.
+// ecomono-config.cjs sits next to plugin.js (copied by bin/install.js,
+// renamed to .cjs because this directory's package.json declares
+// "type": "module" — bare .js would be loaded as ESM and break require()).
 function loadConfig() {
-  try { return require(join(here, 'ecomono-config.cjs')); }
-  catch (_) { return require(join(here, '..', '..', 'hooks', 'ecomono-config.js')); }
+  return require(join(here, 'ecomono-config.cjs'));
 }
 const config = loadConfig();
 

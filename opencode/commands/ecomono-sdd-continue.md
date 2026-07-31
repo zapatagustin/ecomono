@@ -10,7 +10,7 @@ SDD Session Preflight must already be complete for this session. It must include
 
 WORKFLOW:
 
-1. If the `gentle-ai` binary is available, run `gentle-ai sdd-continue [change] --cwd <repo>` and treat its dispatcher/status output as authoritative — but only when the session artifact store is `openspec` or `hybrid`. When the session artifact store is `ecomono-memory`, do NOT invoke the native dispatcher at all — it cannot see the change (it reads only `openspec/changes/`); resolve status entirely from ecomono-memory (`mem_search` + `mem_get_observation` on the change's topic keys) using the manual status schema in `~/.config/opencode/skills/ecomono-sdd-shared/sdd-status-contract.md` (the same schema used when the binary is unavailable). The dispatcher is authoritative only for `openspec`/`hybrid`. If unavailable, resolve the active change using the status contract. If `$ARGUMENTS` is missing and more than one active change exists, ask the user to choose and STOP. Do not guess.
+1. Resolve status per the schema in `~/.config/opencode/skills/ecomono-sdd-shared/sdd-status-contract.md`. When the session artifact store is `ecomono-memory`, resolve it entirely from ecomono-memory (`mem_search` + `mem_get_observation` on the change's topic keys). When the store is `none`, derive it from conversation state using the same schema. If `$ARGUMENTS` is missing and more than one active change exists, ask the user to choose and STOP. Do not guess.
 2. Produce or consume structured status before acting: schemaName, planningHome/changeRoot, artifactPaths/contextFiles, task progress, dependency states, next recommended action, blocked reasons, and actionContext.
 3. Check which artifacts already exist for the active change (proposal, specs, design, tasks)
 4. Determine the next phase needed based on the dependency graph:
@@ -29,11 +29,11 @@ CONTEXT:
 - Review budget: ask/cache per orchestrator
 
 ECOMONO-MEMORY NOTE:
-To check which artifacts exist in ecomono-memory/hybrid, search: mem_search(query: "sdd/$ARGUMENTS/", project: "{project}") to list all artifacts for this change.
+To check which artifacts exist in ecomono-memory, search: mem_search(query: "sdd/$ARGUMENTS/", project: "{project}") to list all artifacts for this change.
 Sub-agents handle persistence automatically using the selected artifact store.
 
 Read the orchestrator instructions to coordinate this workflow. Do NOT execute phase work inline — delegate to sub-agents.
 
 STATUS CONTRACT:
 
-Prefer `gentle-ai sdd-continue [change] --cwd <repo>` when available — but only when the session artifact store is `openspec` or `hybrid`; when the store is `ecomono-memory`, do NOT invoke the binary and resolve status from ecomono-memory using the manual status schema. Otherwise read the installed shared status contract from this agent's skills directory and follow it. Use `~/.config/opencode/skills/ecomono-sdd-shared/sdd-status-contract.md` for OpenCode, `~/.config/kilo/agent-skills/ecomono-sdd-shared/sdd-status-contract.md` for Kilo Code, `~/.qwen/agent-skills/ecomono-sdd-shared/sdd-status-contract.md` for Qwen, or the equivalent configured skills directory for the current adapter. Do not use a workspace-relative `agent-skills/ecomono-sdd-shared/...` path. Carry `actionContext` and allowed edit roots into any sub-agent launch. If status reports `workspace-planning` with no allowed edit roots, do not launch apply/verify/archive work that would infer repo-local ownership.
+Read the installed shared status contract from this agent's skills directory and follow it: when the store is `ecomono-memory`, resolve status from ecomono-memory using the manual status schema; when the store is `none`, derive it from conversation state using the same schema. Use `~/.config/opencode/skills/ecomono-sdd-shared/sdd-status-contract.md` for OpenCode, `~/.config/kilo/agent-skills/ecomono-sdd-shared/sdd-status-contract.md` for Kilo Code, `~/.qwen/agent-skills/ecomono-sdd-shared/sdd-status-contract.md` for Qwen, or the equivalent configured skills directory for the current adapter. Do not use a workspace-relative `agent-skills/ecomono-sdd-shared/...` path. Carry `actionContext` and allowed edit roots into any sub-agent launch. If status reports `workspace-planning` with no allowed edit roots, do not launch apply/verify/archive work that would infer repo-local ownership.

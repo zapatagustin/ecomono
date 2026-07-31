@@ -95,13 +95,19 @@ Learn more: https://skills.sh/vercel-labs/agent-skills/react-best-practices
 
 ### Step 6: Offer to Install
 
-If the user wants to proceed, you can install the skill for them:
+Never run an install command without the user explicitly confirming that specific
+skill first — install count and star heuristics are not a substitute for consent,
+and a skill's own body becomes instructions you follow afterward. Ask before running
+anything, whether the install is global or local.
+
+If the user confirms, install it for them:
 
 ```bash
-npx skills add <owner/repo@skill> -g -y
+npx skills add <owner/repo@skill> -g
 ```
 
-The `-g` flag installs globally (user-level) and `-y` skips confirmation prompts.
+The `-g` flag installs globally (user-level). Never append `-y`: confirmation
+prompts from the CLI itself are a second safety net and must not be skipped.
 
 ## Common Skill Categories
 

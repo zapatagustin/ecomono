@@ -101,6 +101,12 @@ operation that cannot be undone.
 Before upserting `spec/{capability}`, save the current content to
 `spec/{capability}/prev`. One revision per capability, overwritten each merge.
 
+Both of those saves are upserts only once judged, and either can come back with
+`judgment_required` — the store flags anything it might relate to, so even a first-ever
+write can raise candidates. Resolve each by passing its own `suggested_relation` to
+`mem_judge`, per sdd-phase-common.md §C. The `supersedes` one retires the old baseline;
+skip it and the baseline forks into two live specs that disagree.
+
 `ecomono: single-revision rollback, not history — the ceiling is that only the last merge is recoverable. Upgrade path: version the key per change (spec/{capability}@{change}) if audits ever need the full chain.`
 
 That restores the safety net files got from git, at the cost of one extra key per
@@ -115,6 +121,7 @@ Verify before reporting success:
 - [ ] `spec/{capability}/prev` written for each merged capability
 - [ ] Tasks artifact has no unchecked implementation tasks (or the recorded exception)
 - [ ] Every artifact observation ID captured for lineage
+- [ ] No save left with `judgment_required` unresolved
 
 ## Output
 
@@ -134,7 +141,8 @@ Verify before reporting success:
 | proposal / spec / design / tasks / apply-progress / verify-report | {id} |
 
 ### Exceptions Recorded
-{Stale-checkbox reconciliation, partial archive — with the reason. Or "None."}
+{Stale-checkbox reconciliation, partial archive, or a destructive merge stopped for
+confirmation despite passing scenario counts — each with its reason. Or "None."}
 
 ### Status
 Cycle complete for `{change-name}`.

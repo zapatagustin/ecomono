@@ -70,7 +70,6 @@
           xdg.configFile = {
             "opencode/plugins/ecomono".source = ./opencode/plugins/ecomono;
             "opencode/plugins/cyndaquill".source = ./opencode/plugins/cyndaquill;
-            "opencode/plugins/model-variants.ts".source = ./opencode/plugins/model-variants.ts;
             "opencode/plugins/skill-registry.ts".source = ./opencode/plugins/skill-registry.ts;
             "opencode/plugins/cave-compress.ts".source = ./opencode/plugins/cave-compress.ts;
             "opencode/plugins/memory.ts".source = ./opencode/plugins/memory.ts;

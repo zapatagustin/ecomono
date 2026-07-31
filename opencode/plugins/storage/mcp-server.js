@@ -20923,7 +20923,7 @@ class JSONSchemaGenerator {
               if (val === undefined) {
                 if (this.unrepresentable === "throw") {
                   throw new Error("Literal `undefined` cannot be represented in JSON Schema");
-                }
+                } else {}
               } else if (typeof val === "bigint") {
                 if (this.unrepresentable === "throw") {
                   throw new Error("BigInt literals cannot be represented in JSON Schema");
@@ -27492,11 +27492,14 @@ function getObservation(id) {
   const row = db2.query("SELECT * FROM observations WHERE id = ?").get(id);
   return row || null;
 }
+var UPDATABLE_COLUMNS = new Set(["title", "type", "scope", "content", "topic_key", "state", "review_after"]);
 function update(id, fields) {
   const db2 = getDb();
   const sets = [];
   const params = [];
   for (const [k, v] of Object.entries(fields)) {
+    if (!UPDATABLE_COLUMNS.has(k))
+      continue;
     sets.push(`${k} = ?`);
     params.push(v);
   }
@@ -27554,25 +27557,34 @@ function review(action, id, limit, project) {
   }
   return [];
 }
+function gitRemoteName(cwd) {
+  try {
+    const result = __require("child_process").execSync("git remote get-url origin", {
+      cwd,
+      stdio: ["ignore", "pipe", "ignore"]
+    });
+    const name = result.toString().trim().replace(/\.git$/, "").split(/[/:]/).filter(Boolean).pop();
+    return name || null;
+  } catch {
+    return null;
+  }
+}
 function currentProject(cwd) {
   const dir = cwd || process.cwd();
-  let project = "unknown";
+  const remoteName = gitRemoteName(dir);
   try {
-    const result = __require("child_process").execSync("git rev-parse --show-toplevel", { cwd: dir });
+    const result = __require("child_process").execSync("git rev-parse --show-toplevel", {
+      cwd: dir,
+      stdio: ["ignore", "pipe", "ignore"]
+    });
     const root = result.toString().trim();
-    project = root.split("/").pop() || "unknown";
-    return { project, path: root };
+    return { project: remoteName || root.split("/").pop() || "unknown", path: root };
   } catch {
-    return { project: dir.split("/").pop() || "unknown", path: dir };
+    return { project: remoteName || dir.split("/").pop() || "unknown", path: dir };
   }
 }
 function detectProject() {
-  try {
-    const result = __require("child_process").execSync("git rev-parse --show-toplevel", { cwd: process.cwd() });
-    return result.toString().trim().split("/").pop() || "unknown";
-  } catch {
-    return "unknown";
-  }
+  return currentProject().project;
 }
 
 // sessions.ts
@@ -27705,7 +27717,7 @@ var registry2 = [
       type: exports_external.enum(["decision", "architecture", "bugfix", "pattern", "config", "discovery", "learning", "manual"]).optional(),
       project: exports_external.string().optional(),
       scope: exports_external.enum(["project", "personal"]).optional(),
-      topic_key: exports_external.string().optional().describe("Stable key to upsert an evolving topic")
+      topic_key: exports_external.string().optional().describe("Stable key marking an evolving topic. Does not replace the old version on its own: if judgment_required comes back, resolve every candidate via mem_judge using that candidate's own suggested_relation. The supersedes one retires the old version; skip it and both stay active")
     },
     handler: (a) => saveWithJudgment({ title: a.title, content: a.content, type: a.type, project: proj(a.project), scope: a.scope, topic_key: a.topic_key })
   },

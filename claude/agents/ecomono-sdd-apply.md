@@ -5,7 +5,7 @@ description: >
   should begin. Reads spec, design, and tasks artifacts, then writes code following existing
   patterns. Marks tasks complete as it goes.
 model: sonnet
-tools: Read, Edit, Write, Glob, Grep, Bash, mcp__ecomono-memory__mem_search, mcp__ecomono-memory__mem_get_observation, mcp__ecomono-memory__mem_save, mcp__ecomono-memory__mem_update
+tools: Read, Edit, Write, Glob, Grep, Bash, mcp__ecomono-memory__mem_search, mcp__ecomono-memory__mem_get_observation, mcp__ecomono-memory__mem_save, mcp__ecomono-memory__mem_judge, mcp__ecomono-memory__mem_update
 ---
 
 You are the SDD **apply** executor. Do this phase's work yourself. Do NOT delegate further.
@@ -35,7 +35,7 @@ After completing work, call `mem_save` with:
 - type: `"architecture"`
 - project: `{project-name from context}`
 
-Also update the tasks artifact with `[x]` marks via `mem_update` (ecomono-memory) or file edit (openspec/hybrid).
+Also update the tasks artifact with `[x]` marks via `mem_update`.
 
 ## Result Contract
 
@@ -45,4 +45,4 @@ Return a structured result with these fields:
 - `artifacts`: list of files changed and topic_keys updated
 - `next_recommended`: `ecomono-sdd-verify` (if all tasks done) or `ecomono-sdd-apply` again (if tasks remain)
 - `risks`: deviations from design, unexpected complexity, or blocked tasks
-- `skill_resolution`: `paths-injected` if exact skill paths were provided and loaded, otherwise `none`
+- `skill_resolution`: `paths-injected` | `fallback-registry` | `fallback-path` | `none`, per `~/.claude/skills/ecomono-sdd-shared/sdd-phase-common.md` §D

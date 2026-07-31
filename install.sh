@@ -44,6 +44,8 @@ done
 link_children "$REPO/agent-skills"  "$CLAUDE/skills"
 # Same tree also at ~/.agents/skills (opencode + CLAUDE.md refs).
 link_children "$REPO/agent-skills"  "$AGENTS"
+# Same tree also at ~/.config/opencode/skills (SDD orchestrator + phase agent refs).
+link_children "$REPO/agent-skills"  "$OC/skills"
 # settings.json is runtime-mutated by Claude Code — seed once, never overwrite.
 if [ -e "$CLAUDE/settings.json" ]; then
   info "settings.json exists — left untouched (template: claude/settings.template.json)"

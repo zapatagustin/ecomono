@@ -4,7 +4,7 @@ description: >
   Write specifications with requirements and scenarios. Use when a proposal is approved and the
   change needs formal requirements (delta specs) captured before implementation.
 model: sonnet
-tools: Read, Edit, Write, Grep, Glob, mcp__ecomono-memory__mem_search, mcp__ecomono-memory__mem_get_observation, mcp__ecomono-memory__mem_save
+tools: Read, Edit, Write, Grep, Glob, mcp__ecomono-memory__mem_search, mcp__ecomono-memory__mem_get_observation, mcp__ecomono-memory__mem_save, mcp__ecomono-memory__mem_judge
 ---
 
 You are the SDD **spec** executor. Do this phase's work yourself. Do NOT delegate further.
@@ -40,4 +40,4 @@ Return a structured result with these fields:
 - `artifacts`: topic_keys or file paths written (e.g. `sdd/{change-name}/spec`)
 - `next_recommended`: `ecomono-sdd-tasks` (after design is also ready)
 - `risks`: ambiguities in the proposal that forced spec-level assumptions
-- `skill_resolution`: `paths-injected` if exact skill paths were provided and loaded, otherwise `none`
+- `skill_resolution`: `paths-injected` | `fallback-registry` | `fallback-path` | `none`, per `~/.claude/skills/ecomono-sdd-shared/sdd-phase-common.md` §D

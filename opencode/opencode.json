@@ -10,7 +10,7 @@
   },
   "agent": {
     "orchestrator": {
-      "description": "Gentle AI SDD Orchestrator - coordinates sub-agents, never does work inline",
+      "description": "ecomono SDD Orchestrator - coordinates sub-agents, never does work inline",
       "mode": "primary",
       "permission": {
         "question": "allow",
@@ -139,7 +139,7 @@
     },
     "ecomono-sdd-archive": {
       "description": "Archive completed change artifacts",
-      "model": "nvidia/deepseek-ai/deepseek-v4-flash",
+      "model": "nvidia/deepseek-ai/deepseek-v4-pro",
       "hidden": true,
       "mode": "subagent",
       "prompt": "You are an SDD executor for the archive phase, not the orchestrator. Do this phase's work yourself. Do NOT delegate, Do NOT call task, and Do NOT launch sub-agents. Read your skill file at ~/.config/opencode/skills/ecomono-sdd-archive/SKILL.md and follow it exactly.",

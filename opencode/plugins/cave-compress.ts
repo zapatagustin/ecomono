@@ -340,6 +340,11 @@ function fingerprint(text: string): string {
 const readCache = new Map<string, { fingerprint: string; readIndex: number }>()
 let readCount = 0
 
+// ecomono: hard cap with oldest-entry eviction (Map preserves insertion order).
+// Upgrade path if this ever shows pressure on a long-running server: real LRU
+// (bump-to-recent on access) or a per-session TTL sweep.
+const READ_CACHE_CAP = 500
+
 const READ_TOOLS = new Set(["read"])
 const WRITE_TOOLS = new Set(["edit", "write", "patch", "multiedit"])
 
@@ -349,16 +354,18 @@ function argPath(args: unknown): string | undefined {
   return typeof p === "string" ? p : undefined
 }
 
-// ── Opt-in savings metrics ───────────────────────────────────────────────────
+// ── Savings metrics (on by default, opt-out) ────────────────────────────────
 
-// Set ECOMONO_COMPRESS_STATS=1 to append one JSONL record per compressed tool
-// result to ~/.cache/ecomono-compress/stats.jsonl — the same file the Claude-side
-// hook writes, so savings across both harnesses accumulate in one place. Local
-// file only — never enters the model context, so it costs zero tokens. Summarize:
+// On by default; set ECOMONO_COMPRESS_STATS=off to disable — same convention
+// as the Claude-side hook (claude/hooks/ecomono-compress.js). Appends one JSONL
+// record per compressed tool result to ~/.cache/ecomono-compress/stats.jsonl —
+// the same file the Claude-side hook writes, so savings across both harnesses
+// accumulate in one place. Local file only — never enters the model context,
+// so it costs zero tokens. Summarize:
 //   node -e 'let i=0,o=0;require("fs").readFileSync(process.env.HOME+"/.cache/ecomono-compress/stats.jsonl","utf8").trim().split("\n").forEach(l=>{let r=JSON.parse(l);i+=r.in;o+=r.out});console.log(`saved ${Math.round(100-100*o/i)}% (${i}->${o} chars over ${i&&""}records)`)'
-const STATS_FILE = process.env.ECOMONO_COMPRESS_STATS
-  ? `${process.env.XDG_CACHE_HOME ?? `${process.env.HOME}/.cache`}/ecomono-compress/stats.jsonl`
-  : null
+const STATS_FILE = process.env.ECOMONO_COMPRESS_STATS === "off"
+  ? null
+  : `${process.env.XDG_CACHE_HOME ?? `${process.env.HOME}/.cache`}/ecomono-compress/stats.jsonl`
 let statsDirReady: Promise<unknown> | null = null
 
 async function logStats(tool: string, before: number, after: number): Promise<void> {
@@ -418,6 +425,10 @@ export const CaveCompress: Plugin = async () => ({
         return
       }
       readCount++
+      if (!readCache.has(key) && readCache.size >= READ_CACHE_CAP) {
+        const oldest = readCache.keys().next().value
+        if (oldest !== undefined) readCache.delete(oldest)
+      }
       readCache.set(key, { fingerprint: fp, readIndex: readCount })
     }
 

@@ -249,7 +249,7 @@ model is Claude Code's business, not this table's.
 | `ecomono-sdd-tasks` | sonnet | Mechanical breakdown |
 | `ecomono-sdd-apply` | sonnet | Implementation |
 | `ecomono-sdd-verify` | sonnet | Validation against spec |
-| `ecomono-sdd-archive` | haiku | Copy and close |
+| `ecomono-sdd-archive` | sonnet | Destructive merge into the baseline, behind three gates |
 | `ecomono-sdd-onboard` | haiku | Guided, pedagogical |
 | `ecomono-judge-a` | sonnet | Blind adversarial review |
 | `ecomono-judge-b` | sonnet | Blind adversarial review |

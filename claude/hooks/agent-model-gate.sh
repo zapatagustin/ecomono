@@ -3,7 +3,7 @@
 # type that does not name a model.
 #
 # An Agent call without `model` inherits the parent's. Agents defined in
-# claude/agents/ are fine — all 17 carry `model:` in frontmatter, which wins when
+# claude/agents/ are fine — all of them carry `model:` in frontmatter, which wins when
 # the parameter is absent. The built-in types have no file to put the field in,
 # so from an Opus main loop they run file search on Opus, and from a Haiku one
 # they run design work on Haiku. Both directions were measured; see

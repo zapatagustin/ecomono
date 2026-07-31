@@ -33,9 +33,16 @@ detect_os() {
 # Symlink SRC -> DST. If DST is a pre-existing real file/dir (not our symlink),
 # it's moved aside once to DST.pre-ecomono.bak before linking.
 link() {
-  local src="$1" dst="$2"
+  local src="$1" dst="$2" cur
   mkdir -p "$(dirname "$dst")"
   if [ -L "$dst" ]; then
+    cur="$(readlink "$dst")"
+    # Warn only if the existing link points somewhere outside this repo and
+    # isn't already what we're about to set (a real foreign repoint, not just
+    # a stale path into our own tree from an older layout).
+    if [ "$cur" != "$src" ] && { [ -z "${REPO:-}" ] || [ "${cur#"${REPO}"/}" = "$cur" ]; }; then
+      warn "$dst was linked to $cur, repointing to $src"
+    fi
     ln -sfn "$src" "$dst"
   elif [ -e "$dst" ]; then
     [ -e "$dst.pre-ecomono.bak" ] || { mv "$dst" "$dst.pre-ecomono.bak"; warn "backed up existing $dst -> $dst.pre-ecomono.bak"; }

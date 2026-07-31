@@ -18,8 +18,9 @@ Default: `ecomono-memory` when the backend answers, `none` otherwise. Never
 invent a third mode, and never write artifacts into the project tree — SDD
 artifacts are working state, not deliverables.
 
-**Known ceiling of `ecomono-memory`:** `topic_key` writes are upserts, so
-re-running a phase overwrites its previous artifact. There is no revision history
+**Known ceiling of `ecomono-memory`:** a `topic_key` write plus its `supersedes`
+judgment is an upsert, so re-running a phase retires its previous artifact — and a
+phase that skips the judgment leaves both live instead. There is no revision history
 and `archive` persists a report rather than a folder. That is deliberate — memory
 is working state, not an audit trail — but it means "what did the first draft of
 the design say" is a question this store cannot answer. Need that, and the answer

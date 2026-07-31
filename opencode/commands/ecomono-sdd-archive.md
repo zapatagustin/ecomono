@@ -29,6 +29,6 @@ DEPENDENCY CHECK:
 - Tell the user what is missing and suggest `/ecomono-sdd-verify <change>` or `/ecomono-sdd-continue <change>`.
 
 TASK:
-If all gates pass, launch the hidden `ecomono-sdd-archive` sub-agent with the structured status, references to all required artifacts, the resolved artifact store, and any explicit non-critical partial-archive or stale-checkbox reconciliation text. Tell it to enforce the task completion gate before syncing specs or moving the archive folder, and to treat checkbox fixes as exceptional reconciliation rather than normal archive work.
+If all gates pass, launch the hidden `ecomono-sdd-archive` sub-agent with the structured status, references to all required artifacts, the resolved artifact store, and any explicit non-critical partial-archive or stale-checkbox reconciliation text. Tell it to enforce the task completion gate before syncing specs, and to treat checkbox fixes as exceptional reconciliation rather than normal archive work.
 
 Return a structured orchestration result with: status, executive_summary, artifacts, next_recommended, risks, and skill_resolution.

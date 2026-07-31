@@ -12,28 +12,16 @@ import type { Plugin, ToolDefinition } from "@opencode-ai/plugin"
 import { getDb } from "./storage/db"
 import { registry } from "./storage/tools"
 import { MEMORY_INSTRUCTIONS } from "./storage/protocol"
+import * as Obs from "./storage/observations"
 import * as Sess from "./storage/sessions"
 import * as Prompts from "./storage/prompts"
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
-function extractProjectName(directory: string): string {
-  try {
-    const r = Bun.spawnSync(["git", "-C", directory, "remote", "get-url", "origin"])
-    if (r.exitCode === 0) {
-      const name = r.stdout?.toString().trim().replace(/\.git$/, "").split(/[/:]/).pop()
-      if (name) return name
-    }
-  } catch {}
-  try {
-    const r = Bun.spawnSync(["git", "-C", directory, "rev-parse", "--show-toplevel"])
-    if (r.exitCode === 0) {
-      const root = r.stdout?.toString().trim()
-      if (root) return root.split("/").pop() ?? "unknown"
-    }
-  } catch {}
-  return directory.split("/").pop() ?? "unknown"
-}
+// Project key derivation lives in storage/observations.ts's currentProject() —
+// the same function the Claude Code MCP server uses (via tools.ts's proj()) —
+// so both hosts resolve one repo to the same project key regardless of which
+// one saves the observation.
 
 function textFromParts(parts: any[]): string {
   return (parts || [])
@@ -46,7 +34,7 @@ function textFromParts(parts: any[]): string {
 // ─── Plugin ──────────────────────────────────────────────────────────────────
 
 export const MemoryPlugin: Plugin = async (input) => {
-  const project = extractProjectName(input.directory || process.cwd())
+  const project = Obs.currentProject(input.directory || process.cwd()).project
 
   // Memory must never take down the editing session. A store we cannot open
   // (corrupt file, full disk, bad permissions) degrades to mem_doctor and

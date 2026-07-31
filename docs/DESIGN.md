@@ -27,8 +27,12 @@ copy.
 
 ## Skill topology
 
-**One tree.** `agent-skills/` holds every skill and is mounted at both `~/.claude/skills`
-(symlinked children on non-Nix, merged store dir on Nix) and `~/.agents/skills`.
+**One tree.** `agent-skills/` holds every skill and is mounted at `~/.claude/skills`,
+`~/.agents/skills`, and `~/.config/opencode/skills` (symlinked children on non-Nix). On
+Nix, only `~/.claude/skills` is a merged store dir (a `runCommand` derivation copies every
+skill into one output); `~/.agents/skills` and opencode's `skills` option instead symlink
+straight to the flake's own copy of `agent-skills/`, no merge step. See README's Layout
+section for the destinations.
 
 It was two trees until the gentle-ai fork. `skills/` held the vendored Spec-Driven
 Development family plus `judgment-day`, `branch-pr` and `cognitive-doc-design` — 14 skills
@@ -163,7 +167,7 @@ Measured Opus→Haiku ratio, triangulated three ways: 5.0x predicted from the pr
 across the 80 transcripts, **5.14x** in the controlled A/B. The earlier 60:1 figure came from
 Claude Haiku 3 pricing, retired.
 
-Sub-agent model assignment already exists — all 17 agents in `claude/agents/` carry a `model:`
+Sub-agent model assignment already exists — every agent in `claude/agents/` carries a `model:`
 field. Agents *without* one inherit the parent's model: measured, a delegation from a Haiku main
 loop ran the built-in `Explore` agent on Haiku, silently collapsing the tier plan.
 
@@ -189,7 +193,7 @@ model omitted              .tool_input.model absent
 ```
 
 So the omission is detectable. The gate must **not** deny every omission. Frontmatter wins when
-the parameter is absent, so all 17 project agents are already correct and denying them would break
+the parameter is absent, so every project agent is already correct and denying them would break
 working delegations; only the six built-in types have no file to carry the field — `Explore`,
 `Plan`, `general-purpose`, `claude`, `claude-code-guide`, `statusline-setup`. Three further
 boundaries: an absent `subagent_type` means `general-purpose`, so it is gated; `fork` is excluded

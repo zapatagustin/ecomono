@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// ecomono-compress — Claude Code PostToolUse hook: compress large tool output (forked from ecomono-compress, MIT)
+// ecomono-compress — Claude Code PostToolUse hook: compress large tool output
 // before it costs context tokens.
 //
 // Ports the pure compression functions from the opencode cave-compress plugin

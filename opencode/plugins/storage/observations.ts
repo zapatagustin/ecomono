@@ -88,11 +88,18 @@ export function getObservation(id: number): Observation | null {
   return row || null
 }
 
+// Columns update() may write. Identity (id, project_id) and automatic
+// timestamps (created_at, updated_at) are excluded on purpose; pinned has its
+// own pin()/unpin() functions. Defense in depth: today the only caller is
+// mem_update's Zod-shaped args, which already strip unknown keys.
+const UPDATABLE_COLUMNS = new Set(["title", "type", "scope", "content", "topic_key", "state", "review_after"])
+
 export function update(id: number, fields: Partial<Observation>): boolean {
   const db = getDb()
   const sets: string[] = []
   const params: any[] = []
   for (const [k, v] of Object.entries(fields)) {
+    if (!UPDATABLE_COLUMNS.has(k)) continue
     sets.push(`${k} = ?`)
     params.push(v)
   }
@@ -161,24 +168,39 @@ export function review(action: string, id?: number, limit?: number, project?: st
   return []
 }
 
+// Remote-first project name: prefer the origin remote's repo name (stable across
+// renamed clones/forks), fall back to the git toplevel dirname, then the raw cwd
+// basename. This is the single derivation shared by both memory hosts — the
+// opencode plugin (memory.ts) calls currentProject() directly instead of
+// recomputing it, so a repo saved from either host resolves to the same project key.
+function gitRemoteName(cwd: string): string | null {
+  try {
+    const result = require("child_process").execSync("git remote get-url origin", {
+      cwd,
+      stdio: ["ignore", "pipe", "ignore"],
+    })
+    const name = result.toString().trim().replace(/\.git$/, "").split(/[/:]/).filter(Boolean).pop()
+    return name || null
+  } catch {
+    return null
+  }
+}
+
 export function currentProject(cwd?: string): { project: string; path: string } {
   const dir = cwd || process.cwd()
-  let project = "unknown"
+  const remoteName = gitRemoteName(dir)
   try {
-    const result = require("child_process").execSync("git rev-parse --show-toplevel", { cwd: dir })
+    const result = require("child_process").execSync("git rev-parse --show-toplevel", {
+      cwd: dir,
+      stdio: ["ignore", "pipe", "ignore"],
+    })
     const root = result.toString().trim()
-    project = root.split("/").pop() || "unknown"
-    return { project, path: root }
+    return { project: remoteName || root.split("/").pop() || "unknown", path: root }
   } catch {
-    return { project: dir.split("/").pop() || "unknown", path: dir }
+    return { project: remoteName || dir.split("/").pop() || "unknown", path: dir }
   }
 }
 
 function detectProject(): string {
-  try {
-    const result = require("child_process").execSync("git rev-parse --show-toplevel", { cwd: process.cwd() })
-    return result.toString().trim().split("/").pop() || "unknown"
-  } catch {
-    return "unknown"
-  }
+  return currentProject().project
 }

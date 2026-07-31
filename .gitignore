@@ -7,6 +7,10 @@ opencode/plugins/**/node_modules/
 *.hm-bak
 .DS_Store
 
+# python build artifacts
+__pycache__/
+*.pyc
+
 # nix build symlinks
 result
 result-*

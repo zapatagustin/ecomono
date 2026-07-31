@@ -14,5 +14,7 @@ done
 # test_mcp.ts exercises the committed bundle, which only proves anything if the
 # bundle still matches its sources.
 ./check-bundle.sh || fail=1
+# ...and check-bundle.sh's other path is unreachable on the machine that built it.
+./test-bundle-fallback.sh || fail=1
 
 exit "$fail"

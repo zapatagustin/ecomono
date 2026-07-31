@@ -48,14 +48,10 @@ sub-agent will follow the drifted copy.
 
 ## 4. Report resolution
 
-Every sub-agent returns `skill_resolution`:
-
-| Value | Means |
-|---|---|
-| `paths-injected` | Received exact paths from the delegator and loaded them |
-| `fallback-registry` | No paths received; self-loaded from the registry |
-| `fallback-path` | Loaded an explicit path outside the registry |
-| `none` | No skills loaded |
+Every sub-agent returns `skill_resolution`. The four values and their meanings are
+defined once, in [sdd-phase-common.md](sdd-phase-common.md) §D — the file every phase
+already loads. Read them there rather than restating them here, so the two never drift
+apart.
 
 Anything other than `paths-injected` means the delegator did not do its job: re-read
 the registry before the next launch instead of letting every sub-agent pay to

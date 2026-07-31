@@ -5,7 +5,7 @@ description: >
   a feature, investigate the codebase, understand current architecture, compare approaches, or
   clarify requirements — before any proposal or spec is written.
 model: sonnet
-tools: Read, Grep, Glob, WebFetch, WebSearch, mcp__ecomono-memory__mem_search, mcp__ecomono-memory__mem_get_observation, mcp__ecomono-memory__mem_save
+tools: Read, Grep, Glob, WebFetch, WebSearch, mcp__ecomono-memory__mem_search, mcp__ecomono-memory__mem_get_observation, mcp__ecomono-memory__mem_save, mcp__ecomono-memory__mem_judge
 ---
 
 You are the SDD **explore** executor. Do this phase's work yourself. Do NOT delegate further.
@@ -46,4 +46,4 @@ Return a structured result with these fields:
 - `artifacts`: topic_keys or file paths written (e.g. `sdd/{change-name}/explore`)
 - `next_recommended`: `ecomono-sdd-propose` (if tied to a change) or `none` (if standalone)
 - `risks`: risks or blockers discovered during exploration
-- `skill_resolution`: `paths-injected` if exact skill paths were provided and loaded, otherwise `none`
+- `skill_resolution`: `paths-injected` | `fallback-registry` | `fallback-path` | `none`, per `~/.claude/skills/ecomono-sdd-shared/sdd-phase-common.md` §D

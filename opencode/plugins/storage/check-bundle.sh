@@ -9,6 +9,32 @@ set -euo pipefail
 cd "$(dirname "$0")"
 . ./_bun.sh
 
+# A byte comparison only means anything under the bun that built the bundle: another
+# version re-emits the same sources with cosmetic differences, and calling that
+# "stale" sends people to commit churn. But skipping outright would trade a false
+# failure for a false pass — the forgot-to-rebuild bug this exists to catch would go
+# unreported on every machine whose bun drifted. So fall back to the input
+# fingerprint, which is bundler-independent, and still fails on real staleness.
+#
+# This runs before the node_modules block on purpose: the fingerprint needs neither
+# installed deps nor a bundler run, so a read-only copy with a mismatched bun still
+# gets a real check instead of the skip below.
+if [ "$BUN_VERSION" != "$BUN_BUNDLE_VERSION" ]; then
+  if [ ! -f "$BUNDLE_INPUTS" ]; then
+    echo "FAIL: no $BUNDLE_INPUTS to check against, and bun $BUN_VERSION cannot" >&2
+    echo "      byte-compare a bundle built with $BUN_BUNDLE_VERSION — run build-bundle.sh" >&2
+    exit 1
+  fi
+  live="$(bundle_inputs_hash)" || exit 1
+  if [ "$live" = "$(cat "$BUNDLE_INPUTS")" ]; then
+    echo "✓ bundle: inputs unchanged since build (bun $BUN_VERSION ≠ $BUN_BUNDLE_VERSION, bytes not compared)"
+    exit 0
+  fi
+  echo "FAIL: mcp-server.js is stale — its sources changed since it was built." >&2
+  echo "      Run build-bundle.sh and commit the result." >&2
+  exit 1
+fi
+
 # Bundling needs the MCP SDK resolved from opencode/node_modules. Try to install
 # it rather than skipping on sight: "no node_modules" is also what a fresh clone
 # looks like, and silently passing there would skip the one check guarding the

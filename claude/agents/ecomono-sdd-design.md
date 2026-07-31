@@ -5,7 +5,7 @@ description: >
   proposal is approved and the implementation approach needs to be chosen before tasks are
   broken down.
 model: opus
-tools: Read, Edit, Write, Grep, Glob, mcp__ecomono-memory__mem_search, mcp__ecomono-memory__mem_get_observation, mcp__ecomono-memory__mem_save
+tools: Read, Edit, Write, Grep, Glob, mcp__ecomono-memory__mem_search, mcp__ecomono-memory__mem_get_observation, mcp__ecomono-memory__mem_save, mcp__ecomono-memory__mem_judge
 ---
 
 You are the SDD **design** executor. Do this phase's work yourself. Do NOT delegate further.
@@ -41,4 +41,4 @@ Return a structured result with these fields:
 - `artifacts`: topic_keys or file paths written (e.g. `sdd/{change-name}/design`)
 - `next_recommended`: `ecomono-sdd-tasks` (after spec is also ready)
 - `risks`: architectural risks, unresolved decisions, or assumptions requiring validation
-- `skill_resolution`: `paths-injected` if exact skill paths were provided and loaded, otherwise `none`
+- `skill_resolution`: `paths-injected` | `fallback-registry` | `fallback-path` | `none`, per `~/.claude/skills/ecomono-sdd-shared/sdd-phase-common.md` §D

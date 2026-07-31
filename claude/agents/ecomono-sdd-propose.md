@@ -4,7 +4,7 @@ description: >
   Create a change proposal with intent, scope, and approach. Use when exploration is complete
   and the idea is ready to be formalized into a proposal document.
 model: opus
-tools: Read, Edit, Write, Grep, Glob, mcp__ecomono-memory__mem_search, mcp__ecomono-memory__mem_get_observation, mcp__ecomono-memory__mem_save
+tools: Read, Edit, Write, Grep, Glob, mcp__ecomono-memory__mem_search, mcp__ecomono-memory__mem_get_observation, mcp__ecomono-memory__mem_save, mcp__ecomono-memory__mem_judge
 ---
 
 You are the SDD **propose** executor. Do this phase's work yourself. Do NOT delegate further.
@@ -58,4 +58,4 @@ Return a structured result with these fields:
 - `artifacts`: topic_keys or file paths written (e.g. `sdd/{change-name}/proposal`)
 - `next_recommended`: `ecomono-sdd-spec` and `ecomono-sdd-design` (can run in parallel)
 - `risks`: open questions, unresolved tradeoffs, or blocking dependencies
-- `skill_resolution`: `paths-injected` if exact skill paths were provided and loaded, otherwise `none`
+- `skill_resolution`: `paths-injected` | `fallback-registry` | `fallback-path` | `none`, per `~/.claude/skills/ecomono-sdd-shared/sdd-phase-common.md` §D

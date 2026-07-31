@@ -3,7 +3,7 @@ description: Fast-forward all SDD planning phases — proposal through tasks
 ---
 
 Read `~/.claude/skills/ecomono-sdd-shared/sdd-orchestrator.md` in full FIRST — it holds the SDD + Agent-Teams orchestrator protocol (moved out of CLAUDE.md). Follow it inline.
-The Claude Code session model is controlled by Claude Code; Gentle AI only configures models for Agent tool calls to phase sub-agents.
+The Claude Code session model is controlled by Claude Code; ecomono only configures models for Agent tool calls to phase sub-agents.
 
 WORKFLOW:
 Honor the cached execution mode from SDD Session Preflight.

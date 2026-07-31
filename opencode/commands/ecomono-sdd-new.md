@@ -26,6 +26,6 @@ CONTEXT:
 - Review budget: ask/cache per orchestrator
 
 ECOMONO-MEMORY NOTE:
-Sub-agents handle persistence automatically using the selected artifact store. In ecomono-memory/hybrid, each phase saves with topic_key "sdd/$ARGUMENTS/{type}".
+Sub-agents handle persistence automatically using the selected artifact store. In ecomono-memory, each phase saves with topic_key "sdd/$ARGUMENTS/{type}".
 
 Read the orchestrator instructions to coordinate this workflow. Do NOT execute phase work inline — delegate to sub-agents.

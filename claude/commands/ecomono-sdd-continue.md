@@ -3,11 +3,11 @@ description: Continue the next SDD phase in the dependency chain
 ---
 
 Read `~/.claude/skills/ecomono-sdd-shared/sdd-orchestrator.md` in full FIRST — it holds the SDD + Agent-Teams orchestrator protocol (moved out of CLAUDE.md). Follow it inline.
-The Claude Code session model is controlled by Claude Code; Gentle AI only configures models for Agent tool calls to phase sub-agents.
+The Claude Code session model is controlled by Claude Code; ecomono only configures models for Agent tool calls to phase sub-agents.
 
 WORKFLOW:
 
-1. If the `gentle-ai` binary is available, run `gentle-ai sdd-continue [change] --cwd <repo>` and treat its dispatcher/status output as authoritative — but only when the session artifact store is `openspec` or `hybrid`. When the session artifact store is `ecomono-memory`, do NOT invoke the native dispatcher at all — it cannot see the change (it reads only `openspec/changes/`); resolve status entirely from ecomono-memory (`mem_search` + `mem_get_observation` on the change's topic keys) using the manual status schema in `~/.claude/skills/ecomono-sdd-shared/sdd-status-contract.md` (the same schema used when the binary is unavailable). The dispatcher is authoritative only for `openspec`/`hybrid`. If unavailable, read `~/.claude/skills/ecomono-sdd-shared/sdd-status-contract.md` and produce structured status before acting.
+1. Resolve status per the schema in `~/.claude/skills/ecomono-sdd-shared/sdd-status-contract.md`. When the session artifact store is `ecomono-memory`, resolve it entirely from ecomono-memory (`mem_search` + `mem_get_observation` on the change's topic keys). When the store is `none`, derive it from conversation state using the same schema. Produce this structured status before acting.
 2. Resolve the active change. If `$ARGUMENTS` is missing and more than one active change exists, ask the user to choose and STOP. Do not guess.
 3. Check which artifacts already exist for the active change (proposal, specs, design, tasks)
 4. Determine the next phase needed based on the dependency graph:
@@ -32,4 +32,4 @@ Read the orchestrator instructions to coordinate this workflow. Do NOT execute p
 
 STATUS CONTRACT:
 
-Prefer `gentle-ai sdd-continue [change] --cwd <repo>` when available — but only when the session artifact store is `openspec` or `hybrid`; when the store is `ecomono-memory`, do NOT invoke the binary and resolve status from ecomono-memory using the manual status schema. Otherwise read `~/.claude/skills/ecomono-sdd-shared/sdd-status-contract.md` and follow it. If status reports `workspace-planning` with no allowed edit roots, do not launch apply/verify/archive work that would infer repo-local ownership.
+Read `~/.claude/skills/ecomono-sdd-shared/sdd-status-contract.md` and follow it: when the store is `ecomono-memory`, resolve status from ecomono-memory using the manual status schema; when the store is `none`, derive it from conversation state using the same schema. If status reports `workspace-planning` with no allowed edit roots, do not launch apply/verify/archive work that would infer repo-local ownership.

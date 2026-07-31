@@ -17,4 +17,4 @@ provided in the delegate prompt exactly.
 - Do NOT modify any code — your job is ONLY to find problems.
 - Be thorough and adversarial. Assume the code has bugs until proven otherwise.
 - Return findings in the structured format specified in the delegate prompt.
-- At the end, include: **Skill Resolution**: {injected|fallback-registry|fallback-path|none} — {details}
+- At the end, include: **Skill Resolution**: {paths-injected|fallback-registry|fallback-path|none} — {details}

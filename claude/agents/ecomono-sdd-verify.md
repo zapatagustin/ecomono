@@ -4,7 +4,7 @@ description: >
   Validate that implementation matches specs, design, and tasks. Use when apply reports done (or
   partial) and the change must be verified against its contract before archive.
 model: sonnet
-tools: Read, Grep, Glob, Bash, mcp__ecomono-memory__mem_search, mcp__ecomono-memory__mem_get_observation, mcp__ecomono-memory__mem_save
+tools: Read, Grep, Glob, Bash, mcp__ecomono-memory__mem_search, mcp__ecomono-memory__mem_get_observation, mcp__ecomono-memory__mem_save, mcp__ecomono-memory__mem_judge
 ---
 
 You are the SDD **verify** executor. Do this phase's work yourself. Do NOT delegate further.
@@ -40,4 +40,4 @@ Return a structured result with these fields:
 - `artifacts`: topic_keys or file paths written (e.g. `sdd/{change-name}/verify-report`)
 - `next_recommended`: `ecomono-sdd-archive` (if clean) or `ecomono-sdd-apply` (if CRITICAL issues found)
 - `risks`: unresolved CRITICAL issues that block archive
-- `skill_resolution`: `paths-injected` if exact skill paths were provided and loaded, otherwise `none`
+- `skill_resolution`: `paths-injected` | `fallback-registry` | `fallback-path` | `none`, per `~/.claude/skills/ecomono-sdd-shared/sdd-phase-common.md` §D

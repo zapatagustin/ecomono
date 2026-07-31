@@ -17,7 +17,10 @@ project:   {detected or current project}
 scope:     project
 ```
 
-`topic_key` is what makes a re-run an upsert instead of a second competing copy.
+`topic_key` is what marks a re-run as the same evolving topic rather than an
+unrelated note. It does not by itself replace the old copy — the save that follows
+returns `judgment_required`, and resolving it with `supersedes` is what retires the
+previous version. Skip that and both stay active. See sdd-phase-common.md §C.
 
 **No `capture_prompt` flag.** The retired Go engram accepted one on `mem_save`, so
 an automated pipeline write would not also record the user's in-flight prompt. Here
@@ -59,8 +62,10 @@ baseline rather than only against the change in front of it.
 The capability name is the key. Renaming a capability to fit a delta forks the baseline
 into two specs that disagree, and nothing detects it.
 
-`prev` exists because a merge is an upsert with no git behind it. It is a rollback for
-the last merge, not a history — see the ceiling noted in `ecomono-sdd-archive`.
+`prev` exists because a merge is an upsert with no git behind it — a judged one, so
+the merge is only complete after `mem_judge(..., "supersedes")` retires the previous
+`spec/{capability}`. It is a rollback for the last merge, not a history — see the
+ceiling noted in `ecomono-sdd-archive`.
 
 ## Reading
 
@@ -80,8 +85,9 @@ whole change with `mem_search(query: "sdd/{change-name}/")`.
 
 ## Writing
 
-`mem_save` with the same `topic_key` upserts. `mem_update(id, content)` when you
-already hold the exact ID.
+`mem_save` with the same `topic_key`, followed by `mem_judge(..., "supersedes")` on
+the candidate it returns, is the upsert. `mem_update(id, content)` edits in place
+when you already hold the exact ID and want no new observation at all.
 
 ```
 mem_save(
@@ -93,10 +99,15 @@ mem_save(
 )
 ```
 
-**Upsert overwrites.** Same `topic_key` + `project` + `scope` replaces the previous
-content with no revision history. Deliberate — memory is working state, not an audit
-trail — but it means this store cannot answer "what did the first draft say". If you
-need that, the answer is git on real deliverables, not a second artifact store.
+**A resolved upsert supersedes.** Once judged, the previous observation is marked
+superseded and drops out of `mem_search`; the new content stands alone with no
+revision history. Deliberate — memory is working state, not an audit trail — but it
+means this store cannot answer "what did the first draft say". If you need that, the
+answer is git on real deliverables, not a second artifact store.
+
+**An unresolved one duplicates.** Leave `judgment_required` unanswered and the old
+observation stays active, so the next phase's search returns two versions of the same
+artifact with nothing marking which is current.
 
 ## Project resolution
 
