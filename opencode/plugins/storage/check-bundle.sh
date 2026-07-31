@@ -45,7 +45,20 @@ fi
 # bundle a different SDK build than the committed one and report that as source
 # staleness — which is exactly the false failure this check must not produce.
 if [ ! -d ../../node_modules ] && ! "$BUN" install --cwd ../.. --frozen-lockfile >/dev/null 2>&1; then
-  echo "skip: bundle check (cannot install locked deps — read-only copy?)"
+  # No deps means no rebuild, so the byte comparison is off the table. That is not a
+  # reason to check nothing: the fingerprint needs neither deps nor a bundler run, and
+  # a read-only vendored copy is exactly where a forgotten rebuild would hide.
+  if [ -f "$BUNDLE_INPUTS" ]; then
+    live="$(bundle_inputs_hash)" || exit 1
+    if [ "$live" = "$(cat "$BUNDLE_INPUTS")" ]; then
+      echo "✓ bundle: inputs unchanged since build (deps unavailable, bytes not compared)"
+      exit 0
+    fi
+    echo "FAIL: mcp-server.js is stale — its sources changed since it was built." >&2
+    echo "      Run build-bundle.sh and commit the result." >&2
+    exit 1
+  fi
+  echo "skip: bundle check (cannot install locked deps, and no $BUNDLE_INPUTS to fall back on)"
   exit 0
 fi
 

@@ -61,6 +61,13 @@ mv "$work/protocol.ts" "$tmp/held"
 expect 1 "is stale" "a deleted source reads as drift, not as a pass"
 mv "$tmp/held" "$work/protocol.ts"
 
+# The case a hand-maintained list cannot catch and the glob can: someone splits a module
+# and the new file is simply not in the list. Every other case here mutates a file that
+# already existed, so this is the one that actually distinguishes the two designs.
+printf 'export const added = 1\n' > "$work/newmodule.ts"
+expect 1 "is stale" "a newly added source is covered, not silently omitted"
+rm "$work/newmodule.ts"
+
 # The -f guard's reachable trigger is the one input the glob does not discover.
 mv "$tmp/root/bun.lock" "$tmp/held"
 expect 1 "bundle input missing" "a missing lockfile fails loudly instead of hashing without it"

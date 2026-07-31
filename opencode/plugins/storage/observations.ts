@@ -186,6 +186,37 @@ function gitRemoteName(cwd: string): string | null {
   }
 }
 
+// Both hosts now derive the project key from the git remote. They did not always: the
+// Claude side keyed on the checkout's basename, so in any repo whose directory name
+// differs from its remote's, everything saved before that change sits under the old key
+// and goes invisible the moment this starts returning the new one — no error, just an
+// empty search. `projects.id` is the name itself, so there is nothing to repoint but the
+// rows. Rename once, and only when it is unambiguous: the new key holds nothing, the old
+// key holds something. Anything else is a judgement call the store should not make alone.
+const reconciled = new Set<string>()
+function reconcileLegacyProjectKey(current: string, legacy: string) {
+  if (current === legacy || reconciled.has(current)) return
+  reconciled.add(current)
+  try {
+    const d = getDb()
+    const exists = (id: string) => !!d.query("SELECT 1 FROM projects WHERE id=?").get(id)
+    if (!exists(legacy) || exists(current)) return
+    const moved = (d.query("SELECT COUNT(*) AS n FROM observations WHERE project_id=?").get(legacy) as any)?.n ?? 0
+    d.transaction(() => {
+      d.run("INSERT INTO projects (id, name) VALUES (?, ?)", [current, current])
+      d.run("UPDATE observations SET project_id=? WHERE project_id=?", [current, legacy])
+      d.run("UPDATE sessions SET project_id=? WHERE project_id=?", [current, legacy])
+      d.run("UPDATE judgments SET project_id=? WHERE project_id=?", [current, legacy])
+      d.run("DELETE FROM projects WHERE id=?", [legacy])
+    })()
+    console.error(`[ecomono-memory] project key "${legacy}" -> "${current}" (git remote); ${moved} observations moved`)
+  } catch (e) {
+    // A store that cannot be opened is already reported elsewhere; never let the
+    // reconciliation itself be the thing that breaks a save.
+    console.error(`[ecomono-memory] project key reconciliation skipped: ${(e as Error).message}`)
+  }
+}
+
 export function currentProject(cwd?: string): { project: string; path: string } {
   const dir = cwd || process.cwd()
   const remoteName = gitRemoteName(dir)
@@ -195,9 +226,13 @@ export function currentProject(cwd?: string): { project: string; path: string } 
       stdio: ["ignore", "pipe", "ignore"],
     })
     const root = result.toString().trim()
-    return { project: remoteName || root.split("/").pop() || "unknown", path: root }
+    const basename = root.split("/").pop() || "unknown"
+    if (remoteName) reconcileLegacyProjectKey(remoteName, basename)
+    return { project: remoteName || basename, path: root }
   } catch {
-    return { project: remoteName || dir.split("/").pop() || "unknown", path: dir }
+    const basename = dir.split("/").pop() || "unknown"
+    if (remoteName) reconcileLegacyProjectKey(remoteName, basename)
+    return { project: remoteName || basename, path: dir }
   }
 }
 

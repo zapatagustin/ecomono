@@ -52,14 +52,23 @@ manager).
 The seeded `settings.json` sets `defaultMode: "bypassPermissions"` (plus
 `skipDangerousModePermissionPrompt: true`), so once installed Claude Code runs every
 tool call without asking first — more permissive than Claude Code's own interactive
-default. The only guardrail is `permissions.deny` in `claude/settings.template.json`,
-which blocks `rm -rf /` and `rm -rf ~` (plain and `sudo`), plus read/edit access to
-common credential paths: `.env` / `.env.*`, `.ssh/*`, `.credentials/*`,
-`Library/Keychains/*`, `.aws/credentials`, `.config/gh/hosts.yml`, `**/*.pem`,
-`**/*.key`, and `**/secrets/*`. Everything else — arbitrary writes, network calls,
-destructive commands outside those two roots — is not gated. Since `settings.json` is
-seeded once and never overwritten, if you want prompts back, change `defaultMode` in
-`~/.claude/settings.json` (or in `claude/settings.template.json` before installing).
+default. `permissions.deny` in `claude/settings.template.json` is the only thing standing in
+the way, and it is narrower than it looks. Read it as two separate lists:
+
+- Two literal `Bash` strings, `rm -rf /` and `rm -rf ~` (plain and `sudo`). Nothing
+  else typed at a shell is gated.
+- Credential paths — `.env` / `.env.*`, `.ssh/*`, `.credentials/*`,
+  `Library/Keychains/*`, `.aws/credentials`, `.config/gh/hosts.yml`, `**/*.pem`,
+  `**/*.key`, `**/secrets/*` — but these bind to the `Read` and `Edit` tools only.
+  **They do not cover `Bash`.** Under `bypassPermissions`, `cat ~/.ssh/id_ed25519`
+  or a `curl` that uploads it runs unprompted, because the shell is auto-approved
+  and the deny list never sees the path.
+
+So treat this as "the agent can do anything a shell can do on this machine, minus two
+`rm -rf` spellings", not as credential protection. It is a deliberate trade for a
+single-user machine. Since `settings.json` is seeded once and never overwritten, if
+you want prompts back, change `defaultMode` in `~/.claude/settings.json` (or in
+`claude/settings.template.json` before installing).
 
 ### Env overrides
 

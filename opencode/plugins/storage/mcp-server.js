@@ -27569,6 +27569,29 @@ function gitRemoteName(cwd) {
     return null;
   }
 }
+var reconciled = new Set;
+function reconcileLegacyProjectKey(current, legacy) {
+  if (current === legacy || reconciled.has(current))
+    return;
+  reconciled.add(current);
+  try {
+    const d = getDb();
+    const exists = (id) => !!d.query("SELECT 1 FROM projects WHERE id=?").get(id);
+    if (!exists(legacy) || exists(current))
+      return;
+    const moved = d.query("SELECT COUNT(*) AS n FROM observations WHERE project_id=?").get(legacy)?.n ?? 0;
+    d.transaction(() => {
+      d.run("INSERT INTO projects (id, name) VALUES (?, ?)", [current, current]);
+      d.run("UPDATE observations SET project_id=? WHERE project_id=?", [current, legacy]);
+      d.run("UPDATE sessions SET project_id=? WHERE project_id=?", [current, legacy]);
+      d.run("UPDATE judgments SET project_id=? WHERE project_id=?", [current, legacy]);
+      d.run("DELETE FROM projects WHERE id=?", [legacy]);
+    })();
+    console.error(`[ecomono-memory] project key "${legacy}" -> "${current}" (git remote); ${moved} observations moved`);
+  } catch (e) {
+    console.error(`[ecomono-memory] project key reconciliation skipped: ${e.message}`);
+  }
+}
 function currentProject(cwd) {
   const dir = cwd || process.cwd();
   const remoteName = gitRemoteName(dir);
@@ -27578,9 +27601,15 @@ function currentProject(cwd) {
       stdio: ["ignore", "pipe", "ignore"]
     });
     const root = result.toString().trim();
-    return { project: remoteName || root.split("/").pop() || "unknown", path: root };
+    const basename = root.split("/").pop() || "unknown";
+    if (remoteName)
+      reconcileLegacyProjectKey(remoteName, basename);
+    return { project: remoteName || basename, path: root };
   } catch {
-    return { project: remoteName || dir.split("/").pop() || "unknown", path: dir };
+    const basename = dir.split("/").pop() || "unknown";
+    if (remoteName)
+      reconcileLegacyProjectKey(remoteName, basename);
+    return { project: remoteName || basename, path: dir };
   }
 }
 function detectProject() {
