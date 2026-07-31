@@ -119,8 +119,22 @@
               "$claude" mcp get engram >/dev/null 2>&1 && "$claude" mcp remove engram >/dev/null 2>&1 || true
               # ecomono-memory: our native bun MCP server (self-contained bundle,
               # runs from the store with no node_modules).
-              if ! "$claude" mcp get ecomono-memory >/dev/null 2>&1; then
-                "$claude" mcp add --scope user ecomono-memory -- ${pkgs.bun}/bin/bun ${./opencode/plugins/storage/mcp-server.js} \
+              #
+              # Registering on absence alone is not enough. The command is two absolute
+              # store paths, and both move — the bundle's on any change to storage/*.ts,
+              # bun's on a nixpkgs bump. A registration made once then keeps launching
+              # the build it was created with, through every later rebuild, which is the
+              # stale-bundle failure one level up from the committed file: the artifact
+              # is current and the thing pointed at it is not. Compare the paths.
+              ecomono_bun=${pkgs.bun}/bin/bun
+              ecomono_mcp=${./opencode/plugins/storage/mcp-server.js}
+              ecomono_registered="$("$claude" mcp get ecomono-memory 2>/dev/null || true)"
+              if ! printf '%s' "$ecomono_registered" | grep -qF "$ecomono_bun" \
+                 || ! printf '%s' "$ecomono_registered" | grep -qF "$ecomono_mcp"; then
+                if [ -n "$ecomono_registered" ]; then
+                  "$claude" mcp remove ecomono-memory >/dev/null 2>&1 || true
+                fi
+                "$claude" mcp add --scope user ecomono-memory -- "$ecomono_bun" "$ecomono_mcp" \
                   || echo "warning: could not register ecomono-memory mcp"
               fi
             fi
