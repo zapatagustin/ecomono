@@ -61,9 +61,17 @@ link_children() {
   # store, and the NixOS guard at the top of install.sh does not fire there. Without
   # this check the first `mv` inside link() fails, `set -e` kills the installer
   # mid-run, and the user gets a bare "Read-only file system" after two other trees
-  # already linked. Nix is already managing that directory — skipping is the correct
-  # outcome, not a degraded one.
+  # already linked.
+  #
+  # Whether that is fine depends on the destination, which only the caller knows. A
+  # skills tree already mounted elsewhere is redundant, so skipping costs nothing. A
+  # destination something else depends on being populated is a different story, and
+  # "managed by Nix?" is the wrong guess to hand someone whose install is broken —
+  # pass `required` and it dies instead.
   if ! mkdir -p "$dstdir" 2>/dev/null || [ ! -w "$dstdir" ]; then
+    if [ "${3:-}" = required ]; then
+      die "$dstdir is not writable, and this install needs it to be. Nothing else will work until it is."
+    fi
     warn "skipping $dstdir (not writable — managed by Nix?)"
     return 0
   fi

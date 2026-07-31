@@ -40,9 +40,18 @@ link "$REPO/agent-skills/beta" "$dst/beta" 2>/dev/null
 check "a real dir in the way is backed up" "$(cat "$dst/beta.pre-ecomono.bak/notes.md")" "mine"
 check "and replaced by the link" "$(readlink "$dst/beta")" "$REPO/agent-skills/beta"
 
-# A second run must not clobber the backup with the symlink it just made.
+# The guard that matters is the one against a SECOND real dir appearing where the link
+# is. Calling link() again on the symlink it just made takes a different branch and
+# proves nothing, so put a real directory back first — that is the shape that would
+# overwrite the original backup.
+rm "$dst/beta" && mkdir -p "$dst/beta" && echo newer > "$dst/beta/notes.md"
 link "$REPO/agent-skills/beta" "$dst/beta" 2>/dev/null
-check "the backup survives a second run" "$(cat "$dst/beta.pre-ecomono.bak/notes.md")" "mine"
+check "a second real dir leaves the first backup's content alone" "$(cat "$dst/beta.pre-ecomono.bak/notes.md")" "mine"
+# Content alone cannot prove this: `mv dir existing-dir` nests rather than overwrites,
+# so a missing guard hides as beta.pre-ecomono.bak/beta/ while the original sits intact
+# beside it. The shape is what gives it away.
+check "and does not get buried inside it" "$(find "$dst/beta.pre-ecomono.bak" -mindepth 1 -maxdepth 1 | wc -l)" "1"
+check "and the link is still made" "$(readlink "$dst/beta")" "$REPO/agent-skills/beta"
 
 # A foreign symlink is repointed, but says so.
 ln -sfn "$tmp/somewhere-else" "$dst/gamma"
@@ -80,5 +89,19 @@ frozen="$tmp/frozen/skills"
 mkdir -p "$frozen" && chmod 555 "$frozen"
 skip_case "an existing read-only destination is skipped, not fatal" "$frozen"
 chmod 755 "$frozen"
+
+# A destination the install depends on must not be shrugged off as "managed by Nix".
+needed="$tmp/needed"
+mkdir -p "$needed" && chmod 555 "$needed"
+if ( set -euo pipefail; link_children "$REPO/agent-skills" "$needed/plugins" required ) 2>"$tmp/err"; then
+  bad "a required destination that is not writable stops the install"
+else
+  if grep -q "needs it to be" "$tmp/err"; then
+    ok "a required destination that is not writable stops the install"
+  else
+    bad "a required destination stops the install (but blamed the wrong thing)"
+  fi
+fi
+chmod 755 "$needed"
 
 exit "$fail"

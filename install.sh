@@ -64,7 +64,7 @@ link "$REPO/opencode/tui-plugins"  "$OC/tui-plugins"
 copy_patched "$REPO/opencode/tui.json" "$OC/tui.json"
 # plugins/ must stay a writable real dir (opencode installs node_modules there);
 # link each entry individually, mirroring the Nix layout.
-link_children "$REPO/opencode/plugins" "$OC/plugins"
+link_children "$REPO/opencode/plugins" "$OC/plugins" required
 
 # ---- 3. prerequisites (check only; distro package managers own these) -------
 log "checking prerequisites"

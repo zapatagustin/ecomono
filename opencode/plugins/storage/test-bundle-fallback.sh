@@ -75,6 +75,47 @@ mv "$tmp/held" "$tmp/root/bun.lock"
 
 expect 0 "bytes not compared" "restored tree passes again"
 
+# The other way into the fingerprint: bun matches the pin, so the version branch is not
+# taken, but deps cannot be resolved to rebuild with. That is the read-only vendored copy
+# the script's header names. A stub bun reports the pinned version and fails `install`,
+# which reaches the branch without a network round-trip.
+stub="$tmp/stub"
+mkdir -p "$stub"
+# From the real _bun.sh: $work's copy already carries the forced mismatch.
+pinned="$(sed -n 's/^BUN_BUNDLE_VERSION="\([^"]*\)".*/\1/p' ./_bun.sh)"
+[ -n "$pinned" ] || { echo "FAIL could not read BUN_BUNDLE_VERSION from _bun.sh" >&2; exit 1; }
+cat > "$stub/bun" <<STUB
+#!/usr/bin/env bash
+[ "\$1" = "--version" ] && { echo "$pinned"; exit 0; }
+[ "\$1" = "install" ] && exit 1
+exit 1
+STUB
+chmod +x "$stub/bun"
+# _bun.sh resolves bun from PATH, and $work/_bun.sh still carries the forced mismatch.
+sed -i "s/^BUN_BUNDLE_VERSION=.*/BUN_BUNDLE_VERSION=\"$pinned\"/" "$work/_bun.sh"
+deps_out="$tmp/deps-out"
+if PATH="$stub:$PATH" bash "$work/check-bundle.sh" >"$deps_out" 2>&1; then
+  if grep -qF "deps unavailable" "$deps_out"; then
+    echo "ok   deps that cannot be installed fall back to the fingerprint, not a skip"
+  else
+    echo "FAIL deps branch passed without saying why" >&2; sed 's/^/     /' "$deps_out" >&2; fail=1
+  fi
+else
+  echo "FAIL deps branch should have passed on an unchanged tree" >&2; sed 's/^/     /' "$deps_out" >&2; fail=1
+fi
+
+printf 'export const drift = 1\n' >> "$work/tools.ts"
+if PATH="$stub:$PATH" bash "$work/check-bundle.sh" >"$deps_out" 2>&1; then
+  echo "FAIL deps branch passed a genuinely stale tree" >&2; sed 's/^/     /' "$deps_out" >&2; fail=1
+else
+  if grep -qF "is stale" "$deps_out"; then
+    echo "ok   and still fails on real drift when deps are unavailable"
+  else
+    echo "FAIL deps branch failed for the wrong reason" >&2; sed 's/^/     /' "$deps_out" >&2; fail=1
+  fi
+fi
+sed -i '/^export const drift = 1$/d' "$work/tools.ts"
+
 # The fingerprint skips test_*.ts on the assumption that nothing the bundle imports
 # carries that prefix. The prefix is a convention, not a rule, so check the assumption
 # rather than trusting it: a real source named test_something.ts would drop silently

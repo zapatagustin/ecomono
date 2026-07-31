@@ -9,54 +9,53 @@ set -euo pipefail
 cd "$(dirname "$0")"
 . ./_bun.sh
 
-# A byte comparison only means anything under the bun that built the bundle: another
-# version re-emits the same sources with cosmetic differences, and calling that
-# "stale" sends people to commit churn. But skipping outright would trade a false
-# failure for a false pass — the forgot-to-rebuild bug this exists to catch would go
-# unreported on every machine whose bun drifted. So fall back to the input
-# fingerprint, which is bundler-independent, and still fails on real staleness.
-#
-# This runs before the node_modules block on purpose: the fingerprint needs neither
-# installed deps nor a bundler run, so a read-only copy with a mismatched bun still
-# gets a real check instead of the skip below.
-if [ "$BUN_VERSION" != "$BUN_BUNDLE_VERSION" ]; then
+# Two different conditions rule out the byte comparison — a bun whose bundler emits
+# different bytes for the same sources, and a copy that cannot resolve deps to rebuild
+# with. Neither is a reason to check nothing: the fingerprint is bundler-independent and
+# needs no deps, so it still answers the question this script exists to ask. One
+# implementation, so the branch that is easy to exercise and the branch that is not
+# cannot drift apart.
+fingerprint_verdict() { # fingerprint_verdict <why bytes are not being compared>
+  local why="$1" live
   if [ ! -f "$BUNDLE_INPUTS" ]; then
-    echo "FAIL: no $BUNDLE_INPUTS to check against, and bun $BUN_VERSION cannot" >&2
-    echo "      byte-compare a bundle built with $BUN_BUNDLE_VERSION — run build-bundle.sh" >&2
-    exit 1
+    echo "FAIL: no $BUNDLE_INPUTS to check against, and bytes cannot be compared ($why)" >&2
+    echo "      — run build-bundle.sh" >&2
+    return 1
   fi
-  live="$(bundle_inputs_hash)" || exit 1
+  live="$(bundle_inputs_hash)" || return 1
   if [ "$live" = "$(cat "$BUNDLE_INPUTS")" ]; then
-    echo "✓ bundle: inputs unchanged since build (bun $BUN_VERSION ≠ $BUN_BUNDLE_VERSION, bytes not compared)"
-    exit 0
+    echo "✓ bundle: inputs unchanged since build ($why, bytes not compared)"
+    return 0
   fi
   echo "FAIL: mcp-server.js is stale — its sources changed since it was built." >&2
   echo "      Run build-bundle.sh and commit the result." >&2
-  exit 1
+  return 1
+}
+
+# A byte comparison only means anything under the bun that built the bundle: another
+# version re-emits the same sources with cosmetic differences, and calling that "stale"
+# sends people to commit churn.
+#
+# This runs before the node_modules block on purpose: the fingerprint needs neither
+# installed deps nor a bundler run, so a read-only copy with a mismatched bun still gets
+# a real check rather than paying for an install it cannot use.
+if [ "$BUN_VERSION" != "$BUN_BUNDLE_VERSION" ]; then
+  fingerprint_verdict "bun $BUN_VERSION ≠ $BUN_BUNDLE_VERSION"
+  exit
 fi
 
 # Bundling needs the MCP SDK resolved from opencode/node_modules. Try to install
 # it rather than skipping on sight: "no node_modules" is also what a fresh clone
 # looks like, and silently passing there would skip the one check guarding the
-# bundle. Only a copy that genuinely cannot install — the read-only nix store —
-# is allowed to skip.
+# bundle.
 # --frozen-lockfile for two reasons: a verify step must never write to the tree
 # (a plain install rewrites bun.lock), and resolving `^` ranges freely would
 # bundle a different SDK build than the committed one and report that as source
 # staleness — which is exactly the false failure this check must not produce.
 if [ ! -d ../../node_modules ] && ! "$BUN" install --cwd ../.. --frozen-lockfile >/dev/null 2>&1; then
-  # No deps means no rebuild, so the byte comparison is off the table. That is not a
-  # reason to check nothing: the fingerprint needs neither deps nor a bundler run, and
-  # a read-only vendored copy is exactly where a forgotten rebuild would hide.
   if [ -f "$BUNDLE_INPUTS" ]; then
-    live="$(bundle_inputs_hash)" || exit 1
-    if [ "$live" = "$(cat "$BUNDLE_INPUTS")" ]; then
-      echo "✓ bundle: inputs unchanged since build (deps unavailable, bytes not compared)"
-      exit 0
-    fi
-    echo "FAIL: mcp-server.js is stale — its sources changed since it was built." >&2
-    echo "      Run build-bundle.sh and commit the result." >&2
-    exit 1
+    fingerprint_verdict "deps unavailable"
+    exit
   fi
   echo "skip: bundle check (cannot install locked deps, and no $BUNDLE_INPUTS to fall back on)"
   exit 0
