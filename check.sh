@@ -22,6 +22,7 @@ run "secret access gate"           bash claude/hooks/test-secret-access-gate.sh
 run "persona drift"                bash check-persona-drift.sh
 run "skill registry"               node claude/hooks/ecomono-skill-registry.js --selftest
 run "compress secret guard"        python3 agent-skills/ecomono-compress/scripts/test_secrets.py
+run "compress pipeline"            python3 agent-skills/ecomono-compress/scripts/test_compress.py
 run "shell syntax"                 bash -n install.sh lib/common.sh check-persona-drift.sh
 
 if [ "$fail" -eq 0 ]; then echo "all checks pass"; else echo "some checks failed" >&2; fi
