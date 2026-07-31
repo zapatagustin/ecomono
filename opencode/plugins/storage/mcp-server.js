@@ -27634,6 +27634,7 @@ function savePrompt(sessionId, content) {
 }
 
 // conflicts.ts
+var FTS_MIN_SCORE = -1;
 var RELATIONS = ["supersedes", "conflicts_with", "related", "compatible", "scoped", "not_conflict"];
 function findCandidates(newId, project, title, content, topicKey, hash2) {
   const db2 = getDb();
@@ -27653,10 +27654,14 @@ function findCandidates(newId, project, title, content, topicKey, hash2) {
       consider(r.id, r.title, "supersedes", 0.85);
     }
   }
-  const terms = `${title} ${content}`.split(/\s+/).filter((w) => w.length > 3).slice(0, 12).map((t) => `"${t.replace(/"/g, '""')}"`).join(" OR ");
+  const words = [...new Set(`${title} ${content}`.toLowerCase().split(/\s+/).filter((w) => w.length > 3))];
+  const terms = words.slice(0, 12).map((t) => `"${t.replace(/"/g, '""')}"`).join(" OR ");
   if (terms) {
     try {
-      for (const r of db2.query("SELECT o.id, o.title FROM observations o JOIN observations_fts f ON o.id=f.rowid WHERE observations_fts MATCH ? AND o.project_id=? AND o.state='active' AND o.id!=? LIMIT 5").all(terms, project, newId)) {
+      const rows = db2.query("SELECT o.id, o.title, bm25(observations_fts) AS score FROM observations o JOIN observations_fts ON o.id=observations_fts.rowid" + " WHERE observations_fts MATCH ? AND o.project_id=? AND o.state='active' AND o.id!=? ORDER BY score LIMIT 5").all(terms, project, newId);
+      for (const r of rows) {
+        if (r.score > FTS_MIN_SCORE)
+          continue;
         consider(r.id, r.title, "related", 0.5);
       }
     } catch {}

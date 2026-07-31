@@ -6,12 +6,21 @@
  * then calls mem_judge per candidate to record the relation (and supersede the
  * old one when the new replaces it). Without embeddings we approximate semantic
  * similarity with three signals: exact normalized-hash match, same topic_key,
- * and FTS overlap.
- * ecomono: FTS/hash/topic_key heuristic in place of engram's embeddings —
- * upgrade path is to add an embedding column + cosine ranking if recall matters.
+ * and bm25-ranked FTS overlap.
+ * ecomono: lexical only. bm25 buys precision for free — its IDF term makes a
+ * match on rare vocabulary outrank one on words the whole corpus shares — but
+ * no lexical signal catches a paraphrase that reuses none of the words. Upgrade
+ * path is an embedding column + cosine ranking, and only if recall proves short:
+ * that is a local model as a new dependency for a store of a few hundred rows.
  */
 import { getDb } from "./db"
 import * as Obs from "./observations"
+
+// A bm25 score at or above this carries less than roughly one discriminating
+// term's worth of weight — the row matched, but only on vocabulary the corpus
+// shares. Treating that as a candidate is the false positive an unranked OR
+// produced; the floor is what removes it.
+const FTS_MIN_SCORE = -1
 
 export type Relation = "supersedes" | "conflicts_with" | "related" | "compatible" | "scoped" | "not_conflict"
 const RELATIONS: Relation[] = ["supersedes", "conflicts_with", "related", "compatible", "scoped", "not_conflict"]
@@ -50,11 +59,26 @@ function findCandidates(newId: number, project: string, title: string, content: 
       consider(r.id, r.title, "supersedes", 0.85)
     }
   }
-  // 3. FTS overlap on title + content terms
-  const terms = `${title} ${content}`.split(/\s+/).filter((w) => w.length > 3).slice(0, 12).map((t) => `"${t.replace(/"/g, '""')}"`).join(" OR ")
+  // 3. FTS overlap on title + content terms, ranked by bm25.
+  //
+  // The match stays an OR: an AND across a dozen terms would only ever hit a
+  // near-verbatim copy, which signal 1 already covers. bm25 is what makes the
+  // OR usable — it scores by inverse document frequency, so a row matching only
+  // words the whole store shares ("project", "files", "should") lands near 0
+  // while a row matching rare vocabulary lands far below it. Ordering by that
+  // score picks the five strongest rows instead of five arbitrary ones, and the
+  // floor drops rows whose only overlap was common vocabulary. Scores are
+  // negative, more negative meaning a better match.
+  const words = [...new Set(`${title} ${content}`.toLowerCase().split(/\s+/).filter((w) => w.length > 3))]
+  const terms = words.slice(0, 12).map((t) => `"${t.replace(/"/g, '""')}"`).join(" OR ")
   if (terms) {
     try {
-      for (const r of db.query("SELECT o.id, o.title FROM observations o JOIN observations_fts f ON o.id=f.rowid WHERE observations_fts MATCH ? AND o.project_id=? AND o.state='active' AND o.id!=? LIMIT 5").all(terms, project, newId) as any[]) {
+      const rows = db.query(
+        "SELECT o.id, o.title, bm25(observations_fts) AS score FROM observations o JOIN observations_fts ON o.id=observations_fts.rowid" +
+        " WHERE observations_fts MATCH ? AND o.project_id=? AND o.state='active' AND o.id!=? ORDER BY score LIMIT 5"
+      ).all(terms, project, newId) as any[]
+      for (const r of rows) {
+        if (r.score > FTS_MIN_SCORE) continue
         consider(r.id, r.title, "related", 0.5)
       }
     } catch { /* malformed FTS query — ignore */ }

@@ -46,6 +46,21 @@ assert(C.judge(exact.judgment_id, "related").resolved, "re-judge is idempotent")
 // unknown relation rejected
 assert(!(C.judge("jud-nope", "supersedes" as any).resolved), "missing judgment rejected")
 
+// bm25-ranked FTS overlap: shared common vocabulary is not a candidate, shared
+// rare vocabulary is, and the strongest match ranks above the weaker ones.
+// Every row here shares the common vocabulary, so an unranked OR matches all of
+// them and returns five arbitrary rows as candidates.
+const COMMON = "project should handle these files when running the service"
+for (let i = 0; i < 8; i++) C.saveWithJudgment({ title: `Routine note ${i}`, content: COMMON, project: "fts" })
+const strong = C.saveWithJudgment({ title: "Ranked candidates by bm25", content: `finder orders overlap by bm25 relevance, ${COMMON}`, project: "fts" })!
+assert(strong.candidates.length === 0, `common vocabulary alone is not a candidate (got ${strong.candidates.length})`)
+
+const probe = C.saveWithJudgment({ title: "bm25 relevance revisited", content: `orders overlap by bm25, ${COMMON}`, project: "fts" })!
+const rare = probe.candidates.find((c) => c.observation_id === strong.id)
+assert(rare && rare.suggested_relation === "related", "rare vocabulary overlap surfaces as a related candidate")
+assert(probe.candidates[0].observation_id === strong.id, "strongest bm25 match ranks first among candidates")
+assert(probe.candidates.length === 1, `noise rows stay below the floor (got ${probe.candidates.length})`)
+
 // compare
 const cmp = C.compare(dupA.id, dupB.id)
 assert(cmp.similarity > 0.5 && cmp.shared_terms.includes("deploy"), "compare finds high similarity")

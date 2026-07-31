@@ -79,6 +79,14 @@ export const MemoryPlugin: Plugin = async (input) => {
     tool,
 
     // Record each user prompt (and lazily ensure the session row exists).
+    //
+    // No session-type filter, deliberately. The worry was that a sub-agent's
+    // delegation text would be stored as if the user had typed it. It is not:
+    // OpenCode does not fire this hook on child sessions. Measured against
+    // ~/.local/share/opencode over the capture window — 14 sessions with a
+    // parent_id, none with a single row in `prompts`, while 25 root sessions
+    // captured. The hook's own type also narrows `output.message` to
+    // `UserMessage`, so an assistant turn can never arrive here.
     "chat.message": async (inp, out) => {
       try {
         Sess.ensureSession(inp.sessionID, project)

@@ -144,8 +144,14 @@ function addColumn(d: Database, table: string, col: string, type: string) {
 // its schema onto ours rather than copying columns blindly. Idempotent via
 // INSERT OR IGNORE on primary keys; best-effort — a failure never blocks init,
 // because a broken migration must not cost us the whole memory store.
-// ecomono: engram-schema-specific (v1.x). If engram changes its schema a future
-// version needs a matching branch; falls through harmlessly (rows skipped).
+// ecomono: dead code with an expiry condition, not a ceiling to raise. Engram
+// is a retired external product this port replaced, so the schema branch this
+// once implied — "a future engram version needs a matching branch" — will never
+// be needed. Delete this function, ENGRAM_DB, and test_migration.ts once every
+// machine has run it. A machine has, if `~/.engram/engram.db.pre-ecomono.bak`
+// exists beside the legacy db, or if `~/.engram/` was never there at all.
+// Until then it stays: on an unmigrated machine, deleting it silently strands
+// that machine's whole memory history. Cost of keeping it is one existsSync.
 function migrateFromEngram(d: Database) {
   if (!existsSync(ENGRAM_DB)) return
   // Only engram DBs have this shape; bail quietly on anything else.
