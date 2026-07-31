@@ -50,9 +50,15 @@ rule-based result — no request is sent without a key.
   no telemetry, no analytics
 - Does not use shell=True or string interpolation
 - Does not access files outside the path the user provides
-- Does not send file content to the API if `is_sensitive()` matches the filename (`.env`,
-  `credentials`, `secrets`, `*.pem`, `*.key`, tokens containing `secret`/`password`/`apikey`/etc.)
-  — `compress_file()` refuses with an error before any API call in that case
+- Refuses the API leg on two independent checks, either of which is enough to stop it:
+  - `is_sensitive()` on the path — `.env`, `credentials`, `secrets`, `*.pem`, `*.key`,
+    a `.ssh`/`.aws`/`.gnupg`/`.kube`/`.docker` directory, or a name containing
+    `secret`/`password`/`apikey`/`token`/etc.
+  - `secret_in_content()` on the body, because a filename says nothing about what was
+    pasted inside. Matches the credential's own shape: private key blocks, AWS key ids,
+    GitHub/Slack/Google/Stripe/provider keys, JWTs, and `key = <20+ chars>` assignments.
+  Either match returns an error before any request is built. Phase 1 is local, so the
+  file still compresses — rerun without `--api`. Covered by `scripts/test_secrets.py`.
 
 ## File size limit
 

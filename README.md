@@ -87,6 +87,14 @@ you want prompts back, change `defaultMode` in `~/.claude/settings.json` (or in
 
 Make sure `~/.local/bin` is on your `PATH`.
 
+### Checks
+
+`bash check.sh` runs everything: the memory store and its committed MCP bundle, the
+installer's linking primitives, both Claude Code hook gates, the persona-drift and
+skill-registry selftests, and the compress skill's secret guard. Nothing runs it for
+you — there is no CI and no git hook in this repo, so it is worth running before a
+commit that touches `opencode/plugins/storage/`, `install.sh`, or `lib/common.sh`.
+
 ## Install — NixOS
 
 Don't run `install.sh` on NixOS (home-manager owns those paths). Consume the flake:

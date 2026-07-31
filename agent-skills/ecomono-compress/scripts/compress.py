@@ -478,6 +478,36 @@ SENSITIVE_DIRS = frozenset({".ssh", ".aws", ".gnupg", ".kube", ".docker"})
 SENSITIVE_TOKENS = ("secret", "credential", "password", "passwd", "apikey", "accesskey", "token", "privatekey")
 
 
+# A filename says nothing about what got pasted into the body. The files this skill
+# targets — notes, todos, CLAUDE.md — are exactly the ones people paste a token into
+# and forget. Matching the credential's own shape is the only check that catches that.
+SECRET_CONTENT = (
+    ("private key block", re.compile(r"-----BEGIN [A-Z ]*PRIVATE KEY-----")),
+    ("AWS access key id", re.compile(r"\b(?:AKIA|ASIA)[0-9A-Z]{16}\b")),
+    ("GitHub token", re.compile(r"\b(?:gh[pousr]_[A-Za-z0-9]{36,}|github_pat_[A-Za-z0-9_]{22,})\b")),
+    ("Slack token", re.compile(r"\bxox[baprs]-[A-Za-z0-9-]{10,}\b")),
+    ("Google API key", re.compile(r"\bAIza[0-9A-Za-z_\-]{35}\b")),
+    ("Stripe key", re.compile(r"\b[rs]k_live_[0-9A-Za-z]{16,}\b")),
+    ("provider API key", re.compile(r"\bsk-(?:ant-|proj-)?[A-Za-z0-9_\-]{20,}\b")),
+    ("JSON web token", re.compile(r"\beyJ[A-Za-z0-9_\-]{10,}\.eyJ[A-Za-z0-9_\-]{10,}\.[A-Za-z0-9_\-]{10,}\b")),
+    (
+        "assigned credential",
+        re.compile(
+            r"(?i)\b(api[_\-]?key|secret|token|password|passwd|credential)s?\b\s*[:=]\s*"
+            r"['\"]?[A-Za-z0-9/+_\-]{20,}"
+        ),
+    ),
+)
+
+
+def secret_in_content(text: str) -> str | None:
+    """Name the first credential shape found in the body, or None."""
+    for label, pattern in SECRET_CONTENT:
+        if pattern.search(text):
+            return label
+    return None
+
+
 def is_sensitive(path: Path) -> bool:
     """Heuristic: refuse to send files that contain secrets to API."""
     if SENSITIVE_BASENAME.match(path.name):
@@ -523,6 +553,14 @@ def compress_file(filepath: Path, use_api: bool = False, model: str = DEFAULT_MO
     original = filepath.read_text(errors="ignore")
     if not original.strip():
         return {"status": "error", "reason": "Empty file"}
+
+    # The filename check above cannot see a token pasted into an ordinary-looking file.
+    # Phase 1 is local either way, so refusing only the network leg keeps compression
+    # working on the file that tripped this.
+    if use_api:
+        found = secret_in_content(original)
+        if found:
+            return {"status": "error", "reason": f"Found a {found} in {filepath.name}. Refusing API send; rerun without --api to compress locally."}
 
     # Keep the full original name so notes.md and notes.txt don't collide on
     # one backup, and a .txt file isn't backed up under a misleading .md name.

@@ -16,8 +16,8 @@ Initialize Spec-Driven Development in this project. Detect the tech stack, exist
 ECOMONO-MEMORY PERSISTENCE (artifact store mode: ecomono-memory):
 After detecting the project context, save it:
   mem_save(title: "ecomono-sdd-init/{project}", topic_key: "ecomono-sdd-init/{project}", type: "architecture", project: "{project}", content: "{detected context}")
-When that save returns `judgment_required`, resolve each candidate with `mem_judge`
-(`supersedes` for the previous init context). That is what makes re-running init an
-update rather than a duplicate — `topic_key` alone does not.
+If that save returns `judgment_required`, resolve every candidate per
+`~/.claude/skills/ecomono-sdd-shared/sdd-phase-common.md` §C. That step, not
+`topic_key` on its own, is what makes re-running init an update rather than a duplicate.
 
 Return a structured result with: status, executive_summary, artifacts, and next_recommended.

@@ -16,8 +16,8 @@ Guide the user through a complete SDD cycle using their actual codebase. This is
 ECOMONO-MEMORY PERSISTENCE (artifact store mode: ecomono-memory):
 Save onboarding progress as you go:
   mem_save(title: "ecomono-sdd-onboard/{project}", topic_key: "ecomono-sdd-onboard/{project}", type: "architecture", project: "{project}", content: "{onboarding state}")
-When that save returns `judgment_required`, resolve each candidate with `mem_judge`
-(`supersedes` for the previous onboarding state). That is what makes re-running an
-update rather than a duplicate — `topic_key` alone does not.
+If that save returns `judgment_required`, resolve every candidate per
+`~/.claude/skills/ecomono-sdd-shared/sdd-phase-common.md` §C. That step, not
+`topic_key` on its own, is what makes re-running an update rather than a duplicate.
 
 Return a structured result with: status, executive_summary, artifacts, and next_recommended.
