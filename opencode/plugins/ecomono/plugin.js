@@ -108,10 +108,22 @@ function parseModeChange(promptRaw) {
   return null;
 }
 
+// Best-effort removal. A stale flag file is cosmetic — the next prompt rewrites it —
+// so a failed unlink must not throw out of a lifecycle hook and kill the session. It
+// does get logged: swallowing this silently is exactly what makes "why is ecomono
+// still on after I turned it off?" impossible to diagnose.
+function clearFlag() {
+  try {
+    if (existsSync(flagPath)) unlinkSync(flagPath);
+  } catch (e) {
+    console.error('[ecomono] could not remove mode flag', flagPath + ':', e.message);
+  }
+}
+
 function applyModeChange(mode) {
   if (!mode) return;
   if (mode === 'off') {
-    try { if (existsSync(flagPath)) unlinkSync(flagPath); } catch (e) {}
+    clearFlag();
     return;
   }
   safeWriteFlag(flagPath, mode);
@@ -121,7 +133,7 @@ export const EcomonoPlugin = async (_ctx) => ({
   'session.created': async () => {
     const mode = getDefaultMode();
     if (mode === 'off') {
-      try { if (existsSync(flagPath)) unlinkSync(flagPath); } catch (e) {}
+      clearFlag();
       return;
     }
     safeWriteFlag(flagPath, mode);
