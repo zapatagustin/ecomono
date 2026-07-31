@@ -43,29 +43,30 @@ const notARepo = mkdtempSync(join(tmpdir(), "ecomono-bare-"))
 assert.equal(Obs.currentProject(notARepo).project, notARepo.split("/").pop(),
   "outside a git repo, the directory basename stands in")
 
-// --- reconciliation ---------------------------------------------------------
-// Simulate the pre-unification state: rows already stored under the basename.
+// --- the legacy split is reported, never merged --------------------------------
+// A rename keyed on a directory basename can fold two unrelated repos together: `app`
+// is a name plenty of checkouts share. So the store notices and says so, and that is all.
 const d = getDb()
 d.run("INSERT INTO projects (id, name) VALUES (?, ?)", ["old-basename", "old-basename"])
 Obs.save({ title: "sdd/x/proposal", content: "written before the switch", project: "old-basename", topic_key: "sdd/x/proposal" })
-assert.equal(Obs.search({ query: "before", project: "old-basename" }).length, 1, "seeded row is findable under the old key")
 
 const moved = repo("old-basename", "git@github.com:owner/new-remote-name.git")
 assert.equal(Obs.currentProject(moved).project, "new-remote-name", "derivation switched to the remote")
-assert.equal(Obs.search({ query: "before", project: "new-remote-name" }).length, 1,
-  "the pre-switch row followed the key instead of going invisible")
-assert.equal(Obs.search({ query: "before", project: "old-basename" }).length, 0, "nothing left behind under the old key")
+assert.equal(Obs.search({ query: "before", project: "old-basename" }).length, 1,
+  "the pre-switch row stays exactly where it was")
+assert.equal(Obs.search({ query: "before", project: "new-remote-name" }).length, 0,
+  "and is not silently folded into the new key")
+assert.equal((d.query("SELECT COUNT(*) AS n FROM projects WHERE id=?").get("old-basename") as any).n, 1,
+  "the old project row survives")
 
-// Ambiguous cases must be left alone: if the new key already holds data, a rename would
-// merge two projects that were never the same one.
-d.run("INSERT INTO projects (id, name) VALUES (?, ?)", ["occupied-basename", "occupied-basename"])
-Obs.save({ title: "legacy", content: "legacy row", project: "occupied-basename" })
-d.run("INSERT INTO projects (id, name) VALUES (?, ?)", ["occupied-remote", "occupied-remote"])
-Obs.save({ title: "current", content: "current row", project: "occupied-remote" })
-Obs.currentProject(repo("occupied-basename", "git@github.com:owner/occupied-remote.git"))
-assert.equal(Obs.search({ query: "legacy", project: "occupied-basename" }).length, 1,
-  "an occupied target leaves the old key untouched rather than merging")
-assert.equal(Obs.search({ query: "current", project: "occupied-remote" }).length, 1,
-  "and leaves the target untouched too")
+// The collision that made an automatic merge unsafe: an unrelated repo that merely
+// shares a directory name must not inherit the first one's memory.
+d.run("INSERT INTO projects (id, name) VALUES (?, ?)", ["app", "app"])
+Obs.save({ title: "client-one", content: "belongs to the first app", project: "app" })
+Obs.currentProject(repo("app", "git@github.com:owner/unrelated-service.git"))
+assert.equal(Obs.search({ query: "belongs", project: "app" }).length, 1,
+  "a shared basename does not hand one project's rows to another")
+assert.equal(Obs.search({ query: "belongs", project: "unrelated-service" }).length, 0,
+  "and the unrelated project gains nothing")
 
-console.log("✓ project key: derivation and one-time legacy reconciliation both hold")
+console.log("\u2713 project key: derivation holds, and a legacy split is reported rather than merged")

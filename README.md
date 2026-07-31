@@ -91,7 +91,7 @@ Make sure `~/.local/bin` is on your `PATH`.
 
 `bash check.sh` runs everything: the memory store and its committed MCP bundle, the
 installer's linking primitives, both Claude Code hook gates, the persona-drift and
-skill-registry selftests, and the compress skill's secret guard. Nothing runs it for
+skill-registry selftests, the compress skill's secret guard, and shell syntax. Nothing runs it for
 you — there is no CI and no git hook in this repo, so it is worth running before a
 commit that touches `opencode/plugins/storage/`, `install.sh`, or `lib/common.sh`.
 

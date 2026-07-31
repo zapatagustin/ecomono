@@ -56,7 +56,9 @@ rule-based result — no request is sent without a key.
     `secret`/`password`/`apikey`/`token`/etc.
   - `secret_in_content()` on the body, because a filename says nothing about what was
     pasted inside. Matches the credential's own shape: private key blocks, AWS key ids,
-    GitHub/Slack/Google/Stripe/provider keys, JWTs, and `key = <20+ chars>` assignments.
+    GitHub/Slack/Google/Stripe/provider keys, JWTs, `user:pass@host` connection strings,
+    bearer headers, and `key = <20+ chars>` assignments. A SCREAMING_SNAKE value is
+    treated as the placeholder it usually is, so the check stays worth reading.
   Either match returns an error before any request is built. Phase 1 is local, so the
   file still compresses — rerun without `--api`. Covered by `scripts/test_secrets.py`.
 

@@ -27569,28 +27569,21 @@ function gitRemoteName(cwd) {
     return null;
   }
 }
-var reconciled = new Set;
-function reconcileLegacyProjectKey(current, legacy) {
-  if (current === legacy || reconciled.has(current))
+var noticed = new Set;
+function noticeLegacyProjectKey(current, legacy) {
+  if (current === legacy || noticed.has(current))
     return;
-  reconciled.add(current);
   try {
     const d = getDb();
     const exists = (id) => !!d.query("SELECT 1 FROM projects WHERE id=?").get(id);
     if (!exists(legacy) || exists(current))
       return;
-    const moved = d.query("SELECT COUNT(*) AS n FROM observations WHERE project_id=?").get(legacy)?.n ?? 0;
-    d.transaction(() => {
-      d.run("INSERT INTO projects (id, name) VALUES (?, ?)", [current, current]);
-      d.run("UPDATE observations SET project_id=? WHERE project_id=?", [current, legacy]);
-      d.run("UPDATE sessions SET project_id=? WHERE project_id=?", [current, legacy]);
-      d.run("UPDATE judgments SET project_id=? WHERE project_id=?", [current, legacy]);
-      d.run("DELETE FROM projects WHERE id=?", [legacy]);
-    })();
-    console.error(`[ecomono-memory] project key "${legacy}" -> "${current}" (git remote); ${moved} observations moved`);
-  } catch (e) {
-    console.error(`[ecomono-memory] project key reconciliation skipped: ${e.message}`);
-  }
+    const stranded = d.query("SELECT COUNT(*) AS n FROM observations WHERE project_id=?").get(legacy)?.n ?? 0;
+    if (!stranded)
+      return;
+    noticed.add(current);
+    console.error(`[ecomono-memory] ${stranded} observations sit under the older project key "${legacy}" ` + `while this repo now resolves to "${current}". They will not appear in search. ` + `Confirm the two are the same project before moving anything.`);
+  } catch {}
 }
 function currentProject(cwd) {
   const dir = cwd || process.cwd();
@@ -27603,12 +27596,12 @@ function currentProject(cwd) {
     const root = result.toString().trim();
     const basename = root.split("/").pop() || "unknown";
     if (remoteName)
-      reconcileLegacyProjectKey(remoteName, basename);
+      noticeLegacyProjectKey(remoteName, basename);
     return { project: remoteName || basename, path: root };
   } catch {
     const basename = dir.split("/").pop() || "unknown";
     if (remoteName)
-      reconcileLegacyProjectKey(remoteName, basename);
+      noticeLegacyProjectKey(remoteName, basename);
     return { project: remoteName || basename, path: dir };
   }
 }

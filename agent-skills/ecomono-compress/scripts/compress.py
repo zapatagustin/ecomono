@@ -490,20 +490,30 @@ SECRET_CONTENT = (
     ("Stripe key", re.compile(r"\b[rs]k_live_[0-9A-Za-z]{16,}\b")),
     ("provider API key", re.compile(r"\bsk-(?:ant-|proj-)?[A-Za-z0-9_\-]{20,}\b")),
     ("JSON web token", re.compile(r"\beyJ[A-Za-z0-9_\-]{10,}\.eyJ[A-Za-z0-9_\-]{10,}\.[A-Za-z0-9_\-]{10,}\b")),
+    ("connection string credential", re.compile(r"\b[a-z][a-z0-9+.\-]*://[^/\s:@]+:[^/\s@]{6,}@")),
+    ("bearer token", re.compile(r"(?i)\bbearer\s+[A-Za-z0-9._\-]{20,}\b")),
     (
         "assigned credential",
         re.compile(
-            r"(?i)\b(api[_\-]?key|secret|token|password|passwd|credential)s?\b\s*[:=]\s*"
-            r"['\"]?[A-Za-z0-9/+_\-]{20,}"
+            r"(?i)\b(?:api[_\-]?key|secret|token|password|passwd|credential)s?\b\s*[:=]\s*"
+            r"['\"]?(?P<value>[A-Za-z0-9/+_\-]{20,})"
         ),
     ),
 )
+
+# A real credential mixes character classes. SCREAMING_SNAKE_CASE of the right length is
+# how people write the placeholder they intend to replace, and blocking on it trains the
+# reader to ignore this check.
+PLACEHOLDER_SHAPED = re.compile(r"^[A-Z0-9_\-]+$")
 
 
 def secret_in_content(text: str) -> str | None:
     """Name the first credential shape found in the body, or None."""
     for label, pattern in SECRET_CONTENT:
-        if pattern.search(text):
+        for match in pattern.finditer(text):
+            value = match.groupdict().get("value")
+            if value and PLACEHOLDER_SHAPED.match(value):
+                continue
             return label
     return None
 

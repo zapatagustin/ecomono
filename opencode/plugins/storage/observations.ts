@@ -191,29 +191,36 @@ function gitRemoteName(cwd: string): string | null {
 // differs from its remote's, everything saved before that change sits under the old key
 // and goes invisible the moment this starts returning the new one — no error, just an
 // empty search. `projects.id` is the name itself, so there is nothing to repoint but the
-// rows. Rename once, and only when it is unambiguous: the new key holds nothing, the old
-// key holds something. Anything else is a judgement call the store should not make alone.
-const reconciled = new Set<string>()
-function reconcileLegacyProjectKey(current: string, legacy: string) {
-  if (current === legacy || reconciled.has(current)) return
-  reconciled.add(current)
+// rows.
+//
+// This only ever reports. An earlier version merged the two keys automatically and it
+// was wrong: `legacy` is nothing but the checkout's basename, and basenames like `app`,
+// `api` or `backend` are reused across unrelated repos all the time. Two such checkouts
+// were enough to fold one project's memory into another's, silently, from what reads as
+// a getter. A rename that cannot be undone is not something to infer from a directory
+// name — surface the split and let a human confirm it.
+//
+// ecomono: reports, does not repair. The ceiling is that continuity stays manual.
+// Upgrade path is a mem_* tool that shows what would move and asks, which also gets
+// the backup, the busy_timeout and the retry that an automatic version would need.
+const noticed = new Set<string>()
+function noticeLegacyProjectKey(current: string, legacy: string) {
+  if (current === legacy || noticed.has(current)) return
   try {
     const d = getDb()
     const exists = (id: string) => !!d.query("SELECT 1 FROM projects WHERE id=?").get(id)
     if (!exists(legacy) || exists(current)) return
-    const moved = (d.query("SELECT COUNT(*) AS n FROM observations WHERE project_id=?").get(legacy) as any)?.n ?? 0
-    d.transaction(() => {
-      d.run("INSERT INTO projects (id, name) VALUES (?, ?)", [current, current])
-      d.run("UPDATE observations SET project_id=? WHERE project_id=?", [current, legacy])
-      d.run("UPDATE sessions SET project_id=? WHERE project_id=?", [current, legacy])
-      d.run("UPDATE judgments SET project_id=? WHERE project_id=?", [current, legacy])
-      d.run("DELETE FROM projects WHERE id=?", [legacy])
-    })()
-    console.error(`[ecomono-memory] project key "${legacy}" -> "${current}" (git remote); ${moved} observations moved`)
-  } catch (e) {
-    // A store that cannot be opened is already reported elsewhere; never let the
-    // reconciliation itself be the thing that breaks a save.
-    console.error(`[ecomono-memory] project key reconciliation skipped: ${(e as Error).message}`)
+    const stranded = (d.query("SELECT COUNT(*) AS n FROM observations WHERE project_id=?").get(legacy) as any)?.n ?? 0
+    if (!stranded) return
+    noticed.add(current)
+    console.error(
+      `[ecomono-memory] ${stranded} observations sit under the older project key "${legacy}" ` +
+      `while this repo now resolves to "${current}". They will not appear in search. ` +
+      `Confirm the two are the same project before moving anything.`
+    )
+  } catch {
+    // Never let a diagnostic be the thing that breaks a save. An unopenable store is
+    // already reported by mem_doctor.
   }
 }
 
@@ -227,11 +234,11 @@ export function currentProject(cwd?: string): { project: string; path: string } 
     })
     const root = result.toString().trim()
     const basename = root.split("/").pop() || "unknown"
-    if (remoteName) reconcileLegacyProjectKey(remoteName, basename)
+    if (remoteName) noticeLegacyProjectKey(remoteName, basename)
     return { project: remoteName || basename, path: root }
   } catch {
     const basename = dir.split("/").pop() || "unknown"
-    if (remoteName) reconcileLegacyProjectKey(remoteName, basename)
+    if (remoteName) noticeLegacyProjectKey(remoteName, basename)
     return { project: remoteName || basename, path: dir }
   }
 }
