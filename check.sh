@@ -20,10 +20,11 @@ run "agent model gate"             bash claude/hooks/test-agent-model-gate.sh
 run "heavy skill gate"             bash claude/hooks/test-heavy-skill-gate.sh
 run "secret access gate"           bash claude/hooks/test-secret-access-gate.sh
 run "persona drift"                bash check-persona-drift.sh
+run "archive gate drift"           bash check-gate-drift.sh
 run "skill registry"               node claude/hooks/ecomono-skill-registry.js --selftest
 run "compress secret guard"        python3 agent-skills/ecomono-compress/scripts/test_secrets.py
 run "compress pipeline"            python3 agent-skills/ecomono-compress/scripts/test_compress.py
-run "shell syntax"                 bash -n install.sh lib/common.sh check-persona-drift.sh
+run "shell syntax"                 bash -n install.sh lib/common.sh check-persona-drift.sh check-gate-drift.sh
 
 if [ "$fail" -eq 0 ]; then echo "all checks pass"; else echo "some checks failed" >&2; fi
 exit "$fail"
