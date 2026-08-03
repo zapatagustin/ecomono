@@ -20,12 +20,14 @@ HARD GATES:
 5. The active change must have tasks and verify-report artifacts in the selected artifact store. Proposal/spec/design are expected for full spec-driven archive; if missing, report the exact missing artifacts and require an explicit user override before archiving.
 6. actionContext must allow archive operations. If status reports `workspace-planning`, STOP and explain that workspace archive is not supported in this slice.
 7. The persisted tasks artifact must reflect completion before the archive is considered successful. Internal todos do not count, and `ecomono-sdd-apply` is responsible for marking completed tasks.
+8. The subject hash must be forwarded, because archive has no `Bash` and cannot derive what it is archiving. Read the hash the `ecomono-judgment` run reported over this candidate and pass `SUBJECT HASH: {hash}` verbatim into the sub-agent prompt, instructing it to search `review/{hash}` for the review receipt. Never re-derive the hash yourself, per the orchestrator protocol's Subject hash forwarding section. No judgment has run, or it reported no hash because the target was a design rather than a candidate → pass none, and archive reports the change as unreviewed. Never invent or adjust a hash to make a receipt match.
 
 DEPENDENCY CHECK:
 
 - If the verification report is missing or does not say the change is ready, do NOT archive.
 - If tasks still contains unchecked implementation items (`- [ ]`), do NOT archive by default. Send the change back to `ecomono-sdd-apply` to correct the persisted tasks artifact. Only allow archive-time mechanical reconciliation when apply-progress / verify-report prove every unchecked task is complete; record the reconciliation in the archive report.
 - If verify-report contains CRITICAL issues, do NOT archive. There is no CRITICAL override.
+- If the review receipt for the forwarded subject hash says `JUDGMENT: ESCALATED`, do NOT archive. An escalation is an open question, not a slow pass.
 - Tell the user what is missing and suggest `/ecomono-sdd-verify <change>` or `/ecomono-sdd-continue <change>`.
 
 TASK:

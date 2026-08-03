@@ -253,7 +253,7 @@ model is Claude Code's business, not this table's.
 | `ecomono-sdd-tasks` | sonnet | Mechanical breakdown |
 | `ecomono-sdd-apply` | sonnet | Implementation |
 | `ecomono-sdd-verify` | sonnet | Validation against spec |
-| `ecomono-sdd-archive` | sonnet | Destructive merge into the baseline, behind three gates |
+| `ecomono-sdd-archive` | sonnet | Destructive merge into the baseline, behind four gates |
 | `ecomono-sdd-onboard` | haiku | Guided, pedagogical |
 | `ecomono-judge-a` | sonnet | Blind adversarial review |
 | `ecomono-judge-b` | sonnet | Blind adversarial review |
@@ -362,6 +362,11 @@ Recommendations, not enforced checkpoints. You decide when to act.
   Size is a reviewability budget, not a risk tier — over 400 changed lines is the review
   workload guard's business. A large mechanical rename does not become dangerous by being
   large, and a three-line change to a token path does not become safe by being small.
+
+  One exception, and it is the workload guard's doing rather than a risk signal: a diff
+  that shipped on a recorded `size:exception` was never split, so no reviewer ever saw it
+  in a reviewable slice. That forces **tier 4** regardless of evidence. The budget existed
+  to protect the reviewer; waiving it buys the lenses back.
 - **post-design** and **post-apply**: strongly consider `ecomono-judgment`.
   Adversarial verification costs roughly 4 + 3 per finding, which is worth it only at
   the phases where an error compounds.

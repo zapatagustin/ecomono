@@ -15,9 +15,17 @@
 # its sdd-archive prose still hard-requires `reviewGate.result: allow` after its
 # native gate stopped requiring it.
 #
-# ecomono: archive only, and it checks presence and count, not wording — the ceiling
-# is that a gate whose *body* drifts still passes. Upgrade path: if a second phase
-# ever grows a `## Gates` section, take the file pair as arguments and loop.
+# The count and the receipt gate's existence turned out to live in four files, not two.
+# The other two are checked here too: the orchestrator's model-assignments table spells
+# the count out again in prose, and the two `/ecomono-sdd-archive` command files are the
+# entry points that have to forward the subject hash the gate searches on. Both were
+# stale for a while precisely because nothing looked at them.
+#
+# ecomono: archive only, and it checks presence and count, not wording — the ceiling is
+# that a gate whose *body* drifts still passes, and that the command-file check only
+# asks whether the subject hash is mentioned, not whether the instruction is correct.
+# Upgrade path: if a second phase ever grows a `## Gates` section, take the file set as
+# arguments and loop.
 
 set -uo pipefail
 cd "$(dirname "$0")"
@@ -73,5 +81,27 @@ elif [ "$actual" != "$expected" ]; then
   fail=1
 fi
 
-[ $fail -eq 0 ] && echo "ok   archive gates agree ($count gates, named in both files)"
+# Third place the count is spelled out: the orchestrator's model-assignments table.
+orch=agent-skills/ecomono-sdd-shared/sdd-orchestrator.md
+orch_actual=$(grep -oE "behind [a-z]+ gates" "$orch" | head -1)
+if [ -z "$orch_actual" ]; then
+  echo "DRIFT — $orch no longer spells out archive's gate count; expected 'behind ${words[$count]} gates'"
+  fail=1
+elif [ "$orch_actual" != "behind ${words[$count]} gates" ]; then
+  echo "DRIFT — $orch says '$orch_actual', but $skill defines $count gates"
+  fail=1
+fi
+
+# The two command files are the entry points. The receipt gate searches on a hash only
+# the caller can compute, so a command file that never mentions it leaves the gate
+# permanently unfed — it fails closed and reports every archive unreviewed.
+for cmd in claude/commands/ecomono-sdd-archive.md opencode/commands/ecomono-sdd-archive.md; do
+  [ -r "$cmd" ] || { echo "MISSING: $cmd" >&2; exit 1; }
+  grep -qF 'SUBJECT HASH' "$cmd" || {
+    echo "DRIFT — $cmd never mentions SUBJECT HASH, so the receipt gate is never fed"
+    fail=1
+  }
+done
+
+[ $fail -eq 0 ] && echo "ok   archive gates agree ($count gates; count in 3 files, hash forwarded from 2)"
 exit $fail
