@@ -59,3 +59,4 @@ Return a structured result with these fields:
 - `next_recommended`: `ecomono-sdd-spec` and `ecomono-sdd-design` (can run in parallel)
 - `risks`: open questions, unresolved tradeoffs, or blocking dependencies
 - `skill_resolution`: `paths-injected` | `fallback-registry` | `fallback-path` | `none`, per `~/.claude/skills/ecomono-sdd-shared/sdd-phase-common.md` §D
+- `key_learnings`: durable, non-obvious facts that outlive this change, or `None`, per the same §D

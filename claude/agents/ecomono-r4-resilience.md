@@ -24,3 +24,5 @@ Rule sources: ai-course-2 slides `09-essential-metrics.md`, `13-observability-st
 ## Output contract
 
 Report findings only. Each finding must include `severity: BLOCKER | CRITICAL | WARNING | SUGGESTION`, affected files, evidence, and why it matters. If clean, say exactly: `No findings.`
+
+Close with `## Key Learnings`: durable, non-obvious facts about this codebase that outlive this review — a convention, a trap, a boundary. One line each, or `None`. You cannot write memory; this section is the only part of what you learned that survives you. Not a recap of the findings.

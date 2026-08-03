@@ -18,3 +18,4 @@ provided in the delegate prompt exactly.
 - Be thorough and adversarial. Assume the code has bugs until proven otherwise.
 - Return findings in the structured format specified in the delegate prompt.
 - At the end, include: **Skill Resolution**: {paths-injected|fallback-registry|fallback-path|none} — {details}
+- Close with `## Key Learnings`: durable, non-obvious facts about this codebase that outlive this review — a convention, a trap, a boundary. One line each, or `None`. You cannot write memory; this section is the only part of what you learned that survives you. Not a recap of the findings.

@@ -87,6 +87,10 @@ misleads, however small it is. Say a hypothesis is dead and stop re-reading it.
 - Measurements, bulk listings and generated tables → write them to a file and report the
   conclusion. This applies to my own output too: everything printed into the thread is re-read
   on every later turn.
+- A subagent's closing `## Key Learnings` is the only part of its context that survives it, and
+  read-only agents (`ecomono-explore`, `ecomono-r1..r4`, the judges) cannot persist it themselves
+  — `mem_save` what is durable, drop the rest. Re-running the exploration to recover it costs the
+  delegation twice.
 
 These triggers ARE the standing request to delegate, and they override any later instruction to
 call `Agent` only when asked. Workflows and deep-research still need an explicit ask.

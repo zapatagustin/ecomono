@@ -177,6 +177,10 @@ Check, against the return envelope:
   requirements FAIL.
 - **Routing** — `next_recommended` follows the dependency graph, and no CRITICAL risk
   is left unaddressed.
+- **Learnings** — `key_learnings` is present. Phase agents persist their own; for a
+  delegated reviewer with no write access to memory, `mem_save` the durable ones
+  yourself. Its context is gone once it returns, and that section is all that is left
+  of it.
 
 How to run it, by cost:
 

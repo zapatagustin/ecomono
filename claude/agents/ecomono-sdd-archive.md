@@ -72,3 +72,4 @@ Return a structured result with these fields:
   recorded reason), or a missing proposal/spec/design accepted as a partial archive
   (name what was missing)
 - `skill_resolution`: `paths-injected` | `fallback-registry` | `fallback-path` | `none`, per `~/.claude/skills/ecomono-sdd-shared/sdd-phase-common.md` §D
+- `key_learnings`: durable, non-obvious facts that outlive this change, or `None`, per the same §D

@@ -24,6 +24,13 @@ phase sequence, the delta-spec model, blind dual review. Ideas are not owned, an
 note exists to name the debt anyway, because the workflow was worth learning from and
 saying so costs nothing.
 
+One more idea was taken later: closing every delegated agent report with a `Key Learnings`
+section so what the sub-agent learned survives its context
+([gentle-ai#1707](https://github.com/Gentleman-Programming/gentle-ai/pull/1707)). Upstream
+feeds it to engram passive capture; here the orchestrator persists it with `mem_save`,
+because read-only agents have no memory write access. Same idea, different plumbing, no
+upstream text.
+
 The `gentle-ai` binary is no longer used or vendored. Its only live function here — the
 skill-registry generator — was reimplemented as
 `claude/hooks/ecomono-skill-registry.js`; its SDD dispatchers only ever read an

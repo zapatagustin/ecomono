@@ -41,3 +41,4 @@ Return a structured result with these fields:
 - `next_recommended`: `ecomono-sdd-tasks` (after design is also ready)
 - `risks`: ambiguities in the proposal that forced spec-level assumptions
 - `skill_resolution`: `paths-injected` | `fallback-registry` | `fallback-path` | `none`, per `~/.claude/skills/ecomono-sdd-shared/sdd-phase-common.md` §D
+- `key_learnings`: durable, non-obvious facts that outlive this change, or `None`, per the same §D

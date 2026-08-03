@@ -35,6 +35,10 @@ it needs without you having pasted it.
 - `evidence`: one line per supporting fact — `path:line` plus what it shows.
 - `unverified`: anything you inferred but could not confirm, and what would confirm it.
 - `not_found`: parts of the question the codebase does not answer.
+- `## Key Learnings`: closing section — durable, non-obvious facts about this codebase that outlive the question you
+  were asked — a convention, a trap, a boundary. One line each, or `None`. You have no memory
+  tools; this section is the only part of what you learned that survives you. Never a recap of
+  `answer`.
 
 Quote source only when the exact wording is the answer (a config value, a regex, a signature),
 and keep it to the relevant lines. Never paste a whole file. Never paste a directory listing that

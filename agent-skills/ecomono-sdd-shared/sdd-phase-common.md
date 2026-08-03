@@ -112,6 +112,12 @@ top-level agents.
 | `next_recommended` | Next phase, or `none` |
 | `risks` | What you found, or `None` |
 | `skill_resolution` | `paths-injected` \| `fallback-registry` \| `fallback-path` \| `none` — meanings below |
+| `key_learnings` | Durable, non-obvious facts that outlive this change, or `None` — see below |
+
+**`key_learnings`** is what the orchestrator carries forward after your context is gone: a
+convention, a trap, a boundary, a thing that turned out not to be true. One line each. It is
+not a second copy of the artifact and not a recap of `executive_summary` — those are already
+in the envelope. `None` is the honest answer when the phase taught nothing new.
 
 **`skill_resolution` values:**
 
@@ -129,6 +135,9 @@ top-level agents.
 **Next**: ecomono-sdd-spec or ecomono-sdd-design
 **Risks**: None
 **Skill Resolution**: paths-injected — 3 skills (react-19, typescript, tailwind-4)
+
+## Key Learnings
+- Auth state lives in `lib/session.ts`, not in the route handlers the README points at.
 ```
 
 Report `partial` or `blocked` honestly. A phase that claims `success` with unchecked

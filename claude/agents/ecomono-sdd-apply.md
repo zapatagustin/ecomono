@@ -46,3 +46,4 @@ Return a structured result with these fields:
 - `next_recommended`: `ecomono-sdd-verify` (if all tasks done) or `ecomono-sdd-apply` again (if tasks remain)
 - `risks`: deviations from design, unexpected complexity, or blocked tasks
 - `skill_resolution`: `paths-injected` | `fallback-registry` | `fallback-path` | `none`, per `~/.claude/skills/ecomono-sdd-shared/sdd-phase-common.md` §D
+- `key_learnings`: durable, non-obvious facts that outlive this change, or `None`, per the same §D
