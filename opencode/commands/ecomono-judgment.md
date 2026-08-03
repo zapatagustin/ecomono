@@ -10,9 +10,9 @@ agents, launched with `task` in the SAME response so they run concurrently; sequ
 calls leak the first verdict into the second. Confirmed fixes go to a separate
 `ecomono-judge-fix` call, never to a judge.
 
-Freeze the subject hash before launching, re-check it before the verdict, and write the
-receipt to `review/{subject-hash}`. No receipt means `ecomono-sdd-archive` reports the
-change as unreviewed.
+Freeze the subject hash before launching, re-check it before synthesizing each round and
+again before the terminal verdict, and write the receipt to `review/{subject-hash}`. No
+receipt means `ecomono-sdd-archive` reports the change as unreviewed.
 
 Judge and fix prompts, the warning rubric in full, and the verdict tables live in
 `references/prompts-and-formats.md` beside that SKILL.md. Do not restate the protocol

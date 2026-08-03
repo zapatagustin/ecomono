@@ -63,7 +63,8 @@ Return a structured result with these fields:
 - `executive_summary`: one-sentence confirmation that the change is archived and closed
 - `artifacts`: topic_keys written (e.g. `sdd/{change-name}/archive-report`, `spec/{capability}`, `spec/{capability}/prev`)
 - `next_recommended`: `none` (change is complete) or a new `/ecomono-sdd-new` if follow-up is needed
-- `risks`: an unreviewed archive accepted (name the subject hash searched), an `ESCALATED`
+- `risks`: an unreviewed archive accepted (name the subject hash searched, or record that
+  none was passed), an `ESCALATED`
   receipt that blocked the cycle, any artifacts that could not be merged cleanly, a MODIFIED merge blocked by the
   scenario guard, a destructive merge that removes large sections and was stopped for
   confirmation even though the scenario counts passed, a REMOVED/RENAMED merge refused

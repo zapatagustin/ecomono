@@ -2,7 +2,7 @@
 name: ecomono-judgment
 description: "Trigger: judgment day, dual review, adversarial review, juzgar. Two blind judges review in parallel, confirmed issues get fixed, then re-judged."
 metadata:
-  version: "1.5"
+  version: "1.11"
 ---
 
 Two independent reviewers, neither of which saw the work being written, agreeing on a
@@ -34,16 +34,54 @@ slice.
 
 ## Candidate freeze
 
-A verdict is bound to exact bytes, never to a branch or an intent. Before launching the
-judges, freeze the subject and record the hash:
+A verdict is bound to exact bytes, never to a branch or an intent. This skill is the only
+place the subject hash gets computed — nothing downstream, the orchestrator included,
+re-derives it or forwards anything but this skill's own reported string. The recomputations
+the sequence calls for detect drift in the reviewed bytes; they never replace the forwarded
+value, which stays the one reported at freeze time.
+
+One shape only:
 
 ```bash
-git diff HEAD -- {target paths} | sha256sum | cut -c1-12
+git diff "$(git merge-base HEAD {base-branch})" | sha256sum | cut -c1-12
 ```
 
-Use `--cached` or a commit range when that is what the target actually is. Target is not
-a diff — an architecture slice, a whole component — then hash the file list plus each
-file's own content. The shape does not matter; naming what the judges saw does.
+Resolve `{base-branch}` to the change's actual base branch — `master` in this repo — never
+hardcode a name. `git diff <commit>` with no second ref compares that commit against the
+**working tree**, so committed, staged and unstaged work all land in the same hash in one
+shot.
+
+`ecomono: the frozen subject is the whole branch diff and may carry bytes unrelated to
+what the judges review, so a receipt over-claims coverage when the branch mixes concerns.
+Relatedness isn't computable from git state, so nothing here checks it — keeping the
+branch clean before freezing is the operator's job. The untracked check below is
+repo-wide for the same reason and will fire on unrelated debris; scoping it to the diff
+needs path comparison that prose cannot pin down without silently mis-firing. It also
+misses untracked content inside a submodule, which the superproject reports as a modified
+gitlink rather than `??` — invisible to the hash and to the check alike. Upgrade path for
+all of it: code that compares a declared in-scope path list against the diff.`
+
+**Target is not a diff** — an architecture slice, a whole component, a design question —
+has no bytes to freeze. Say so explicitly: no hash, no receipt, and the verdict is
+advisory rather than a delivery receipt. `ecomono-sdd-archive` will report the change as
+unreviewed, which is correct: the judgment reviewed a design, not a candidate.
+
+Two guards, checked before freezing, neither of which mutates anything:
+
+- **Empty diff → refuse to freeze.** Write no receipt, and say why: on a clean tree at the
+  merge base the diff is empty, and hashing an empty string always produces the same
+  constant (`e3b0c44298fc`) regardless of repo or content. A receipt ever written under
+  that key becomes a skeleton key that passes every later archive run on a clean tree.
+- **Untracked files present → refuse and name them.** `git diff` never sees untracked
+  files, so a new file beside a changed one hashes identically to no change at all. The
+  check is `git -c status.showUntrackedFiles=all status --porcelain | grep '^??'` — any
+  output refuses the freeze. The `-c` is not decoration: a repo or global
+  `status.showUntrackedFiles=no`, which large repos set for speed, suppresses every `??`
+  line and would make this pass silently. Do not stage anything (no `git add -N`) — the
+  user commits the files or adds them to `.gitignore`, then re-freezes.
+
+Report the computed hash verbatim in this skill's own output and in the receipt; every
+later consumer carries that string forward instead of recomputing it.
 
 Re-compute the hash before you synthesize, and again before any terminal verdict. Changed
 → the judges reviewed bytes that no longer exist. Discard the round, re-launch on the new
@@ -79,12 +117,15 @@ converge, which is information about the finding, not about the judge.
 1. Confirm the target and any custom criteria. Freeze the subject hash.
 2. Resolve exact skill paths, or warn that you could not.
 3. Launch Judge A and Judge B concurrently.
-4. Synthesize into confirmed / suspect / contradiction / INFO.
-5. Ask before round-1 fixes. Delegate a **separate** fix agent, for approved confirmed
+4. Re-compute the subject hash. Changed → discard the round and re-launch on the new hash
+   rather than synthesizing verdicts about bytes that no longer exist.
+5. Synthesize into confirmed / suspect / contradiction / INFO.
+6. Ask before round-1 fixes. Delegate a **separate** fix agent, for approved confirmed
    issues only — the judges do not fix what they found.
-6. Re-judge in parallel after fixes. Repeat until approved, escalated, or stopped.
-7. Re-verify the subject hash, then write the receipt.
-8. Before any terminal action, confirm every open judgment reached a terminal state. A
+7. Re-judge in parallel after fixes, from step 3. Repeat until approved, escalated, or
+   stopped. Every round runs its own step 4.
+8. Re-verify the subject hash, then write the receipt.
+9. Before any terminal action, confirm every open judgment reached a terminal state. A
    round left hanging reads exactly like a round that passed.
 
 ## Receipt

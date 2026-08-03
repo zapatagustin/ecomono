@@ -40,7 +40,7 @@ off. Old engram documentation still shows it; do not reintroduce it.
 | `apply-progress` | `ecomono-sdd-apply` | Cumulative implementation state |
 | `verify-report` | `ecomono-sdd-verify` | Verification result |
 | `archive-report` | `ecomono-sdd-archive` | Closure and lineage (all observation IDs) |
-| `state` | orchestrator | DAG state, for recovery after compaction |
+| `state` | orchestrator | DAG state, for recovery after compaction; also where the subject hash reported by `ecomono-judgment` is carried forward to the archive launch |
 
 One key per type per change. A phase inventing a new type strands its output —
 nothing downstream searches for it.
@@ -77,7 +77,9 @@ Keyed by the hash of the reviewed candidate, not by a change name, and `type: de
 rather than `architecture`. That is deliberate: the receipt records that *these bytes*
 were reviewed, so a later gate can check the claim instead of trusting it.
 `ecomono-sdd-archive` searches this key with the subject hash the orchestrator passes it,
-and treats a miss as unreviewed.
+and treats a miss as unreviewed. A judgment with nothing to freeze — a design review rather
+than a candidate — reports no hash, so there is no key to search and archive reports
+unreviewed with no hash to name.
 
 A receipt is never re-keyed to fit a change it did not review. Re-key it and the gate
 still passes while the bytes it names are gone — the one failure this key shape exists to

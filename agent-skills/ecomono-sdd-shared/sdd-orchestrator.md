@@ -305,12 +305,14 @@ something to merge. First batch → no instruction needed.
 
 ### Subject hash forwarding
 
-`ecomono-sdd-archive` has no `Bash` and cannot derive what it is archiving. Compute the
-subject hash yourself and pass it verbatim with the launch:
+`ecomono-sdd-archive` has no `Bash` and cannot derive what it is archiving. Neither do
+you: `ecomono-judgment` is the only place the subject hash is computed, and it reports the
+frozen value verbatim in its own output. Read that reported string and carry it forward —
+**never recompute it yourself.** A hash you re-derive is the bug, not a fallback.
 
-```bash
-git diff HEAD | sha256sum | cut -c1-12
-```
+Persist the reported hash in the DAG `state` artifact (see Recovery below) as soon as
+`ecomono-judgment` returns, so it survives a compaction between the judgment run and the
+later archive launch. Pass it verbatim with the archive launch:
 
 ```
 SUBJECT HASH: {hash}
@@ -320,10 +322,11 @@ Search 'review/{hash}' for the review receipt before running the archive gates.
 Omit it and archive's receipt gate fails closed, reporting the change as unreviewed —
 which is the correct outcome, not a bug to work around.
 
-The hash covers the **whole** change, unnarrowed. A judgment run over a subset of the
-diff produces a different hash, so the gate finds no receipt and reports unreviewed: that
-is the gate working, not a mismatch to paper over. Never narrow the paths to make a
-receipt match, and never re-run the hash a different way until one is found.
+Forward exactly the string `ecomono-judgment` reported, which is the same one it wrote
+into the receipt. Never re-derive it a different way, and never adjust what you pass to
+manufacture a match; a missing receipt means the gate is working, not a mismatch to paper
+over. A judgment that had nothing to freeze — a design or architecture review rather than
+a candidate — reports no hash at all, and there is nothing to forward.
 
 ## Recovery
 
@@ -331,6 +334,10 @@ Persist DAG state after every phase transition, then recover with
 `mem_search("sdd/{change-name}/state")` → `mem_get_observation(id)`. Under store
 `none` this is impossible — say so, and keep the change small enough to finish in one
 context.
+
+This is also where the subject hash reported by `ecomono-judgment` gets persisted (see
+Subject hash forwarding above) — a value you carry forward, never one you re-derive from
+the DAG state.
 
 <!-- ecomono:trigger-rules -->
 ## Trigger rules

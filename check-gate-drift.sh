@@ -33,12 +33,28 @@ done
 titles=$(awk '/^## Gates/{f=1;next} /^## /{f=0} f && /^### /{sub(/^### /,"");print}' "$skill")
 [ -n "$titles" ] || { echo "FAIL: no gates found under '## Gates' in $skill" >&2; exit 1; }
 
+# The enumerated gate list in the agent file: from the "Run all N gates" step up
+# to (not including) the next numbered step. A title that only happens to appear
+# elsewhere in the file — e.g. reused as a word in the Result Contract's `risks`
+# field — must not count as "named"; only this region is the executable gate list.
+# Bounded on two sides, not one: the next numbered step, or the next `## ` heading,
+# whichever comes first. If "Run all N gates" ever becomes the last numbered step,
+# the numbered-step bound alone would silently extend the region to EOF and swallow
+# later prose — e.g. the Result Contract's `risks` field — back into the gate list.
+gate_list=$(awk '
+  /^[0-9]+\. Run all .* gates/ { f=1 }
+  f && /^[0-9]+\. / && !/^[0-9]+\. Run all .* gates/ { exit }
+  f && /^## / { exit }
+  f
+' "$agent")
+[ -n "$gate_list" ] || { echo "FAIL: no 'Run all N gates' step found in $agent" >&2; exit 1; }
+
 fail=0
 count=0
 while IFS= read -r title; do
   count=$((count + 1))
-  grep -qF -- "$title" "$agent" || {
-    echo "DRIFT — gate '$title' is in $skill but not named in $agent"
+  grep -qF -- "$title" <<<"$gate_list" || {
+    echo "DRIFT — gate '$title' is in $skill but not named in the gate list in $agent"
     fail=1
   }
 done <<<"$titles"

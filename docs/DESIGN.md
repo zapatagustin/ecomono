@@ -697,9 +697,9 @@ that is portable. Ported as prose instead:
 
 | Idea | Where it landed |
 |---|---|
-| Candidate freeze | `ecomono-judgment` hashes the diff before launching judges, re-checks before the verdict, discards the round if the bytes moved |
+| Candidate freeze | `ecomono-judgment` hashes the diff before launching judges, re-checks at each later checkpoint the skill defines, discards the round if the bytes moved |
 | Receipt | One `mem_save` at `review/{subject-hash}`, `type: decision`. No new storage |
-| Gate validates the receipt | Archive's fourth gate, fed the hash by the orchestrator because the archive agent has no `Bash` |
+| Gate validates the receipt | One of archive's four gates, fed the hash by the orchestrator because the archive agent has no `Bash` |
 | Tier by evidence, not size | The pre-pr trigger rule, rewritten. Size went back to being the review workload guard's problem |
 
 Deliberately not taken: the seven audit ledgers, the 36-journey friction bench, shadow
@@ -710,7 +710,7 @@ provable, and there is one operator here.
 Also not taken: the kill switch. Upstream needs `review mode disable` because an agent
 under organizational pressure will fabricate approval; the archive gate reuses the
 partial-archive idiom instead — it reports unreviewed, the user decides, the archive report
-records the hash it searched. One operator who can decline is the kill switch.
+records the hash it searched, if any. One operator who can decline is the kill switch.
 
 The upstream gap worth knowing: gentle-ai's own `sdd-archive` prose still hard-requires
 `reviewGate.result: allow` while its native gate already allows. Prose and code disagreeing

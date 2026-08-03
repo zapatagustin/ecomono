@@ -4,7 +4,7 @@ description: "Merge delta specs into the main specs and close the change. Trigge
 disable-model-invocation: true
 user-invocable: false
 metadata:
-  version: "2.1"
+  version: "2.3"
   delegate_only: true
 ---
 
@@ -62,15 +62,17 @@ cannot derive it. Search `review/{subject-hash}` → `mem_get_observation`.
 |---|---|---|
 | yes | `JUDGMENT: APPROVED` | Gate passes |
 | yes | `JUDGMENT: ESCALATED` | STOP, return `blocked`. An escalation is an open question, not a slow pass |
-| no | — | The bytes being archived are unreviewed. Report it |
-| no hash passed | — | Same as above. Fail closed |
+| no, hash was passed | — | The bytes being archived are unreviewed. Report it, naming the hash searched |
+| no hash passed | — | Nothing to search. Report it as unreviewed with no hash to name |
 
 Unreviewed → continue only when the user explicitly accepts an unreviewed archive, and
-record it in `Exceptions Recorded` with the hash you searched. Same policy as a partial
-archive: the gate reports, the user decides, the report remembers.
+record it in `Exceptions Recorded`: the hash searched when one was passed, or that none
+was passed and there was nothing to search. Same policy as a partial archive: the gate
+reports, the user decides, the report remembers.
 
-A receipt whose hash does not match the bytes in front of you is a receipt for a different
-change. Never treat a near-miss as a match, and never re-key a receipt to make one fit.
+You have no `Bash` and cannot hash bytes or detect a near-miss — you can only search the
+exact hash string the orchestrator passed you. Search that string verbatim, never widen
+or narrow the search, and never substitute a different receipt for it.
 
 ### Edit scope
 
@@ -162,8 +164,8 @@ Verify before reporting success:
 
 ### Exceptions Recorded
 {Stale-checkbox reconciliation, partial archive, an unreviewed archive accepted (name the
-subject hash searched), or a destructive merge stopped for confirmation despite passing
-scenario counts — each with its reason. Or "None."}
+subject hash searched, or record that none was passed), or a destructive merge stopped for
+confirmation despite passing scenario counts — each with its reason. Or "None."}
 
 ### Status
 Cycle complete for `{change-name}`.
