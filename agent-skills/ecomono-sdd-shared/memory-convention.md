@@ -67,6 +67,22 @@ the merge is only complete after `mem_judge(..., "supersedes")` retires the prev
 `spec/{capability}`. It is a rollback for the last merge, not a history — see the
 ceiling noted in `ecomono-sdd-archive`.
 
+## Review receipts
+
+| Key | Holds | Written by |
+|---|---|---|
+| `review/{subject-hash}` | Terminal review verdict for exactly those bytes | `ecomono-judgment` |
+
+Keyed by the hash of the reviewed candidate, not by a change name, and `type: decision`
+rather than `architecture`. That is deliberate: the receipt records that *these bytes*
+were reviewed, so a later gate can check the claim instead of trusting it.
+`ecomono-sdd-archive` searches this key with the subject hash the orchestrator passes it,
+and treats a miss as unreviewed.
+
+A receipt is never re-keyed to fit a change it did not review. Re-key it and the gate
+still passes while the bytes it names are gone — the one failure this key shape exists to
+make impossible.
+
 ## Reading
 
 Two steps, always. `mem_search` returns a truncated preview; the preview is not the

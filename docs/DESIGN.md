@@ -683,3 +683,37 @@ already used a pointer, and the orchestrator has `read: true`, so it now points 
 protocol file the same way: 3,384 words to 116. This section had already named two copies
 with nothing keeping them equal as the recurring failure here; that was the last one.
 
+### What was worth taking from RDD
+
+Upstream gentle-ai replaced its review control plane with **Receipt-Driven Development**:
+review runs after the candidate exists, the candidate is a hash of the diff bytes, the
+reviewer tier comes from risk evidence, and every delivery gate validates one immutable
+receipt.
+
+Most of it is Go — a CAS-locked authority store under `.git/gentle-ai/review-transactions/v3/`,
+hash-bound state transitions, five delivery gates, an AST test asserting that any command
+named in a refusal actually resolves the block. This repo fetches no binaries, so none of
+that is portable. Ported as prose instead:
+
+| Idea | Where it landed |
+|---|---|
+| Candidate freeze | `ecomono-judgment` hashes the diff before launching judges, re-checks before the verdict, discards the round if the bytes moved |
+| Receipt | One `mem_save` at `review/{subject-hash}`, `type: decision`. No new storage |
+| Gate validates the receipt | Archive's fourth gate, fed the hash by the orchestrator because the archive agent has no `Bash` |
+| Tier by evidence, not size | The pre-pr trigger rule, rewritten. Size went back to being the review workload guard's problem |
+
+Deliberately not taken: the seven audit ledgers, the 36-journey friction bench, shadow
+evaluation, the digest-pinned JSON contract mode, the v1/v2/v3 authority-root versioning,
+and the `rdd-defect-workflow` skill — every one of them exists to make a *team's* migration
+provable, and there is one operator here.
+
+Also not taken: the kill switch. Upstream needs `review mode disable` because an agent
+under organizational pressure will fabricate approval; the archive gate reuses the
+partial-archive idiom instead — it reports unreviewed, the user decides, the archive report
+records the hash it searched. One operator who can decline is the kill switch.
+
+The upstream gap worth knowing: gentle-ai's own `sdd-archive` prose still hard-requires
+`reviewGate.result: allow` while its native gate already allows. Prose and code disagreeing
+is the failure this document keeps returning to. The gate ported here is the code's
+behaviour, not the prose's.
+

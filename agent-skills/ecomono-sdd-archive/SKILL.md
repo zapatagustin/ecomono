@@ -4,7 +4,7 @@ description: "Merge delta specs into the main specs and close the change. Trigge
 disable-model-invocation: true
 user-invocable: false
 metadata:
-  version: "2.0"
+  version: "2.1"
   delegate_only: true
 ---
 
@@ -52,6 +52,25 @@ the baseline's problem forever.
 
 Missing proposal, spec or design → report it. Continue only when the user explicitly
 chooses a partial archive, and record what was missing.
+
+### Review receipt
+
+The orchestrator passes `SUBJECT HASH` with your launch — you have no `Bash`, so you
+cannot derive it. Search `review/{subject-hash}` → `mem_get_observation`.
+
+| Found | Verdict | Action |
+|---|---|---|
+| yes | `JUDGMENT: APPROVED` | Gate passes |
+| yes | `JUDGMENT: ESCALATED` | STOP, return `blocked`. An escalation is an open question, not a slow pass |
+| no | — | The bytes being archived are unreviewed. Report it |
+| no hash passed | — | Same as above. Fail closed |
+
+Unreviewed → continue only when the user explicitly accepts an unreviewed archive, and
+record it in `Exceptions Recorded` with the hash you searched. Same policy as a partial
+archive: the gate reports, the user decides, the report remembers.
+
+A receipt whose hash does not match the bytes in front of you is a receipt for a different
+change. Never treat a near-miss as a match, and never re-key a receipt to make one fit.
 
 ### Edit scope
 
@@ -120,6 +139,7 @@ Verify before reporting success:
 - [ ] Scenario accounting recorded for every MODIFIED requirement
 - [ ] `spec/{capability}/prev` written for each merged capability
 - [ ] Tasks artifact has no unchecked implementation tasks (or the recorded exception)
+- [ ] Review receipt found and approved for the passed subject hash (or the recorded exception)
 - [ ] Every artifact observation ID captured for lineage
 - [ ] No save left with `judgment_required` unresolved
 
@@ -141,8 +161,9 @@ Verify before reporting success:
 | proposal / spec / design / tasks / apply-progress / verify-report | {id} |
 
 ### Exceptions Recorded
-{Stale-checkbox reconciliation, partial archive, or a destructive merge stopped for
-confirmation despite passing scenario counts — each with its reason. Or "None."}
+{Stale-checkbox reconciliation, partial archive, an unreviewed archive accepted (name the
+subject hash searched), or a destructive merge stopped for confirmation despite passing
+scenario counts — each with its reason. Or "None."}
 
 ### Status
 Cycle complete for `{change-name}`.
@@ -152,6 +173,8 @@ Cycle complete for `{change-name}`.
 
 - Gates first. Never touch a main spec before task completion and verification pass.
 - CRITICAL verification issues block, always, with no override.
+- No receipt, or no subject hash passed → unreviewed. Fail closed and report; an absent
+  hash is not a pass. An `ESCALATED` receipt blocks outright.
 - `MODIFIED` with fewer scenarios blocks. This is the rule that keeps the baseline
   from silently shrinking.
 - `REMOVED` and `RENAMED` without their notes are refused, not inferred.

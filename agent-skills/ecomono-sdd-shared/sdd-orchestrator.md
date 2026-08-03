@@ -303,6 +303,28 @@ Do NOT overwrite.
 The sub-agent does the read-merge-write; you are responsible for telling it there is
 something to merge. First batch → no instruction needed.
 
+### Subject hash forwarding
+
+`ecomono-sdd-archive` has no `Bash` and cannot derive what it is archiving. Compute the
+subject hash yourself and pass it verbatim with the launch:
+
+```bash
+git diff HEAD | sha256sum | cut -c1-12
+```
+
+```
+SUBJECT HASH: {hash}
+Search 'review/{hash}' for the review receipt before running the archive gates.
+```
+
+Omit it and archive's receipt gate fails closed, reporting the change as unreviewed —
+which is the correct outcome, not a bug to work around.
+
+The hash covers the **whole** change, unnarrowed. A judgment run over a subset of the
+diff produces a different hash, so the gate finds no receipt and reports unreviewed: that
+is the gate working, not a mismatch to paper over. Never narrow the paths to make a
+receipt match, and never re-run the hash a different way until one is found.
+
 ## Recovery
 
 Persist DAG state after every phase transition, then recover with
@@ -317,10 +339,18 @@ Recommendations, not enforced checkpoints. You decide when to act.
 
 - **pre-commit** and **pre-push**: consider one cheap advisory lens,
   `ecomono-r2-readability`. One lens, not four — this is an everyday event.
-- **pre-pr**: when the diff touches `**/auth/**`, `**/update/**`, `**/security/**` or
-  `**/payments/**`, or exceeds 400 changed lines, strongly consider the full fan-out —
-  `ecomono-r1-risk`, `ecomono-r4-resilience`, `ecomono-r2-readability`, `ecomono-r3-reliability` in
-  parallel. Four lenses cost ~4x, so they are reserved for hot paths and large diffs.
+- **pre-pr**: pick the tier from risk **evidence** on the diff, never from its size.
+  - No evidence — docs, comments, test-only, generated files → **tier 0**. No lens. Say
+    which evidence you looked for and did not find; a silent skip is unreviewable.
+  - Evidence present → **tier 4**, the full fan-out: `ecomono-r1-risk`,
+    `ecomono-r4-resilience`, `ecomono-r2-readability`, `ecomono-r3-reliability` in parallel.
+    Evidence is the diff touching `**/auth/**`, `**/update/**`, `**/security/**` or
+    `**/payments/**`, a credential or token path, an installer, or a destructive operation.
+  - Anything else → **tier 1**, one lens chosen for what the diff actually is.
+
+  Size is a reviewability budget, not a risk tier — over 400 changed lines is the review
+  workload guard's business. A large mechanical rename does not become dangerous by being
+  large, and a three-line change to a token path does not become safe by being small.
 - **post-design** and **post-apply**: strongly consider `ecomono-judgment`.
   Adversarial verification costs roughly 4 + 3 per finding, which is worth it only at
   the phases where an error compounds.

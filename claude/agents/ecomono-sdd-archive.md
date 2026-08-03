@@ -27,11 +27,15 @@ Execute all steps from the skill directly in this context window:
 
    Second wave, once the delta spec is parsed and the capabilities it touches are known:
    - `mem_search("spec/{capability}")` → `mem_get_observation`, for each capability
-2. Run all three gates, in order, per SKILL.md's Gates section — STOP and return
+2. Run all four gates, in order, per SKILL.md's Gates section — STOP and return
    `blocked` on any failure. Each gate's conditions and exception policy live in
    SKILL.md, not here:
    - Task completion
    - Verification
+   - Review receipt — `mem_search("review/{subject-hash}")` → `mem_get_observation`,
+     using the `SUBJECT HASH` passed with your launch. No hash passed, or no receipt →
+     fail closed and report the change as unreviewed. You have no `Bash`; never guess
+     or reconstruct the hash
    - Edit scope
 3. Merge each delta into `spec/{capability}` per SKILL.md's Merging section — by
    requirement name, respecting the MODIFIED scenario-count guard and the
@@ -59,7 +63,8 @@ Return a structured result with these fields:
 - `executive_summary`: one-sentence confirmation that the change is archived and closed
 - `artifacts`: topic_keys written (e.g. `sdd/{change-name}/archive-report`, `spec/{capability}`, `spec/{capability}/prev`)
 - `next_recommended`: `none` (change is complete) or a new `/ecomono-sdd-new` if follow-up is needed
-- `risks`: any artifacts that could not be merged cleanly, a MODIFIED merge blocked by the
+- `risks`: an unreviewed archive accepted (name the subject hash searched), an `ESCALATED`
+  receipt that blocked the cycle, any artifacts that could not be merged cleanly, a MODIFIED merge blocked by the
   scenario guard, a destructive merge that removes large sections and was stopped for
   confirmation even though the scenario counts passed, a REMOVED/RENAMED merge refused
   for missing its required notes, a stale-checkbox reconciliation accepted (name the
