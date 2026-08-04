@@ -698,8 +698,8 @@ that is portable. Ported as prose instead:
 | Idea | Where it landed |
 |---|---|
 | Candidate freeze | `ecomono-judgment` hashes the diff before launching judges, re-checks at each later checkpoint the skill defines, discards the round if the bytes moved |
-| Receipt | One `mem_save` at `review/{subject-hash}`, `type: decision`. No new storage |
-| Gate validates the receipt | One of archive's four gates, fed the hash by the orchestrator because the archive agent has no `Bash` |
+| Receipt | Written twice from one verdict: a file named by the hash under the git common directory, which is what a shell gate can read, and a `mem_save` at `review/{subject-hash}`, `type: decision`, which is what a later session can search |
+| Gate validates the receipt | Two readers of one receipt: one of archive's four gates, fed the hash by the orchestrator because the archive agent has no `Bash`, and `claude/hooks/review-receipt-gate.sh` on `git push` / `gh pr create`, which recomputes the hash and reads the file copy |
 | Tier by evidence, not size | The pre-pr trigger rule, rewritten. Size went back to being the review workload guard's problem |
 
 Deliberately not taken: the seven audit ledgers, the 36-journey friction bench, shadow
@@ -773,18 +773,17 @@ declined on purpose, and two are missing:
 |---|---|
 | Candidate freeze, bound to a hash of the reviewed bytes | shipped |
 | Reviewer tier from risk evidence, not diff size | shipped |
-| A kill switch that is structurally absent when off | declined — see below, that reasoning has since expired |
-| A refusal may name a command only if running it resolves the block | never ported. It was named as irreducible and then fell out of the plan silently |
-| One receipt validated identically at **every** delivery gate | one gate of five |
+| A kill switch that is structurally absent when off | shipped, once the gate became a hook that can actually block — the `ecomono/review-mode` marker |
+| A refusal may name a command only if running it resolves the block | followed by the push gate's refusal, asserted by its test. Not enforced anywhere as a rule |
+| One receipt validated identically at **every** delivery gate | three of five: archive, `pre-push`, `pre-pr`. `post-apply` and `pre-commit` have no reader |
 
 Upstream validates a receipt at `post-apply`, `pre-commit`, `pre-push`, `pre-pr` and
-`release`. Here only the archive phase checks one. Every reference to a receipt in this repo
-sits in the archive path — grep for `SUBJECT HASH` and `review/{hash}` and nothing else
-appears. So the receipt matters only if someone runs `/ecomono-sdd-archive`; an ordinary
-commit and push consults nothing. The nine commits that built and reviewed this mechanism
-were themselves pushed without the gate ever firing.
+`release`. The port originally checked one of those, in the archive phase, which meant the
+receipt mattered only if someone ran `/ecomono-sdd-archive` — an ordinary commit and push
+consulted nothing, and the nine commits that built and reviewed the mechanism were themselves
+pushed without the gate ever firing.
 
-**The cause is a design decision recorded here as a mistake.** The receipt was made a
+**The cause was a design decision, recorded here as a mistake.** The receipt was made a
 `mem_save` observation, which was the lazy choice and cost no new storage. But the memory
 store is reachable only through MCP tools inside an agent session, and the only surface in
 this repo that can actually block a delivery is `claude/hooks/`, which is shell. A shell hook
@@ -793,28 +792,52 @@ cannot read `review/{hash}`. Upstream's gates work because its receipt is a file
 and then designed away, which put the receipt out of reach of the one thing that could
 enforce it.
 
-The enforcement surface is not hypothetical: `claude/hooks/check-diff-size.sh` is registered
-on `PreToolUse` with a `Bash` matcher, inspects `.tool_input.command` for `git push` and
-`gh pr create`, and fires. It is the working precedent a receipt gate would follow.
+**Both halves now exist.** `ecomono-judgment` writes the verdict twice, and
+`claude/hooks/review-receipt-gate.sh` reads the file copy on `git push` and `gh pr create`.
 
-Closing this means writing the receipt as a file as well — the file being what gates read,
-memory staying the searchable copy — and adding a hook that recomputes the subject hash with
-the same formula and refuses when no matching receipt exists. That is a file-existence check
-and a string comparison, the shape this document has already argued is the only kind that
-survives here.
+The file is `$(git rev-parse --git-common-dir)/ecomono/receipts/{subject-hash}`, first line
+the verdict token alone, so the gate reads one line and refuses on anything but `APPROVED` —
+an `ESCALATED` receipt blocks rather than passes. It sits under the git directory rather than
+in the work tree because the subject hash covers `git diff <merge-base>`: a receipt written
+beside the reviewed code would alter the bytes it certifies as it was written.
+`--git-common-dir` rather than `--git-dir` keeps one receipt visible from every worktree,
+since the reviewed bytes do not change per worktree.
 
-**The kill switch stops being ceremony at that point.** It was declined because, with the gate
-living in prose, an operator could simply not invoke it — one operator who can decline *was*
-the kill switch. A hook that blocks `git push` is a different object: if it misfires there is
-no way around it, which is exactly what upstream's `review mode disable` exists for. The
-repo already has the pattern in `claude/hooks/secret-access-gate.sh`'s
-`ECOMONO_ALLOW_SECRET_PATHS=1` release valve.
+The gate recomputes the hash with the skill's formula, unchanged. The skill resolves the base
+branch by judgment and a hook cannot, so the gate tries every plausible base —
+`@{upstream}`, `origin/HEAD`, `origin/master`, `origin/main`, `master`, `main` — and accepts a
+receipt matching any of them. This is the one place the port deliberately widens rather than
+duplicates: two independent derivations of one hash that can disagree is a defect this repo
+has already shipped once, and a wrong base simply produces a hash no receipt was ever written
+under. The empty-diff hash `e3b0c44298fc` is skipped rather than matched, closing the skeleton
+key the freeze guards already refuse to create.
 
-One convention will have to be broken deliberately. Every hook here fails **open** on a
-malformed payload or a missing `jq` — verified by their own tests. A gate that fails open is
-not a gate, but a review gate that fails closed on a malformed hook payload can leave the
-operator unable to push anything. That tradeoff is a decision, not an oversight, and whichever
-way it goes belongs in an `ecomono:` comment in the hook.
+**The kill switch stopped being ceremony at that point, so it shipped.** It was declined while
+the gate lived in prose, because an operator who could simply not invoke it *was* the kill
+switch. A hook that blocks `git push` is a different object. Review mode is armed per
+repository by an `ecomono/review-mode` marker beside the receipts, and with the marker absent
+the gate exits before it reads anything — structurally off, nothing to bypass, which is the
+property upstream's `review mode disable` has and a config flag does not. That default also
+keeps a globally-installed hook from arming every repository the user owns, which is the
+fastest way to get a gate deleted. `ECOMONO_ALLOW_UNREVIEWED_PUSH=1`, in the environment or as
+a prefix on the command, stands it down for one delivery without disarming the repo.
+
+One convention was broken deliberately. Every other hook here fails **open** on a malformed
+payload or a missing `jq`, and this one does too — extended to a missing `sha256sum` and to an
+unresolvable base branch. A gate that fails open is not a gate, but a review gate that fails
+closed on a malformed hook payload leaves the operator unable to push the fix for the hook.
+The tradeoff costs nothing in real enforcement, since anything that can empty `PATH` can also
+set the release valve; a client-side hook was never protection against intent. It is recorded
+in an `ecomono:` comment in the gate, as this document argued it should be.
+
+What remains unported: `post-apply` and `pre-commit` have no reader. Neither is a delivery to
+anywhere — the bytes are still local and still revisable — which is why they were not built,
+not an oversight to be closed later. `release` does not exist here at all.
+
+The gate is also Claude Code only. `settings.template.json` registers it on `PreToolUse`;
+nothing equivalent runs on opencode, so a push from there is ungated even in an armed
+repository. Not a limitation of opencode — its plugin API has `tool.execute.before` — just
+work not done, and the asymmetry is worth knowing before trusting the marker.
 
 ### Open: onboard is registered as delegated and written as interactive
 

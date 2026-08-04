@@ -2,7 +2,7 @@
 name: ecomono-judgment
 description: "Trigger: judgment day, dual review, adversarial review, juzgar. Two blind judges review in parallel, confirmed issues get fixed, then re-judged."
 metadata:
-  version: "1.11"
+  version: "1.12"
 ---
 
 Two independent reviewers, neither of which saw the work being written, agreeing on a
@@ -124,13 +124,47 @@ converge, which is information about the finding, not about the judge.
    issues only — the judges do not fix what they found.
 7. Re-judge in parallel after fixes, from step 3. Repeat until approved, escalated, or
    stopped. Every round runs its own step 4.
-8. Re-verify the subject hash, then write the receipt.
+8. Re-verify the subject hash, then write both copies of the receipt — the file first, so a
+   failing `mem_save` cannot leave a verdict with no durable record at all.
 9. Before any terminal action, confirm every open judgment reached a terminal state. A
    round left hanging reads exactly like a round that passed.
 
 ## Receipt
 
-Every terminal verdict writes exactly one receipt, `mem_save` with:
+Every terminal verdict writes the same receipt twice: a file a shell gate can read, and a
+memory observation a later session can search. Both are keyed by the subject hash, never by
+a change name — the receipt records that *these bytes* were reviewed, which is what a gate
+needs in order to check the claim instead of trusting it.
+
+**The file.** One command, run after the final hash re-verification:
+
+```bash
+d="$(git rev-parse --git-common-dir)/ecomono/receipts" && mkdir -p "$d" && printf '%s\n' \
+  '{APPROVED|ESCALATED}' 'hash: {subject-hash}' 'target: {target}' 'rounds: {n}' > "$d/{subject-hash}"
+```
+
+The first line is the verdict token alone, so a gate reads one line and refuses on anything
+but `APPROVED` — an `ESCALATED` receipt blocks rather than passes. Every later line is for a
+human opening the file and carries no contract.
+
+It lives under the git directory and never in the work tree. The subject hash covers
+`git diff <merge-base>`, so a receipt written beside the reviewed code would alter the exact
+bytes it certifies and invalidate itself as it was written. `--git-common-dir`, not
+`--git-dir`, so a receipt stays visible from every worktree of the repo: the reviewed bytes
+are the same bytes whichever worktree you push from.
+
+`claude/hooks/review-receipt-gate.sh` reads this file on `git push` and `gh pr create`, and
+refuses the delivery when no receipt matches the bytes being pushed. It is armed per
+repository by an `ecomono/review-mode` marker beside the receipts directory, so writing the
+file here does nothing in a repo that never armed it — and everything in one that did. Get
+the path or the first line wrong and the gate finds nothing and refuses.
+
+`ecomono: two gates read a receipt — that hook, and one of `ecomono-sdd-archive`'s four,
+which reads the memory copy because the archive agent has no `Bash`. Upstream validates at
+five delivery boundaries; `post-apply` and `pre-commit` have no reader here. See
+docs/DESIGN.md, "What the port still owes".`
+
+**The memory copy.** `mem_save` with:
 
 ```
 title:     review/{subject-hash}
@@ -143,20 +177,21 @@ round count, the confirmed / suspect / contradiction counts, fixes applied, and 
 terminal verdict verbatim. `judgment_required` on the save → resolve each candidate with
 its own `suggested_relation` per
 [sdd-phase-common.md](../ecomono-sdd-shared/sdd-phase-common.md) §C.
+`ecomono-sdd-archive` searches `review/{hash}` and treats a missing receipt as unreviewed.
 
-Keyed by the hash, not by a change name: the receipt records that *these bytes* were
-reviewed, which is what a later gate needs to check. `ecomono-sdd-archive` searches
-`review/{hash}` and treats a missing receipt as unreviewed.
+No memory store reachable → write the file anyway, say the memory copy is missing, and
+report the verdict as otherwise conversation-scoped. A verdict that lives only in this
+conversation is gone at the next compaction; do not let it pass for a receipt.
 
-No memory store reachable → say so explicitly and report the verdict as
-conversation-scoped. A verdict that lives only in this conversation is gone at the next
-compaction; do not let it pass for a receipt.
+No hash to freeze → neither copy is written. There is nothing to key them by, and a receipt
+under an invented key is worse than no receipt.
 
 ## Output
 
 `## Judgment Day — {target}` with the subject hash, the round number, the verdict table,
 counts for confirmed / suspect / contradiction, fixes applied, the re-judgment result,
-`Skill Resolution`, the receipt key (`review/{subject-hash}`, or why none was written),
+`Skill Resolution`, both receipt locations — the file path and the memory key
+`review/{subject-hash}`, or why neither was written —
 and a final `JUDGMENT: APPROVED` or `JUDGMENT: ESCALATED`.
 
 Judge and fix prompts, the warning rubric in full, and the verdict tables:

@@ -11,8 +11,11 @@ calls leak the first verdict into the second. Confirmed fixes go to a separate
 `ecomono-judge-fix` call, never to a judge.
 
 Freeze the subject hash before launching, re-check it before synthesizing each round and
-again before the terminal verdict, and write the receipt to `review/{subject-hash}`. No
-receipt means `ecomono-sdd-archive` reports the change as unreviewed.
+again before the terminal verdict, and write both copies of the receipt — the file under the
+repo's git common directory, then the memory key `review/{subject-hash}`. The SKILL.md
+Receipt section carries the exact path and file format; do not improvise either, since a gate
+locating the file by a different path finds nothing and refuses. No receipt means
+`ecomono-sdd-archive` reports the change as unreviewed.
 
 Judge and fix prompts, the warning rubric in full, and the verdict tables live in
 `references/prompts-and-formats.md` beside that SKILL.md. Do not restate the protocol

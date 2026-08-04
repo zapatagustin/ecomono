@@ -19,6 +19,7 @@ run "installer linking primitives" bash lib/test-common.sh
 run "agent model gate"             bash claude/hooks/test-agent-model-gate.sh
 run "heavy skill gate"             bash claude/hooks/test-heavy-skill-gate.sh
 run "secret access gate"           bash claude/hooks/test-secret-access-gate.sh
+run "review receipt gate"          bash claude/hooks/test-review-receipt-gate.sh
 run "persona drift"                bash check-persona-drift.sh
 run "archive gate drift"           bash check-gate-drift.sh
 run "gate-drift fixtures"          bash test-gate-drift.sh

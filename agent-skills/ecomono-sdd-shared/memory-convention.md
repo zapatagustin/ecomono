@@ -85,6 +85,13 @@ A receipt is never re-keyed to fit a change it did not review. Re-key it and the
 still passes while the bytes it names are gone — the one failure this key shape exists to
 make impossible.
 
+This key is the *searchable* copy. `ecomono-judgment` writes the same verdict a second time
+as a file under the repo's git common directory, named by the same hash, because the memory
+store is reachable only from inside an agent session and a delivery gate in `claude/hooks/`
+is shell. Neither copy is authoritative over the other — they are written from the same
+verdict in the same step. The exact path and format live in that skill's Receipt section and
+are not restated here.
+
 ## Reading
 
 Two steps, always. `mem_search` returns a truncated preview; the preview is not the

@@ -88,12 +88,31 @@ It is a deliberate trade for a single-user machine. Since `settings.json` is see
 never overwritten, if you want prompts back everywhere, change `defaultMode` in
 `~/.claude/settings.json` (or in `claude/settings.template.json` before installing).
 
+### Review mode
+
+`claude/hooks/review-receipt-gate.sh` refuses `git push` and `gh pr create` unless the exact
+bytes being delivered have a review receipt — written by `/ecomono-judgment` when it reaches
+`APPROVED`, and named by the same subject hash the review froze. It is **off in every
+repository** until you arm that repository:
+
+```bash
+d="$(git rev-parse --git-common-dir)/ecomono" && mkdir -p "$d" && touch "$d/review-mode"
+```
+
+`rm` that file to turn it off again; with the marker gone the hook exits before it checks
+anything, so there is nothing to bypass. For a single delivery, `ECOMONO_ALLOW_UNREVIEWED_PUSH=1`
+in the environment or as a prefix on the command stands the gate down without disarming it.
+
+Being a client-side hook, it is bypassable by anyone who wants to — it is a gate against
+forgetting, not against intent. Real enforcement belongs in CI or branch protection.
+
 ### Env overrides
 
 | Var | Effect |
 |-----|--------|
 | `ECOMONO_SKIP_PLUGINS=1` | skip plugin/MCP registration |
 | `ECOMONO_ALLOW_SECRET_PATHS=1` | stand down `secret-access-gate.sh`, for headless runs that must touch a credential path |
+| `ECOMONO_ALLOW_UNREVIEWED_PUSH=1` | stand down `review-receipt-gate.sh` for one delivery, in a repo where review mode is armed |
 | `ECOMONO_TARGET=<id>` | override detected `OS_ID` (e.g. `nixos`, `arch`, `debian`, `ubuntu`) for unrecognized distros |
 
 ### Prerequisites
@@ -109,7 +128,7 @@ Make sure `~/.local/bin` is on your `PATH`.
 ### Checks
 
 `bash check.sh` runs everything: the memory store and its committed MCP bundle, the
-installer's linking primitives, both Claude Code hook gates, the persona-drift and
+installer's linking primitives, the Claude Code hook gates, the persona-drift and
 skill-registry selftests, the compress skill's secret guard, and shell syntax. Nothing runs it for
 you — there is no CI and no git hook in this repo, so it is worth running before a
 commit that touches `opencode/plugins/storage/`, `install.sh`, or `lib/common.sh`.
