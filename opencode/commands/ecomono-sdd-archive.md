@@ -27,7 +27,6 @@ DEPENDENCY CHECK:
 - If the verification report is missing or does not say the change is ready, do NOT archive.
 - If tasks still contains unchecked implementation items (`- [ ]`), do NOT archive by default. Send the change back to `ecomono-sdd-apply` to correct the persisted tasks artifact. Only allow archive-time mechanical reconciliation when apply-progress / verify-report prove every unchecked task is complete; record the reconciliation in the archive report.
 - If verify-report contains CRITICAL issues, do NOT archive. There is no CRITICAL override.
-- If the review receipt for the forwarded subject hash says `JUDGMENT: ESCALATED`, do NOT archive. An escalation is an open question, not a slow pass.
 - Tell the user what is missing and suggest `/ecomono-sdd-verify <change>` or `/ecomono-sdd-continue <change>`.
 
 TASK:

@@ -14,6 +14,10 @@ metadata:
 Artifacts default to English — see the Language section of
 [sdd-orchestrator.md](../ecomono-sdd-shared/sdd-orchestrator.md).
 
+Skills: section A of
+[sdd-phase-common.md](../ecomono-sdd-shared/sdd-phase-common.md). Retrieval: section
+B. Persistence: section C. Return envelope: section D.
+
 ## Purpose
 
 Take the user through one complete SDD cycle — explore to archive — on **their real
@@ -72,6 +76,9 @@ Then name what they can do next — `/ecomono-sdd-new` for their own change,
 Be honest about the ceiling too. SDD is worth this overhead for substantial changes and
 is pure friction for a one-line fix; someone who learns it as a ritual for everything
 will abandon it. Say which of their real upcoming changes would suit it.
+
+Close your return with `key_learnings`: durable, non-obvious facts about the user's
+codebase or about SDD itself that outlive this session, or `None`, per §D.
 
 ## Rules
 

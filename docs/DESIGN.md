@@ -717,3 +717,76 @@ The upstream gap worth knowing: gentle-ai's own `sdd-archive` prose still hard-r
 is the failure this document keeps returning to. The gate ported here is the code's
 behaviour, not the prose's.
 
+### Why there is no check for the Key Learnings convention
+
+Every delegated agent is supposed to close with a `## Key Learnings` section. The 10
+`ecomono-sdd-*` phase agents do not duplicate the wording: each one's `claude/agents/*.md`
+says "per the same §D" and its `opencode.json` prompt just points at that phase's
+`SKILL.md`, which in turn references `sdd-phase-common.md` §D — one shared source. The
+convention *is* duplicated, verbatim, in the seven agents outside that group —
+`ecomono-judge-a`, `ecomono-judge-b`, `ecomono-judge-fix`, and `ecomono-r1`–`r4` — each of
+which carries the same paragraph both in `claude/agents/*.md` and again in its
+`opencode.json` prompt string, with nothing keeping the two copies equal. `ecomono-judge-fix`
+shipped without it and nobody noticed, which is the usual argument for a drift check. One
+was written, and it was deleted four review rounds later.
+
+It kept passing while the instruction was absent. Each round closed one bypass and the next
+round found another shape:
+
+| Round | How it passed with no instruction |
+|---|---|
+| 1 | A thin opencode prompt was exempted by matching the wording "read your skill file at", without ever opening the file it named. `ecomono-sdd-onboard` was a live case — its SKILL.md had no instruction and no `sdd-phase-common.md` reference |
+| 2 | The exemption resolved the path, but the match was `key[ _]learnings` anywhere in the text: a passing prose mention counted |
+| 3 | Fences were stripped, so the match moved to a `~~~` fence, or an unterminated ``` fence the stripper's paired regex never saw |
+| 4 | A sentence that *denies* the convention — "this phase does not emit `key_learnings`" — satisfies the anchor. So does a table cell documenting another agent, and an HTML comment |
+
+The last two have no syntactic fix. "Does this file carry a live closing instruction" is a
+question about what a sentence means, and every hardening pass answered a different,
+narrower question that a new shape then walked around. The check also failed in the other
+direction: an unterminated fence early in a file pairs with the next closing fence and
+swallows a genuine instruction, reporting drift on a compliant agent.
+
+So the convention is documented in `sdd-phase-common.md` §D and enforced by nothing. That is
+a worse guarantee than a working check and a better one than a check that reports `ok` while
+the thing it guards is missing — which is the failure mode this document names over and over,
+and which the check reproduced four times in a row.
+
+The distinction worth keeping: `check-persona-drift.sh` diffs two persona blocks as sets of
+lines and fails on any difference not listed as deliberate — purely syntactic, no judgment
+about what either block means. Most of `check-gate-drift.sh` has that same shape: it counts
+`###` gate titles in the skill file and confirms each one is also named in the agent's gate
+list, and that the spelled-out count agrees across three files. But one of its four checks
+does not — the check that the two `/ecomono-sdd-archive` command files forward the subject
+hash is a bare `grep -qF 'SUBJECT HASH'`, presence-only, the same shape that failed for
+key-learnings four times. It has not yet drifted into a false pass, but nothing about the
+check rules that out; a command file could mention `SUBJECT HASH` in an unrelated sentence
+and still pass. Before writing the next check, decide which shape it is — a two-artifact
+comparison, or a claim about what a sentence means — and do not assume presence checks are
+safe just because this one has not failed yet.
+
+### Open: onboard is registered as delegated and written as interactive
+
+`agent-skills/ecomono-sdd-onboard/SKILL.md` says it "runs **inline**, not delegated… a
+sub-agent cannot have it", and carries `metadata.delegate_only: false` — the only SDD phase
+skill that does. Five places disagree: `claude/agents/ecomono-sdd-onboard.md` exists with
+`model: haiku`, both command files delegate to it, and the orchestrator's model table assigns
+it a tier as a delegated phase. Its own procedure then asks the user to pick among options and
+to approve each phase, which a delegated call cannot do — on opencode only the `orchestrator`
+holds `question: true`, and the Claude agent's tool list has no ask mechanism either.
+
+Nothing reads `delegate_only`; it is self-descriptive metadata. So this is a truth problem
+rather than a runtime one, which is how it survived unnoticed.
+
+An attempt to close it during an unrelated review made it worse and was reverted. Flipping the
+flag to match the five places that delegate it left the interactive steps asserting something
+the tool grants forbid. Adding a `resume_at` contract, so the orchestrator could hold the pauses
+between per-phase relaunches, then failed on its own precondition: every persistence path needs
+a `{change-name}`, which in the normal flow arrives as the literal `/ecomono-sdd-new <name>`
+argument, and no phase here has ever had to derive one from a runtime conversation. Two blind
+judges traced that independently; the receipt at `review/07569a6f9102` records the chain.
+
+Closing it properly needs three things at once: minting a change-name at the pick step, one
+persistence key rather than the two that attempt produced, and a read-back step so a compaction
+mid-cycle does not silently restart. That is its own cycle, not a fix to bolt onto a review of
+something else — the more useful lesson here than any of the individual defects.
+

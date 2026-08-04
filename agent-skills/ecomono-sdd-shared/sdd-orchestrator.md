@@ -177,10 +177,9 @@ Check, against the return envelope:
   requirements FAIL.
 - **Routing** — `next_recommended` follows the dependency graph, and no CRITICAL risk
   is left unaddressed.
-- **Learnings** — `key_learnings` is present. Phase agents persist their own; for a
-  delegated reviewer with no write access to memory, `mem_save` the durable ones
-  yourself. Its context is gone once it returns, and that section is all that is left
-  of it.
+- **Learnings** — `key_learnings` is present. `mem_save` the durable ones yourself for
+  every delegated agent, regardless of its write access. Its context is gone once it
+  returns, and that section is all that is left of it.
 
 How to run it, by cost:
 
@@ -365,8 +364,12 @@ Recommendations, not enforced checkpoints. You decide when to act.
 
   One exception, and it is the workload guard's doing rather than a risk signal: a diff
   that shipped on a recorded `size:exception` was never split, so no reviewer ever saw it
-  in a reviewable slice. That forces **tier 4** regardless of evidence. The budget existed
-  to protect the reviewer; waiving it buys the lenses back.
+  in a reviewable slice. That forces **tier 4** regardless of evidence. Check the record
+  in `sdd/{change-name}/apply-progress` — the only place `size:exception` is persisted. No
+  active SDD session to check against → treat the exception as unknown, never as satisfied,
+  and force **tier 4**: this guard fails closed on missing evidence like every other guard
+  in this file, not open. The budget existed to protect the reviewer; waiving it buys the
+  lenses back.
 - **post-design** and **post-apply**: strongly consider `ecomono-judgment`.
   Adversarial verification costs roughly 4 + 3 per finding, which is worth it only at
   the phases where an error compounds.

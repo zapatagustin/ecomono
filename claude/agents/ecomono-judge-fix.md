@@ -19,3 +19,4 @@ provided in the delegate prompt exactly.
 - **Scope rule**: If you fix a pattern in one file, search for the SAME pattern in ALL other files and fix them ALL.
 - Return a summary: ## Fixes Applied - [file:line] — {what was fixed}
 - At the end, include: **Skill Resolution**: {paths-injected|fallback-registry|fallback-path|none} — {details}
+- Close with `## Key Learnings`: durable, non-obvious facts about this codebase that outlive this fix — a convention, a trap, a boundary. One line each, or `None`. This section is the only part of what you learned that survives you. Not a recap of the fixes applied.
