@@ -785,8 +785,33 @@ a `{change-name}`, which in the normal flow arrives as the literal `/ecomono-sdd
 argument, and no phase here has ever had to derive one from a runtime conversation. Two blind
 judges traced that independently; the receipt at `review/07569a6f9102` records the chain.
 
-Closing it properly needs three things at once: minting a change-name at the pick step, one
-persistence key rather than the two that attempt produced, and a read-back step so a compaction
-mid-cycle does not silently restart. That is its own cycle, not a fix to bolt onto a review of
-something else — the more useful lesson here than any of the individual defects.
+Closing it properly needs three things at once. Each is a decision, not just an edit, which is
+why this is its own cycle rather than a fix to bolt onto a review of something else — the more
+useful lesson here than any of the individual defects.
+
+**1. Where a `{change-name}` comes from.** Every artifact key is `sdd/{change-name}/{type}`, and
+in the normal flow that slug is the literal `/ecomono-sdd-new <name>` argument. Onboard chooses
+its change mid-conversation, so no argument exists. No phase in this repo has ever had to derive
+one, so there is no pattern to copy: it has to be minted, either by the pick step from the option
+the user chose, or by the orchestrator when it collects that answer. Whichever mints it also has
+to forward it on *every* later relaunch, not only the first — a phase name alone does not tell a
+resumed agent which change it is continuing. `ecomono-sdd-explore`'s `sdd/explore/{topic-slug}`
+standalone fallback does not apply, because onboard produces real artifacts.
+
+**2. Which single persistence key.** The reverted attempt produced two, and neither read the
+other: `ecomono-sdd-onboard/{project}`, project-scoped and matching `ecomono-sdd-init/{project}`,
+and `sdd/{change-name}/state`, the canonical DAG-state key `memory-convention.md` defines. The two
+judges disagreed on which was correct — one read the project-scoped key as a parallel invention,
+the other as an established shorthand not meant to carry resume state. Note the constraint that
+settles it either way: a project-scoped key cannot hold per-change state for more than one
+walkthrough, and the canonical key needs decision 1 first.
+
+**3. A read-back step.** Nothing searched the persisted state, so a compaction mid-cycle would
+silently restart at the pick step with the written data orphaned. `claude/commands/ecomono-sdd-apply.md`'s
+"CHECK PREVIOUS PROGRESS" step is the shape to copy; onboard has no equivalent.
+
+One trap, because it caught this twice: `agent-skills/ecomono-sdd-onboard/SKILL.md` and
+`claude/agents/ecomono-sdd-onboard.md` are loaded independently and nothing enforces they agree.
+The second is where "execute all steps in this context window" lives. Editing either alone
+produces two files actively contradicting each other about the same agent.
 

@@ -11,6 +11,15 @@ metadata:
 > Runs **inline**, not delegated. It is an interactive walkthrough: the value is the
 > conversation, and a sub-agent cannot have it.
 
+`ecomono: that banner is contradicted by five places that do delegate this skill — a
+claude/agents entry, both command files, and the orchestrator's model table. Nothing reads
+delegate_only, so the disagreement costs nothing at runtime and misleads every reader. The
+ceiling is that the interactive steps below (picking among options, approving each phase)
+cannot happen inside a delegated call: no delegated agent here holds a question tool.
+Upgrade path and the three things it needs together: docs/DESIGN.md, "Open: onboard is
+registered as delegated and written as interactive". Do not flip the flag on its own — that
+was tried and it made the file assert something the tool grants forbid.`
+
 Artifacts default to English — see the Language section of
 [sdd-orchestrator.md](../ecomono-sdd-shared/sdd-orchestrator.md).
 
