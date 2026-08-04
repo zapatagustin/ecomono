@@ -775,7 +775,7 @@ declined on purpose, and two are missing:
 | Reviewer tier from risk evidence, not diff size | shipped |
 | A kill switch that is structurally absent when off | shipped, once the gate became a hook that can actually block — the `ecomono/review-mode` marker |
 | A refusal may name a command only if running it resolves the block | followed by the push gate's refusal, asserted by its test. Not enforced anywhere as a rule |
-| One receipt validated identically at **every** delivery gate | three of five: archive, `pre-push`, `pre-pr`. `post-apply` and `pre-commit` have no reader |
+| One receipt validated identically at **every** delivery gate | two of upstream's five — `pre-push` and `pre-pr` — plus archive, which is this repo's own boundary and not one of the five |
 
 Upstream validates a receipt at `post-apply`, `pre-commit`, `pre-push`, `pre-pr` and
 `release`. The port originally checked one of those, in the archive phase, which meant the
@@ -812,15 +812,131 @@ has already shipped once, and a wrong base simply produces a hash no receipt was
 under. The empty-diff hash `e3b0c44298fc` is skipped rather than matched, closing the skeleton
 key the freeze guards already refuse to create.
 
+Widening is not symmetric, which is why `git config ecomono.reviewBase` exists. A base that
+resolves but is *wrong* — a stale local `master` in a repo whose real base is `develop` —
+produces a hash nobody signed and denies a delivery holding a perfectly good receipt, and
+re-running the review does not help, because the skill keeps writing the receipt under the
+base it correctly resolved. Configured, that branch is used alone. It was found by a judge
+who reproduced the lockout rather than reasoning about it.
+
+Two states that look alike are kept apart. No base resolves at all — a repo on `develop`
+before its first `push -u`, which is ordinary — means the gate cannot tell what is being
+delivered, so it asks and names the config that fixes it. A base that resolves with an empty
+diff means there is nothing under review, so it allows. Collapsing those two into one silent
+allow would make "the gate could not run" indistinguishable from "the review passed", which
+is the failure this whole mechanism exists to prevent.
+
+The hook is registered with a bare `Bash` matcher and no `if:` clause, unlike
+`check-diff-size.sh`. Measured against a live `claude -p --settings`: an `if:` clause splits
+the command on shell control operators and matches each simple command's own program, so
+`bash -c "git push"` never reaches the hook and neither does `git  push` with two spaces. A
+filter that silently drops the deliveries the gate exists for is worse than running on every
+`Bash` call, which `secret-access-gate.sh` already does. The same probe confirmed that
+`permissionDecision: "deny"` is honored under `bypassPermissions`, which only `"ask"` had been
+measured for before.
+
+The release valve took three rounds to get right, and each correction came from a judge
+reproducing the failure rather than arguing it. As an unanchored substring it was defeated by
+a legal branch name: `git push origin HEAD:refs/heads/x-ECOMONO_ALLOW_UNREVIEWED_PUSH=1`
+disarmed the gate with no malice and no contrivance. Anchored to a leading assignment but
+matched on the raw command, it then refused the ` cmd` habit that keeps a line out of shell
+history — the override the refusal text itself recommends. And anchored with a trailing
+wildcard, `ECOMONO_ALLOW_UNREVIEWED_PUSH=1 echo hi && git push` let an arbitrary unreviewed
+push through: the assignment authorised a command it was not attached to, one that in real
+shell semantics never sees the variable at all. Closing that with a chaining check left one
+more: `ECOMONO_ALLOW_UNREVIEWED_PUSH=1 $(git push somewhere) git push` contains none of `&`,
+`;`, `|` or a newline, and the shell runs what is inside the substitution while building the
+argv. Closing *that* broke `gh pr create --body "$(cat <<'EOF' … EOF)"` — the idiom this
+repo's own instructions call canonical — because the scan cannot tell a chain operator from
+the same byte inside a quoted argument.
+
+**So the single-command enforcement was deleted rather than fixed again.** Four rounds found
+four shapes of one three-line check, each after the previous fix, and the fourth was refusing
+ordinary commands while still admitting shapes nobody had listed. "Is this one command" is a
+question about shell grammar; a substring scan cannot answer it, and every partial answer cost
+either a delivery or a false refusal.
+
+The override now authorises the whole command line — every delivery chained into the same tool
+call, not one. The first version of this paragraph justified that with "whoever types the
+prefix already typed the rest of the line", and the next round's judges both refused it: the
+Bash tool call is composed by the agent, and no hook can tell an operator's line from one the
+agent extended. The justification was wrong; the decision survives it. This gates forgetting,
+not intent, and an agent set on bypassing writes the bare prefix — one token shorter than any
+chain it could hide behind. A narrower override buys the appearance of safety at the price of
+refusing ordinary commands. What survives is the check that answers a question about text: does
+the line begin with the assignment. That stops a ref name carrying the string from disarming
+the gate, which is a real accident rather than a hypothetical one.
+
+The lesson is the same one this document keeps recording, in a new place: a check whose
+question is about meaning rather than about bytes will keep passing for the wrong reason. The
+key-learnings check was deleted for it after four rounds. This one was cut down to the part
+that is syntactic, which is the version that survives.
+
+Delivery detection went the other way — it got more precise, because there the question really
+is syntactic. `git push` as a contiguous substring missed `git -C path push`, `git -c k=v push`,
+`git --no-pager push` and `gh -R owner/repo pr create`: ordinary invocations, silently allowed,
+no deny and no `ask`. The first two are the shape this hook's own test fixtures use to drive
+git, and four rounds of judges read past it. The match is now token-level — find `git` or `gh`,
+skip global flags, compare the subcommand — after normalising whitespace and dropping quote
+characters, since `bash -c "git push"` otherwise tokenises as `"git`. `git` aliases are
+resolved too, because `alias.p = push` is a habit rather than an evasion: chains are followed
+(`aa` → `bb` → `push` really does push) and the value is whitespace-normalised, since a tab
+after `push` slipped past a space-padded match.
+
+Tokenising cost one regression on the way, and it is the most instructive thing in this
+section. Trading the substring match for token equality closed `git -C path push` and opened
+`git push;` — a semicolon glued to the verb keeps `push;` inside the token, and `push;` does not
+equal `push`. So did `git push|tee log`, `git push&` and `(cd r && git push)`. The shape it
+broke is more common than the shape it fixed, it was a plainly written delivery rather than
+anything the ceiling covers, and two full rounds of judges reviewed that code against a
+criterion that named this exact class before a third found it. The fix is to give shell control
+characters their own token before splitting, which is what the shell does. The lesson is that
+replacing a blunt check with a precise one is a change of failure modes, not an improvement,
+until the new modes have been looked for as hard as the old ones were.
+
+The alias lookup sits **after** the marker check, not in the token scan. In the scan it fired on
+every `git status`, `git log` and `git add` in every repository the hook is installed in, armed
+or not — one subprocess on the most common commands in a session, to answer a question only an
+armed repository asks. Both judges measured it. The cost claim in the hook now states each tier
+exactly, and a test with a `git` shim counts the invocations rather than trusting the sentence.
+
+**And there the precision stops, deliberately.** Each round found one more shape: substring,
+then flags, then quotes, then aliases, then `git${IFS}push`. `$(echo git push)`, a
+backslash-escaped `gi\t push`, a parameter expansion that only becomes a separator at run time,
+a `gh` alias, a wrapper script — all still pass. What the last three have in common is the whole
+answer: the hook reads `.tool_input.command` **before** the shell expands it, so anything that
+becomes a delivery during expansion is invisible by construction. That is a boundary, not a
+backlog. A text scanner reasoning about what a string will *do* is the same shape as the
+key-learnings check this document buried: a question about meaning wearing the clothes of a
+syntactic test. The ceiling is written into the hook, naming what is not caught, so the next
+reader inherits the boundary rather than the illusion. What changes it is the resolved argv from
+a PostToolUse audit, or CI. A sixth pattern does not.
+
+The normalisation carries one thing that is easy to get backwards, and both judges caught the
+comment claiming otherwise: `read -ra` already collapses runs of spaces and tabs, so `tr -s` is
+not what makes `git  push` work. What it buys is the whitespace bash does not split on — a
+carriage return between the two words leaves one token, and one token matches nothing. The
+comment now says that, and the CR case is pinned in the test rather than asserted in prose.
+
+One more silent allow came from the same family. `git diff | sha256sum` writes nothing when
+the diff fails, and hashing nothing produces exactly the empty-diff constant, which the loop
+skips — so a partial clone that cannot serve a blob landed in "nothing under review" and the
+push went through. The diff now goes to a file so its exit status is readable, and a failure
+asks rather than allowing. Three states that look alike, kept apart: no base resolves, the diff
+cannot be computed, and there is genuinely nothing to review.
+
 **The kill switch stopped being ceremony at that point, so it shipped.** It was declined while
 the gate lived in prose, because an operator who could simply not invoke it *was* the kill
 switch. A hook that blocks `git push` is a different object. Review mode is armed per
 repository by an `ecomono/review-mode` marker beside the receipts, and with the marker absent
-the gate exits before it reads anything — structurally off, nothing to bypass, which is the
-property upstream's `review mode disable` has and a config flag does not. That default also
-keeps a globally-installed hook from arming every repository the user owns, which is the
-fastest way to get a gate deleted. `ECOMONO_ALLOW_UNREVIEWED_PUSH=1`, in the environment or as
-a prefix on the command, stands it down for one delivery without disarming the repo.
+the gate exits before it computes a hash or reads a receipt — structurally off, nothing to
+bypass, which is the property upstream's `review mode disable` has and a config flag does not.
+It is not literally inert: a push command in an unarmed repository still pays `jq` and two
+`git rev-parse` calls before reaching the marker check, which is the honest version of the
+claim. That default also keeps a globally-installed hook from arming every repository the user
+owns, which is the fastest way to get a gate deleted. `ECOMONO_ALLOW_UNREVIEWED_PUSH=1`, in
+the environment or as a leading prefix on the command, stands it down for one delivery without
+disarming the repo.
 
 One convention was broken deliberately. Every other hook here fails **open** on a malformed
 payload or a missing `jq`, and this one does too — extended to a missing `sha256sum` and to an

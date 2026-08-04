@@ -69,18 +69,6 @@
           {
             "type": "command",
             "command": "$HOME/.claude/hooks/review-receipt-gate.sh",
-            "if": "Bash(git push*)",
-            "statusMessage": "Checking for a review receipt (RDD gate)"
-          }
-        ]
-      },
-      {
-        "matcher": "Bash",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "$HOME/.claude/hooks/review-receipt-gate.sh",
-            "if": "Bash(gh pr create*)",
             "statusMessage": "Checking for a review receipt (RDD gate)"
           }
         ]

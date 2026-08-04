@@ -147,6 +147,11 @@ The first line is the verdict token alone, so a gate reads one line and refuses 
 but `APPROVED` — an `ESCALATED` receipt blocks rather than passes. Every later line is for a
 human opening the file and carries no contract.
 
+The token is **bare**. `JUDGMENT: APPROVED` is the terminal state this skill reports in
+conversation; the receipt's first line is `APPROVED` with nothing before it. The gate
+compares for equality, so the prefixed spelling produces a receipt no delivery can ever
+match and no diagnostic saying why.
+
 It lives under the git directory and never in the work tree. The subject hash covers
 `git diff <merge-base>`, so a receipt written beside the reviewed code would alter the exact
 bytes it certifies and invalidate itself as it was written. `--git-common-dir`, not

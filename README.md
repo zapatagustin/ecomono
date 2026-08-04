@@ -99,9 +99,28 @@ repository** until you arm that repository:
 d="$(git rev-parse --git-common-dir)/ecomono" && mkdir -p "$d" && touch "$d/review-mode"
 ```
 
-`rm` that file to turn it off again; with the marker gone the hook exits before it checks
-anything, so there is nothing to bypass. For a single delivery, `ECOMONO_ALLOW_UNREVIEWED_PUSH=1`
-in the environment or as a prefix on the command stands the gate down without disarming it.
+`rm` that file to turn it off again; with the marker gone the hook exits before it computes a
+hash or reads a receipt, so there is nothing to bypass. For a single delivery,
+`ECOMONO_ALLOW_UNREVIEWED_PUSH=1` stands the gate down without disarming it — in the
+environment, or as a **leading** prefix on the command. Only that position counts: as a
+substring it would be disarmed by any branch name carrying the text. Past the leading
+assignment it authorises **the whole line, every delivery chained into it included** —
+confining it to one command needs a shell parser, and every attempt with string matching
+refused ordinary quoted arguments while still missing shapes. The match is textual, so write it
+exactly as shown: a quoted `='1'`, or another assignment ahead of it, is not recognised.
+
+What the gate catches is a delivery written plainly. `git push`, `git -C path push`, an aliased
+`git p` (chains included), `gh pr create` — those are refused without a receipt.
+`$(echo git push)`, a backslash-escaped `gi\t push`, `git${IFS}push`, a `gh` alias, or any
+wrapper script that shells out to git are not: the hook reads the command before the shell
+expands it, so anything that only becomes a delivery during expansion is invisible to it. Treat
+it as a gate against forgetting. Enforcement against intent belongs in CI or branch protection.
+
+If the branch this change is measured against is not one of `@{upstream}`, `origin/HEAD`,
+`origin/master`, `origin/main`, `master` or `main`, name it with
+`git config ecomono.reviewBase <branch>`. Without it, a stale local `master` resolves ahead of
+the real base and denies a push whose review already passed. Armed with no base resolvable at
+all, the gate asks rather than allowing silently.
 
 Being a client-side hook, it is bypassable by anyone who wants to — it is a gate against
 forgetting, not against intent. Real enforcement belongs in CI or branch protection.
