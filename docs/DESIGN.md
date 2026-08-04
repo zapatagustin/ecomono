@@ -764,6 +764,58 @@ and still pass. Before writing the next check, decide which shape it is — a tw
 comparison, or a claim about what a sentence means — and do not assume presence checks are
 safe just because this one has not failed yet.
 
+### What the port still owes
+
+Measured against the five ideas named above as RDD's irreducible core, two shipped, one was
+declined on purpose, and two are missing:
+
+| Idea | State |
+|---|---|
+| Candidate freeze, bound to a hash of the reviewed bytes | shipped |
+| Reviewer tier from risk evidence, not diff size | shipped |
+| A kill switch that is structurally absent when off | declined — see below, that reasoning has since expired |
+| A refusal may name a command only if running it resolves the block | never ported. It was named as irreducible and then fell out of the plan silently |
+| One receipt validated identically at **every** delivery gate | one gate of five |
+
+Upstream validates a receipt at `post-apply`, `pre-commit`, `pre-push`, `pre-pr` and
+`release`. Here only the archive phase checks one. Every reference to a receipt in this repo
+sits in the archive path — grep for `SUBJECT HASH` and `review/{hash}` and nothing else
+appears. So the receipt matters only if someone runs `/ecomono-sdd-archive`; an ordinary
+commit and push consults nothing. The nine commits that built and reviewed this mechanism
+were themselves pushed without the gate ever firing.
+
+**The cause is a design decision recorded here as a mistake.** The receipt was made a
+`mem_save` observation, which was the lazy choice and cost no new storage. But the memory
+store is reachable only through MCP tools inside an agent session, and the only surface in
+this repo that can actually block a delivery is `claude/hooks/`, which is shell. A shell hook
+cannot read `review/{hash}`. Upstream's gates work because its receipt is a file under
+`.git/gentle-ai/review-transactions/v3/`. That difference was noted while planning the port
+and then designed away, which put the receipt out of reach of the one thing that could
+enforce it.
+
+The enforcement surface is not hypothetical: `claude/hooks/check-diff-size.sh` is registered
+on `PreToolUse` with a `Bash` matcher, inspects `.tool_input.command` for `git push` and
+`gh pr create`, and fires. It is the working precedent a receipt gate would follow.
+
+Closing this means writing the receipt as a file as well — the file being what gates read,
+memory staying the searchable copy — and adding a hook that recomputes the subject hash with
+the same formula and refuses when no matching receipt exists. That is a file-existence check
+and a string comparison, the shape this document has already argued is the only kind that
+survives here.
+
+**The kill switch stops being ceremony at that point.** It was declined because, with the gate
+living in prose, an operator could simply not invoke it — one operator who can decline *was*
+the kill switch. A hook that blocks `git push` is a different object: if it misfires there is
+no way around it, which is exactly what upstream's `review mode disable` exists for. The
+repo already has the pattern in `claude/hooks/secret-access-gate.sh`'s
+`ECOMONO_ALLOW_SECRET_PATHS=1` release valve.
+
+One convention will have to be broken deliberately. Every hook here fails **open** on a
+malformed payload or a missing `jq` — verified by their own tests. A gate that fails open is
+not a gate, but a review gate that fails closed on a malformed hook payload can leave the
+operator unable to push anything. That tradeoff is a decision, not an oversight, and whichever
+way it goes belongs in an `ecomono:` comment in the hook.
+
 ### Open: onboard is registered as delegated and written as interactive
 
 `agent-skills/ecomono-sdd-onboard/SKILL.md` says it "runs **inline**, not delegated… a
