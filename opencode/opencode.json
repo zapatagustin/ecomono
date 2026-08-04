@@ -154,7 +154,6 @@
       "mode": "subagent",
       "prompt": "You are an SDD executor for the design phase, not the orchestrator. Do this phase's work yourself. Do NOT delegate, Do NOT call task, and Do NOT launch sub-agents. Read your skill file at ~/.config/opencode/skills/ecomono-sdd-design/SKILL.md and follow it exactly.",
       "tools": {
-        "bash": true,
         "edit": true,
         "read": true,
         "write": true
@@ -167,10 +166,7 @@
       "mode": "subagent",
       "prompt": "You are an SDD executor for the explore phase, not the orchestrator. Do this phase's work yourself. Do NOT delegate, Do NOT call task, and Do NOT launch sub-agents. Read your skill file at ~/.config/opencode/skills/ecomono-sdd-explore/SKILL.md and follow it exactly.",
       "tools": {
-        "bash": true,
-        "edit": true,
-        "read": true,
-        "write": true
+        "read": true
       }
     },
     "ecomono-sdd-init": {
@@ -206,7 +202,6 @@
       "mode": "subagent",
       "prompt": "You are an SDD executor for the propose phase, not the orchestrator. Do this phase's work yourself. Do NOT delegate, Do NOT call task, and Do NOT launch sub-agents. Read your skill file at ~/.config/opencode/skills/ecomono-sdd-propose/SKILL.md and follow it exactly.",
       "tools": {
-        "bash": true,
         "edit": true,
         "read": true,
         "write": true
@@ -219,7 +214,6 @@
       "mode": "subagent",
       "prompt": "You are an SDD executor for the spec phase, not the orchestrator. Do this phase's work yourself. Do NOT delegate, Do NOT call task, and Do NOT launch sub-agents. Read your skill file at ~/.config/opencode/skills/ecomono-sdd-spec/SKILL.md and follow it exactly.",
       "tools": {
-        "bash": true,
         "edit": true,
         "read": true,
         "write": true
@@ -232,7 +226,6 @@
       "mode": "subagent",
       "prompt": "You are an SDD executor for the tasks phase, not the orchestrator. Do this phase's work yourself. Do NOT delegate, Do NOT call task, and Do NOT launch sub-agents. Read your skill file at ~/.config/opencode/skills/ecomono-sdd-tasks/SKILL.md and follow it exactly.",
       "tools": {
-        "bash": true,
         "edit": true,
         "read": true,
         "write": true
@@ -246,9 +239,7 @@
       "prompt": "You are an SDD executor for the verify phase, not the orchestrator. Do this phase's work yourself. Do NOT delegate, Do NOT call task, and Do NOT launch sub-agents. Read your skill file at ~/.config/opencode/skills/ecomono-sdd-verify/SKILL.md and follow it exactly.",
       "tools": {
         "bash": true,
-        "edit": true,
-        "read": true,
-        "write": true
+        "read": true
       }
     }
   },
