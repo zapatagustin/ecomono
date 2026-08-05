@@ -65,19 +65,43 @@
             skills = ./agent-skills;
           };
 
-          # Plugin sources kept as individual entries so opencode's plugins/
-          # dir stays writable for the node_modules it installs at runtime.
+          # Plugin sources are entered one child at a time, never as a single
+          # `opencode/plugins` entry, so the directory itself stays writable for
+          # the node_modules opencode installs into it at runtime. install.sh
+          # does the same thing with link_children, for the same reason.
+          #
+          # The children are READ from the tree rather than listed, because a
+          # hand-written list and install.sh's glob are two answers to one
+          # question: a plugin added to opencode/plugins/ and forgotten here
+          # ships on Arch and Debian and silently does not exist on NixOS. That
+          # is a whole class of drift, and enumerating deletes it instead of
+          # needing a check to catch it.
+          #
+          # Untracked cruft is filtered here rather than left to .gitignore.
+          # `builtins.readDir` reads the filesystem at eval time and knows
+          # nothing about git: consumed as `github:zapatagustin/ecomono` the
+          # source only ever holds committed files, but a host evaluating this
+          # module from a local checkout (`home-manager switch --flake .`)
+          # copies the working directory verbatim. Reproduced, twice.
+          #
+          # The filter matches the classes .gitignore already names, not just
+          # node_modules — opencode installs deps into exactly this directory at
+          # runtime, and home-manager leaves *.hm-bak beside the files it
+          # replaces. A first version excluded node_modules alone while the
+          # comment claimed the general principle; a judge dropped a .hm-bak and
+          # a dotfile in and watched both ship.
           xdg.configFile = {
-            "opencode/plugins/ecomono".source = ./opencode/plugins/ecomono;
-            "opencode/plugins/cyndaquill".source = ./opencode/plugins/cyndaquill;
-            "opencode/plugins/skill-registry.ts".source = ./opencode/plugins/skill-registry.ts;
-            "opencode/plugins/cave-compress.ts".source = ./opencode/plugins/cave-compress.ts;
-            "opencode/plugins/memory.ts".source = ./opencode/plugins/memory.ts;
-            # ecomono-memory storage core (shared by the plugin + MCP server).
-            "opencode/plugins/storage".source = ./opencode/plugins/storage;
             "opencode/tui-plugins".source = ./opencode/tui-plugins;
             "opencode/package.json".source = ./opencode/package.json;
-          };
+          } // lib.mapAttrs' (name: _:
+            lib.nameValuePair "opencode/plugins/${name}" {
+              source = ./opencode/plugins + "/${name}";
+            }) (lib.filterAttrs (name: _:
+                  name != "node_modules"
+                  && !(lib.hasPrefix "." name)
+                  && !(lib.hasSuffix ".hm-bak" name)
+                  && !(lib.hasSuffix ".bak" name))
+                  (builtins.readDir ./opencode/plugins));
 
           # Imperative bits Nix can't own: user-scope plugins/MCP live under
           # runtime-managed state, so register them idempotently on activation.

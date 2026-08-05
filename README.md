@@ -92,8 +92,10 @@ never overwritten, if you want prompts back everywhere, change `defaultMode` in
 
 `claude/hooks/review-receipt-gate.sh` refuses `git push` and `gh pr create` unless the exact
 bytes being delivered have a review receipt — written by `/ecomono-judgment` when it reaches
-`APPROVED`, and named by the same subject hash the review froze. It is **off in every
-repository** until you arm that repository:
+`APPROVED`, and named by the same subject hash the review froze. It runs on both harnesses:
+Claude Code registers it as a `PreToolUse` hook, and on opencode
+`opencode/plugins/review-receipt-gate.ts` intercepts the `bash` tool and shells out to the
+same script. It is **off in every repository** until you arm that repository:
 
 ```bash
 d="$(git rev-parse --git-common-dir)/ecomono" && mkdir -p "$d" && touch "$d/review-mode"
@@ -146,11 +148,11 @@ Make sure `~/.local/bin` is on your `PATH`.
 
 ### Checks
 
-`bash check.sh` runs everything: the memory store and its committed MCP bundle, the
-installer's linking primitives, the Claude Code hook gates, the persona-drift and
-skill-registry selftests, the compress skill's secret guard, and shell syntax. Nothing runs it for
-you — there is no CI and no git hook in this repo, so it is worth running before a
-commit that touches `opencode/plugins/storage/`, `install.sh`, or `lib/common.sh`.
+`bash check.sh` runs everything: the memory store and its committed MCP bundle, the opencode
+plugin suite, the installer's linking primitives, the Claude Code hook gates, the persona-drift
+and skill-registry selftests, the compress skill's secret guard, and shell syntax. Nothing runs
+it for you — there is no CI and no git hook in this repo, so it is worth running before a
+commit that touches `opencode/plugins/`, `claude/hooks/`, `install.sh`, or `lib/common.sh`.
 
 ## Install — NixOS
 

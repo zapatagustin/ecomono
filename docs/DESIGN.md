@@ -699,7 +699,7 @@ that is portable. Ported as prose instead:
 |---|---|
 | Candidate freeze | `ecomono-judgment` hashes the diff before launching judges, re-checks at each later checkpoint the skill defines, discards the round if the bytes moved |
 | Receipt | Written twice from one verdict: a file named by the hash under the git common directory, which is what a shell gate can read, and a `mem_save` at `review/{subject-hash}`, `type: decision`, which is what a later session can search |
-| Gate validates the receipt | Two readers of one receipt: one of archive's four gates, fed the hash by the orchestrator because the archive agent has no `Bash`, and `claude/hooks/review-receipt-gate.sh` on `git push` / `gh pr create`, which recomputes the hash and reads the file copy |
+| Gate validates the receipt | Two readers of one receipt: one of archive's four gates, fed the hash by the orchestrator because the archive agent has no `Bash`, and `claude/hooks/review-receipt-gate.sh` on `git push` / `gh pr create`, which recomputes the hash and reads the file copy. The second runs on both harnesses — `opencode/plugins/review-receipt-gate.ts` shells out to the same script rather than porting it |
 | Tier by evidence, not size | The pre-pr trigger rule, rewritten. Size went back to being the review workload guard's problem |
 
 Deliberately not taken: the seven audit ledgers, the 36-journey friction bench, shadow
@@ -707,10 +707,11 @@ evaluation, the digest-pinned JSON contract mode, the v1/v2/v3 authority-root ve
 and the `rdd-defect-workflow` skill — every one of them exists to make a *team's* migration
 provable, and there is one operator here.
 
-Also not taken: the kill switch. Upstream needs `review mode disable` because an agent
-under organizational pressure will fabricate approval; the archive gate reuses the
-partial-archive idiom instead — it reports unreviewed, the user decides, the archive report
-records the hash it searched, if any. One operator who can decline is the kill switch.
+Declined once and then taken: the kill switch. While the gate lived only in the archive
+phase's prose, upstream's `review mode disable` was ceremony here — the archive gate reuses
+the partial-archive idiom, reporting unreviewed and letting the user decide, and one operator
+who can decline *was* the kill switch. That reasoning expired the moment a hook could block
+`git push`. It shipped as the `ecomono/review-mode` marker; see "What the port still owes".
 
 The upstream gap worth knowing: gentle-ai's own `sdd-archive` prose still hard-requires
 `reviewGate.result: allow` while its native gate already allows. Prose and code disagreeing
@@ -774,8 +775,8 @@ declined on purpose, and two are missing:
 | Candidate freeze, bound to a hash of the reviewed bytes | shipped |
 | Reviewer tier from risk evidence, not diff size | shipped |
 | A kill switch that is structurally absent when off | shipped, once the gate became a hook that can actually block — the `ecomono/review-mode` marker |
-| A refusal may name a command only if running it resolves the block | followed by the push gate's refusal, asserted by its test. Not enforced anywhere as a rule |
-| One receipt validated identically at **every** delivery gate | two of upstream's five — `pre-push` and `pre-pr` — plus archive, which is this repo's own boundary and not one of the five |
+| A refusal may name a command only if running it resolves the block | followed by the push gate's refusal, asserted by its test on both harnesses. Not enforced anywhere as a rule, and deliberately not: upstream's version is an AST test over refusal strings, which is a question about what a sentence means — the shape this document has already buried twice |
+| One receipt validated identically at **every** delivery gate | two of upstream's five — `pre-push` and `pre-pr` — plus archive, which is this repo's own boundary and not one of the five. Both harnesses now, from one script |
 
 Upstream validates a receipt at `post-apply`, `pre-commit`, `pre-push`, `pre-pr` and
 `release`. The port originally checked one of those, in the archive phase, which meant the
@@ -950,10 +951,84 @@ What remains unported: `post-apply` and `pre-commit` have no reader. Neither is 
 anywhere — the bytes are still local and still revisable — which is why they were not built,
 not an oversight to be closed later. `release` does not exist here at all.
 
-The gate is also Claude Code only. `settings.template.json` registers it on `PreToolUse`;
-nothing equivalent runs on opencode, so a push from there is ungated even in an armed
-repository. Not a limitation of opencode — its plugin API has `tool.execute.before` — just
-work not done, and the asymmetry is worth knowing before trusting the marker.
+**The gate now runs on both harnesses, from one implementation.**
+`opencode/plugins/review-receipt-gate.ts` intercepts the `bash` tool and shells out to
+`~/.claude/hooks/review-receipt-gate.sh` with the same `{"tool_input":{"command":…}}` payload
+Claude Code feeds it, then translates the one JSON object it prints. Until it existed, a push
+from opencode was ungated even in an armed repository.
+
+Shelling out rather than porting is the same rule that shaped the hash: two independent
+derivations of one answer that can disagree is a defect this repo has already shipped once. A
+TypeScript rewrite would be a second copy of the hash formula, the base-branch candidate list,
+the token-level detector, the alias chase and the release valve — five things kept equal to a
+shell script by nothing but attention, and it would inherit six rounds of prose without the six
+rounds of fixes. The cost is one subprocess per `bash` call in an armed repository; the plugin
+is a payload, a spawn and a decision switch.
+
+One behaviour deliberately differs. The script has three outcomes and opencode's
+`tool.execute.before` has two — throw or return; throwing is how opencode's own documentation
+blocks a tool call. So the two `ask` states, where the gate is armed but cannot compute a
+subject, refuse on opencode instead of prompting. `permission.ask` does carry a
+`"ask" | "deny" | "allow"` status, and it was rejected: it only fires when the tool actually
+requests a permission, so a ruleset that allows `bash` outright would make the gate silently
+stop existing — the failure this mechanism is entirely about. Stricter costs one retry after a
+`git config ecomono.reviewBase`; the alternative costs the delivery.
+
+The end-to-end test is the part worth keeping. Stubbing the script proves the translation and
+nothing about the port — it is the two halves fitting together that can break, so
+`opencode/plugins/tests/` drives the real script through the plugin against a real armed
+repository: unarmed allows, a non-delivery allows, an unreviewed push refuses with the script's
+own text, `git -C . push` and `gh -R o/r pr create` refuse, the leading-prefix valve stands the
+gate down, an `ESCALATED` receipt refuses, an `APPROVED` receipt for the delivered bytes allows,
+and one more commit after the review refuses again.
+
+One guard in the plugin took three rounds and a wrong conclusion to get a test for, and the
+sequence is the useful part. Writing the payload into the stdin of a script that has already
+exited raises EPIPE, and an unhandled `error` event on a stream takes down the opencode process
+— not the tool call — on an ordinary allowed command. Both judges removed
+`child.stdin?.on("error", …)` and watched the suite stay green, which is how the original
+assertion was found to be decorative.
+
+The fault only surfaces while the event loop is still cold. Four shapes were measured with the
+line deleted, 20 runs each: in the main suite 0/20 failed, alone in its own file 5/20, looping
+40 attempts 1/20 — worse, because only the first attempt can fail — and with the fixture
+pre-built by the runner, 2/20. **The conclusion drawn from those numbers was that the guard
+could not be tested, and it was wrong.** The check was deleted and "no regression test is
+possible" written into the code and into this document.
+
+The re-judge round reopened it, and it was right to. A test does catch the mutation — 29 of 30
+runs, against 0 of 30 false positives: the same logic in its own file with *nothing before the
+spawn*, no `node:assert` import, no shared fixture module, no cleanup call after the await.
+Importing `assert` and calling `rmSync` is enough work to take the identical test from catching
+it every run to catching it none. Even the file's header comment cost a run, which is why the
+prose lives here and a pointer lives there. It is not deterministic and a race never is, but a
+regression that survives one run in thirty does not survive being worked on.
+
+The judge's own explanation was wrong too, and checking it mattered: it attributed the 5/20 to a
+payload near the 64 KiB pipe buffer, when that measurement used 1 MB. A sweep at 64 KiB+1,
+100 KB, 200 KB, 500 KB and 1 MB reproduces at every size — the payload only has to clear the
+buffer, and the pre-spawn work is what actually moved the number.
+
+The lesson is not the one the deleted version recorded. "This cannot be tested" is a claim about
+every possible test, and four failed attempts do not establish it — they establish that four
+shapes failed. The rule this document keeps arriving at, applied here: a negative result needs
+the same standard of evidence as a positive one, and the cheap move when a test will not fail on
+a mutation is to keep removing things from the test, not to delete it.
+
+Three more things were found by building it. `os.homedir()` is documented to read `$HOME` on POSIX and
+bun does not — it resolves once at process start and ignores later assignment — so the plugin
+reads the variable first, which is both the documented semantics and what lets a test point at
+a fixture. And the tests live in a subdirectory because opencode auto-loads every `.ts`
+directly under `plugins/`: `opencode debug info` lists `cave-compress.ts` and
+`skill-registry.ts` as loaded although `opencode.json` names only `memory.ts`. A test file at
+that level would be loaded as a plugin on every session start.
+
+That auto-load also exposed a drift class rather than closing one. `install.sh` links every
+child of `opencode/plugins/`; `flake.nix` listed them by hand, so a plugin added to the
+directory and forgotten in the flake ships on Arch and Debian and silently does not exist on
+NixOS — and the check that would catch it is a check for a list that should not have existed.
+The flake now enumerates the directory with `builtins.readDir`, which deletes the class instead
+of guarding it.
 
 ### Open: onboard is registered as delegated and written as interactive
 
