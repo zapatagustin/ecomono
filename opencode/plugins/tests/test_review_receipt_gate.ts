@@ -105,6 +105,43 @@ const DENY = (reason: string) =>
   assert.strictEqual(err!.message, "the fallback line")
 }
 
+{
+  // Neither reason nor systemMessage. The real script always sets both, so this only
+  // fires if the contract drifts — but a refusal with an empty message is a refusal the
+  // agent cannot act on, and the branch had no coverage until a reviewer deleted the
+  // literal and watched the suite stay green.
+  const fx = fixture(
+    `#!/usr/bin/env bash\ncat >/dev/null\ncat <<'JSON'\n${JSON.stringify({
+      hookSpecificOutput: { permissionDecision: "deny" },
+    })}\nJSON\n`,
+  )
+  const err = await runHook(fx, { command: "git push" })
+  assert.ok(err, "a deny with no message must still abort")
+  assert.match(err!.message, /refused this delivery/, "and must still say something actionable")
+}
+
+{
+  // The cwd fallback: no `directory`, only `worktree`. Every other case supplies
+  // `directory`, so the rest of the chain was never exercised.
+  const fx = fixture(`#!/usr/bin/env bash\ncat >/dev/null\npwd > "$(dirname "$0")/cwd.txt"\n`)
+  process.env.HOME = fx.home
+  try {
+    const hooks = await ReviewReceiptGatePlugin({ worktree: fx.repo } as any)
+    await hooks["tool.execute.before"]!(
+      { tool: "bash", sessionID: "s", callID: "c" } as any,
+      { args: { command: "git push" } },
+    )
+  } finally {
+    if (realHome === undefined) delete process.env.HOME
+    else process.env.HOME = realHome
+  }
+  assert.strictEqual(
+    readFileSync(join(fx.home, ".claude", "hooks", "cwd.txt"), "utf8").trim(),
+    fx.repo,
+    "with no directory, the gate must run in the worktree",
+  )
+}
+
 // --- the payload and cwd the script is given --------------------------------------
 
 {
@@ -195,22 +232,38 @@ const DENY = (reason: string) =>
   const fx = fixture()
   symlinkSync(real, join(fx.home, ".claude", "hooks", "review-receipt-gate.sh"))
 
+  // Overriding HOME alone does NOT isolate git: with no `~/.gitconfig` in the fixture
+  // home it falls back to `$XDG_CONFIG_HOME/git/config`, which is the operator's real
+  // global config. Reproduced on the machine this was written on — it leaked an identity
+  // and a pager. Two of those settings break this block rather than merely colour it:
+  // `commit.gpgsign=true` makes the commits below block on a pinentry prompt with no
+  // timeout, hanging check.sh forever, and a global `core.autocrlf` or a diff `textconv`
+  // changes the bytes `git diff` emits, so the subject hash stops matching the script's
+  // and the test fails for a reason that has nothing to do with the plugin.
+  const gitEnv = {
+    ...process.env,
+    HOME: fx.home,
+    XDG_CONFIG_HOME: join(fx.home, ".config"),
+    GIT_CONFIG_GLOBAL: "/dev/null",
+    GIT_CONFIG_SYSTEM: "/dev/null",
+    GIT_CONFIG_NOSYSTEM: "1",
+  }
   const git = (...args: string[]) =>
-    execFileSync("git", args, { cwd: fx.repo, encoding: "utf8", env: { ...process.env, HOME: fx.home } })
+    execFileSync("git", args, { cwd: fx.repo, encoding: "utf8", env: gitEnv })
 
   git("init", "-q", "-b", "master")
   git("config", "user.email", "t@t")
   git("config", "user.name", "t")
   writeFileSync(join(fx.repo, "a.txt"), "one\n")
   git("add", "-A")
-  git("commit", "-qm", "base")
+  git("commit", "-q", "--no-gpg-sign", "-m", "base")
   // A base that resolves and a diff that is not empty: the shape the gate demands a
   // receipt for. `ecomono.reviewBase` names it, so the candidate list is not guessed at.
   git("branch", "work-base")
   git("config", "ecomono.reviewBase", "work-base")
   writeFileSync(join(fx.repo, "a.txt"), "two\n")
   git("add", "-A")
-  git("commit", "-qm", "change")
+  git("commit", "-q", "--no-gpg-sign", "-m", "change")
 
   const gitdir = join(fx.repo, ".git")
   const ecomono = join(gitdir, "ecomono")
@@ -251,7 +304,7 @@ const DENY = (reason: string) =>
 
   // A receipt for these exact bytes, written with the skill's formula.
   const mb = git("merge-base", "HEAD", "work-base").trim()
-  const diff = execFileSync("git", ["diff", mb], { cwd: fx.repo, maxBuffer: 1 << 24 })
+  const diff = execFileSync("git", ["diff", mb], { cwd: fx.repo, maxBuffer: 1 << 24, env: gitEnv })
   const hash = createHash("sha256").update(diff).digest("hex").slice(0, 12)
 
   writeFileSync(join(ecomono, "receipts", hash), "ESCALATED\n")
@@ -269,7 +322,7 @@ const DENY = (reason: string) =>
   // Moving the bytes invalidates the receipt: the freeze is the point.
   writeFileSync(join(fx.repo, "a.txt"), "three\n")
   git("add", "-A")
-  git("commit", "-qm", "after review")
+  git("commit", "-q", "--no-gpg-sign", "-m", "after review")
   assert.ok(
     await runHook(fx, { command: "git push origin master" }),
     "a commit after the review must refuse — the receipt is bound to the reviewed bytes",

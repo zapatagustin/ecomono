@@ -12,39 +12,36 @@
  * `{"tool_input":{"command":...}}` payload on stdin that Claude Code feeds it, and
  * translates the one JSON object it prints. That is the whole plugin.
  *
- * The reason is the rule `docs/DESIGN.md` keeps returning to: two independent
- * derivations of one subject hash that can disagree is a defect this repo has already
- * shipped once. A TypeScript rewrite would be a second copy of the hash formula, the
- * base-branch candidate list, the token-level delivery detector, the alias chase and
- * the release valve — five things that would each have to be kept equal to a shell
- * script by nothing but attention. Six rounds of judges shaped that script; a port
- * would inherit the prose and not the fixes. Shelling out costs one subprocess on a
- * `bash` call and buys one implementation and one test suite.
+ * A rewrite would be a second copy of the hash formula, the base-branch candidate list,
+ * the delivery detector, the alias chase and the release valve, kept equal to a shell
+ * script by nothing but attention. The full argument is in `docs/DESIGN.md`; it is not
+ * restated here, because the same reasoning written out twice is the drift this file
+ * exists to avoid.
  *
  * `~/.claude/hooks/` rather than a path relative to this file, because that is where
  * both install paths put it — `install.sh` symlinks `claude/hooks` there and
  * `flake.nix` sets `".claude/hooks".source`. `skill-registry.ts` locates its generator
  * the same way, for the same reason.
  *
- * ecomono: AN `ask` DECISION BECOMES A REFUSAL HERE. The shell gate has three
- * outcomes — allow, `ask` (armed but no base resolves, or `git diff` failed) and
- * `deny`. opencode's `tool.execute.before` has two: throw or return. Throwing is the
- * documented way to block a tool call (opencode.ai/docs/plugins shows exactly this
- * shape for its .env guard), and there is no third value to return. `permission.ask`
- * does carry a `status: "ask" | "deny" | "allow"`, but it only fires when the tool
- * actually requests a permission, and a ruleset that allows `bash` outright never
- * reaches it — a gate that silently stops existing under a permissive config is worse
- * than one that is stricter than its sibling. So both `ask` states block, and the
- * reason text the script already writes names the fix in each case. The difference is
- * one retry after a `git config ecomono.reviewBase`, in the direction that does not
- * let a delivery through.
+ * ecomono: AN `ask` DECISION BECOMES A REFUSAL HERE. The script has three outcomes and
+ * `tool.execute.before` has two — throw or return, with throwing the documented way to
+ * block. `permission.ask` carries a ternary status but only fires when the tool requests
+ * a permission, so a ruleset that allows `bash` outright would switch the gate off
+ * silently. Stricter beats absent; see `docs/DESIGN.md` for the full call.
  *
  * ecomono: this fails OPEN on a missing script, a spawn failure, a timeout, or output
  * that is not the JSON the script promises — the same convention as the script's own
  * header, for the same reason: a review gate that fails closed on a broken environment
  * leaves the operator unable to push the fix for the gate. The enforcement lost is
  * nominal, since anything that can hide the script can also set
- * ECOMONO_ALLOW_UNREVIEWED_PUSH=1.
+ * ECOMONO_ALLOW_UNREVIEWED_PUSH=1. Deleting the script is the cheaper bypass of the two
+ * and it is silent and lasts the session, which the env var does not — named here
+ * because a reviewer looked for it and found only the implication.
+ *
+ * Every fail-open path says so on stderr. Without that line the operator cannot tell
+ * "the gate ran and allowed" from "the gate could not run", and those are the two states
+ * this whole mechanism exists to keep apart — the Claude hook distinguishes them with an
+ * `ask`, which opencode has no way to express.
  *
  * ecomono: the ceiling is the `bash` tool. A command the user runs themselves through
  * opencode's `!` shell path does not go through `tool.execute.before` at all — it is
@@ -59,7 +56,18 @@
  * plugins register once per opencode server process, not per session, and the hook's
  * input carries a `sessionID` per call rather than one per plugin instance, which is the
  * shape of a single global interceptor. Nobody has driven a live subagent through it.
- * Worth checking before relying on it.
+ * Two reviewers raised it independently and neither could settle it from a read-only
+ * pass. It matters more than the usual unverified caveat, because this repo's own
+ * workflow delegates shell work to subagents constantly: if the hook does not fire
+ * there, a whole class of delivery is ungated and looks exactly like an allow. Settle it
+ * before treating the marker as enforcement.
+ *
+ * ecomono: a timeout kills the direct child, not its process group, so a `git diff` the
+ * script spawned outlives it as an orphan. Bounded — one per timed-out call, and it
+ * exits when the diff finishes — and closing it means dropping `execFile` for a detached
+ * `spawn` with manual group signalling, which is more machinery than this plugin is.
+ * Upgrade path if slow-repo retries ever pile up: `spawn` with `detached: true` and
+ * `process.kill(-pid)`.
  */
 
 import type { Plugin } from "@opencode-ai/plugin"
@@ -68,8 +76,23 @@ import { homedir } from "node:os"
 import { join } from "node:path"
 
 // The script's slow path is one `git diff` per distinct merge-base. Generous, because
-// the cost of being wrong is a fail-open push on a large repository.
+// the cost of being wrong is a fail-open push on a large repository. Not measured
+// against a genuinely large diff — on this repo a call is 10-40ms — so read it as a
+// bound chosen to be safe, not as a number anything established.
 const TIMEOUT_MS = 30_000
+
+// The script prints one small JSON object. Sized well past that so a stdout that grows
+// unexpectedly is truncated rather than silently dropping the decision.
+const MAX_STDOUT_BYTES = 4 * 1024 * 1024
+
+/**
+ * Say on stderr that the gate did not run. Every caller treats "" as allow, and without
+ * this line an allow because the gate passed and an allow because the gate broke are the
+ * same observation. opencode captures plugin stderr in its logs.
+ */
+function failedOpen(why: string) {
+  console.error(`[review-receipt-gate] failing open: ${why} — this delivery was NOT checked`)
+}
 
 /**
  * Run the gate and return its stdout, or "" for every failure mode. Never rejects:
@@ -83,25 +106,41 @@ function runGate(script: string, payload: string, cwd: string): Promise<string> 
       child = execFile(
         script,
         [],
-        { cwd, timeout: TIMEOUT_MS, maxBuffer: 4 * 1024 * 1024 },
-        (err, stdout) => resolve(err ? "" : stdout),
+        { cwd, timeout: TIMEOUT_MS, maxBuffer: MAX_STDOUT_BYTES },
+        (err: any, stdout) => {
+          if (!err) return resolve(stdout)
+          // Named separately because they are different operator problems: a timeout is
+          // a repository too slow for the budget, a signal is the gate being killed, and
+          // the rest is usually a missing or unrunnable script.
+          if (err.killed) failedOpen(`the gate did not finish within ${TIMEOUT_MS}ms`)
+          else if (err.code === "ENOENT") failedOpen(`no gate script at ${script}`)
+          else failedOpen(`the gate exited with ${err.code ?? err.signal ?? "an error"}`)
+          resolve("")
+        },
       )
-    } catch {
+    } catch (err: any) {
+      // execFile itself throwing is a synchronous argument or spawn error. Untested:
+      // with a fixed path and no arguments there is no input that reaches it. Kept
+      // rather than deleted because without it the throw would propagate out of the
+      // hook and refuse a delivery the gate never judged — fail-closed, on an
+      // environment fault.
+      failedOpen(`the gate could not be spawned (${err?.message ?? err})`)
       resolve("")
       return
     }
     // The script exits before reading stdin on its early-allow paths — the release
-    // valve, a missing `jq`, an empty command. Writing into a pipe whose only reader
-    // is gone raises EPIPE on the stream, and an unhandled 'error' event on a stream
-    // takes down the PROCESS, not the tool call: opencode dies on an ordinary allowed
-    // command.
+    // valve and a missing `jq`. (Its empty-command check is NOT one of them: that runs
+    // after `cat | jq` has already drained stdin, and the plugin filters empty commands
+    // before getting here anyway.) Writing into a pipe whose only reader is gone raises
+    // EPIPE on the stream, and an unhandled 'error' event on a stream takes down the
+    // PROCESS, not the tool call: opencode dies on an ordinary allowed command.
     //
-    // Guarded by tests/test_review_receipt_gate_epipe.ts, which fails 20/20 with this
-    // line deleted. That file is threadbare on purpose: the fault only surfaces while
-    // the event loop is still cold, so an extra import or a cleanup call before the
-    // spawn hides it. A version built on a shared fixture helper measured 5/20 and led
-    // to the wrong conclusion that this could not be tested at all. Read that file's
-    // header before adding anything to it.
+    // Guarded by tests/test_review_receipt_gate_epipe.ts — see that file for the current
+    // measurement rather than a copy of it here. It is threadbare on purpose: the fault
+    // only surfaces while the event loop is still cold, and enough work before the spawn
+    // hides it. Measured, so as not to overstate it: a bare extra statement or one more
+    // import did not move the rate; a `node:assert` import together with
+    // `mkdtempSync`/`rmSync` took it to zero. Read that file's header before touching it.
     child.stdin?.on("error", () => {})
     child.stdin?.end(payload)
   })
@@ -135,10 +174,17 @@ export const ReviewReceiptGatePlugin: Plugin = async (input) => {
       try {
         parsed = JSON.parse(stdout)
       } catch {
-        return // fail open: not the contract, so nothing to enforce
+        failedOpen("the gate printed something that is not JSON")
+        return
       }
 
       const decision = parsed?.hookSpecificOutput?.permissionDecision
+      if (decision === undefined) {
+        // JSON, but not the contract. Distinct from a recognised allow-shaped decision
+        // below, which is the script deliberately permitting.
+        failedOpen("the gate printed JSON with no permissionDecision")
+        return
+      }
       if (decision !== "deny" && decision !== "ask") return
 
       const reason =

@@ -93,11 +93,26 @@
           xdg.configFile = {
             "opencode/tui-plugins".source = ./opencode/tui-plugins;
             "opencode/package.json".source = ./opencode/package.json;
+          # The type allow-list keeps a special file from ever becoming a `source`
+          # entry. Be clear about what it does NOT do, because the first version of
+          # this comment claimed the fix and the claim did not survive being tested:
+          # a FIFO, socket or device node directly under opencode/plugins/ still
+          # fails evaluation from a local checkout, with "file has an unsupported
+          # type", and it fails BEFORE this filter runs — reading the directory
+          # copies it, and the copy is what rejects the file type. No attribute
+          # filter can prevent that; only not reading the directory could.
+          #
+          # It is narrow. `github:` and `git+file://` sources are git-filtered and a
+          # special file cannot be committed, so the documented consumption path
+          # never sees it; a dirty local checkout with a stray socket does. Recorded
+          # rather than closed, because closing it means going back to the
+          # hand-written list and the drift class that came with it.
           } // lib.mapAttrs' (name: _:
             lib.nameValuePair "opencode/plugins/${name}" {
               source = ./opencode/plugins + "/${name}";
-            }) (lib.filterAttrs (name: _:
-                  name != "node_modules"
+            }) (lib.filterAttrs (name: type:
+                  (type == "regular" || type == "directory")
+                  && name != "node_modules"
                   && !(lib.hasPrefix "." name)
                   && !(lib.hasSuffix ".hm-bak" name)
                   && !(lib.hasSuffix ".bak" name))

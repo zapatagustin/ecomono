@@ -7,11 +7,14 @@
 // comment costs a run. The payload must also clear the 64 KiB pipe buffer. The
 // measurements and the wrong conclusion they first produced are in docs/DESIGN.md.
 //
-// Measured at 29/30 failing with the guard removed and 0/30 with it present. Not
-// perfectly deterministic — a race never is — but a mutation that survives one run in
-// thirty is caught by any real use. Re-measure on any change: delete the
-// `stdin?.on("error")` line, confirm `grep -c` reports it gone, and run `run-tests.sh`
-// thirty times. A rate well below that means something was added above the call.
+// One run of this file catches the mutation about 29 times in 30, and produces 0 false
+// positives in 30. A race is never perfectly deterministic, so `run-tests.sh` runs this
+// file five times rather than once, which takes the suite-level miss rate to nothing —
+// measured at 20/20 caught, 0/20 false, through the runner.
+//
+// Re-measure on any change: delete the `stdin?.on("error")` line, confirm `grep -c`
+// reports it gone, and run `run-tests.sh` twenty times. Anything short of catching it
+// every time means something was added above the call.
 
 import { mkdtempSync, mkdirSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"

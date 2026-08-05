@@ -962,8 +962,10 @@ derivations of one answer that can disagree is a defect this repo has already sh
 TypeScript rewrite would be a second copy of the hash formula, the base-branch candidate list,
 the token-level detector, the alias chase and the release valve — five things kept equal to a
 shell script by nothing but attention, and it would inherit six rounds of prose without the six
-rounds of fixes. The cost is one subprocess per `bash` call in an armed repository; the plugin
-is a payload, a spawn and a decision switch.
+rounds of fixes. The cost is one subprocess per `bash` call in **every** repository, not only
+an armed one — the plugin has no marker check of its own, and the cheap exit lives inside the
+script, past the spawn. Measured at 10–40 ms here. Two reviewers corrected an earlier version of
+this sentence that said "in an armed repository", which undercounted where the spawn happens.
 
 One behaviour deliberately differs. The script has three outcomes and opencode's
 `tool.execute.before` has two — throw or return; throwing is how opencode's own documentation

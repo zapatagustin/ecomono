@@ -17,7 +17,14 @@ cd "$(dirname "$0")"
 
 fail=0
 for t in test_*.ts; do
-  "$BUN" run "$t" || { echo "FAIL: $t" >&2; fail=1; }
+  # The EPIPE case catches its regression on the order of 29 runs in 30 — it is a race,
+  # and one run leaves a real chance of missing a change that reintroduces pre-spawn
+  # work. Five cold runs cost under two seconds and take that chance to nothing. Its
+  # own header explains why the file cannot simply be made deterministic.
+  case "$t" in test_review_receipt_gate_epipe.ts) reps=5 ;; *) reps=1 ;; esac
+  for _ in $(seq "$reps"); do
+    "$BUN" run "$t" || { echo "FAIL: $t" >&2; fail=1; break; }
+  done
 done
 
 exit "$fail"
