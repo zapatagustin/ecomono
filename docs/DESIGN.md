@@ -975,10 +975,29 @@ to real receipts; the refusal text was correct. All of it described a gate that 
 installed. A marker that reads as protection while providing none is worse than no marker,
 because it retires the question.
 
-`check-hook-install-drift.sh` closes the seam: the set of hook scripts the template names,
-against the set the live settings names. It skips when there is no live file, since a fresh clone
-and CI both legitimately have none — a silent pass on the machine least likely to need it, which
-is the honest tradeoff for a check about an installed machine drifting from its source.
+`check-hook-install-drift.sh` closes the seam by comparing REGISTRATIONS — the
+`(event, matcher, if, script)` keys the template declares against the keys the live settings
+register, with the script taken from executable position and only `type: "command"` entries
+counted. It skips when there is no live file, since a fresh clone and CI both legitimately have
+none — a silent pass on the machine least likely to need it, which is the honest tradeoff for a
+check about an installed machine drifting from its source.
+
+That sentence described a flat set of script names for two commits after the check stopped
+working that way, sitting two paragraphs below the correction that replaced it. Both judges
+caught it. Worth naming because it is the failure this section is *about*, committed inside the
+account of it: a document describing a mechanism it no longer has.
+
+The dimension count is the part worth carrying forward. Three rounds found eight ways this check
+printed `ok` while a declared hook was not running — wrong event, wrong matcher, a name inside a
+disabling comment, a same-named script in another tree, the two kill switches, a lost `if:`
+variant, a non-`command` type with a stale command string, and an interpreter flag mistaken for
+the script. Each round's fix exposed the next. They share one shape: **every field the settings
+file uses to decide whether a hook runs must be part of the key, and anything left out is an axis
+along which the check certifies a gate that is not there.** The check is worth keeping despite
+that history — a judge measured the alternative, `claude -p --include-hook-events`, which is real
+ground truth but costs a model turn per run, needs auth, is non-deterministic, and this repo has
+no CI to put it in. What is shipped makes the smaller claim honestly: declared equals registered,
+never "will run".
 
 What remains unported: `post-apply` and `pre-commit` have no reader. Neither is a delivery to
 anywhere — the bytes are still local and still revisable — which is why they were not built,

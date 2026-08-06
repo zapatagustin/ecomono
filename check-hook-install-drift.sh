@@ -42,9 +42,11 @@
 # otherwise fire.
 #
 # ecomono: still deliberately blind to whether a registered hook would actually run.
-# Reading a settings file cannot know: managed-settings precedence over this one,
-# hooks a plugin contributes outside this file, or whether a hook that IS wired fires
-# and exits zero for a real tool call. A judge measured the way to close that last gap:
+# Reading ONE settings file cannot know: precedence from the other layers Claude Code
+# merges — project `.claude/settings.json`, `.claude/settings.local.json`, flag and
+# managed/policy settings, all confirmed real in the installed binary — hooks a plugin
+# contributes outside any of them, or whether a hook that IS wired fires and exits zero
+# for a real tool call. A judge measured the way to close that last gap:
 # `claude -p "<probe>" --output-format stream-json --include-hook-events` emits a real
 # `hook_started` per hook that actually fired — genuine ground truth, but it costs a
 # model turn per run, so it belongs in an occasional manual check or a CI smoke test,
@@ -57,7 +59,12 @@
 set -uo pipefail
 cd "$(dirname "$0")"
 
-TEMPLATE="claude/settings.template.json"
+# Both sides are overridable for tests. The live seam alone was not enough: the defect
+# where an interpreter flag is mistaken for the script only shows when BOTH sides use
+# that shape, and with the template pinned to the real file the fixture passed for the
+# wrong reason — the keys differed anyway. A test that cannot express the failure cannot
+# guard against it.
+TEMPLATE="${ECOMONO_TEMPLATE_SETTINGS:-claude/settings.template.json}"
 LIVE="${ECOMONO_LIVE_SETTINGS:-$HOME/.claude/settings.json}"
 
 [ -f "$TEMPLATE" ] || { echo "error: $TEMPLATE not found" >&2; exit 1; }
@@ -100,15 +107,26 @@ def normalize_path(token):
     return token
 
 def invoked_script(command):
-    """The token in executable position — token 0, or token 1 behind a known
-    interpreter. A question about tokens, not about what the command would do."""
+    """The token in executable position — token 0, or the first non-flag token behind a
+    known interpreter. A question about tokens, not about what the command would do.
+
+    The flag skip is not cosmetic. Taking token 1 unconditionally returned the FLAG for
+    `bash -x foo.sh`, so `bash -x foo.sh` and `bash -x totally-different.sh` produced the
+    identical key `-x` and compared equal — two different scripts, one key, a false `ok`
+    with the declared gate replaced by something else entirely. Reproduced by a judge
+    against the real template. Returning None when nothing resolves is deliberate: an
+    unresolvable command must not silently become a match, and dropping it from the
+    declared set surfaces as drift rather than as agreement.
+    """
     tokens = [t.replace('"', "").replace("'", "") for t in command.split()]
     if not tokens:
         return None
-    first = tokens[0]
-    if os.path.basename(first) in INTERPRETERS and len(tokens) > 1:
-        return normalize_path(tokens[1])
-    return normalize_path(first)
+    if os.path.basename(tokens[0]) in INTERPRETERS:
+        for token in tokens[1:]:
+            if not token.startswith("-"):
+                return normalize_path(token)
+        return None
+    return normalize_path(tokens[0])
 
 def hook_keys(doc):
     """The set of (event, matcher, if, invoked-script) keys a settings file registers.
@@ -121,14 +139,23 @@ def hook_keys(doc):
     of the pair printed `ok`. That is the same defect two judges had just closed one
     dimension up, reappearing here — every dimension the settings file uses to decide
     WHETHER a hook runs has to be part of the key.
+
+    Only `type: "command"` hooks are registrations for this purpose. The real schema
+    also has `prompt`, `agent`, `callback` and `mcp_tool` types, none of which execute
+    the `command` field — a hook whose type was changed while its stale `command` string
+    stayed behind does not run, and keying on the command alone computed the same key
+    and printed `ok`. Also reproduced by a judge against the real template. An entry with
+    a type this does not recognise contributes to neither side, so a template that starts
+    using one will read as absent from live rather than as silently satisfied.
     """
     keys = set()
     for event, groups in (doc.get("hooks") or {}).items():
         for group in groups:
             matcher = group.get("matcher", "")
             for hook in group.get("hooks", []):
-                command = hook.get("command", "")
-                script = invoked_script(command)
+                if hook.get("type", "command") != "command":
+                    continue
+                script = invoked_script(hook.get("command", ""))
                 if script:
                     keys.add((event, matcher, hook.get("if", ""), script))
     return keys

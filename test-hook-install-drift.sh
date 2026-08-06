@@ -91,6 +91,21 @@ elif mutation == "node-wrapped":
     _, hook = find("PreToolUse", "secret-access-gate.sh")
     hook["command"] = 'node "$HOME/.claude/hooks/secret-access-gate.sh"'
 
+elif mutation == "wrong-type":
+    # Type changed, stale command left behind. A prompt/agent/callback/mcp_tool hook
+    # never executes the command field, so the gate does not run — but keyed on the
+    # command alone it computed the same key and read as installed.
+    _, hook = find("PreToolUse", "review-receipt-gate.sh")
+    hook["type"] = "prompt"
+
+elif mutation == "expanded-home":
+    # The live side spells the path out with no $HOME substring at all. The check
+    # claims these compare equal to the template's `$HOME/...`; nothing measured it
+    # until a judge deleted the branch and watched every case still pass.
+    import os as _os
+    _, hook = find("PreToolUse", "review-receipt-gate.sh")
+    hook["command"] = _os.environ["HOME"] + "/.claude/hooks/review-receipt-gate.sh"
+
 elif mutation == "lost-one-if":
     # check-diff-size.sh is registered twice under the same event AND matcher,
     # separated only by its `if:`. Drop the second. Keyed on anything less than the
@@ -157,6 +172,51 @@ grep_out "review-receipt-gate.sh"
 # 7 — a node "$HOME/..." wrapped command still resolves to the right script.
 build "node-wrapped"
 t pass "a node \"\$HOME/...\" wrapped command is still recognized"
+
+# 7c — type changed away from "command", stale command string left in place.
+build "wrong-type"
+t fail "type changed to prompt — the command field no longer executes"
+grep_out "review-receipt-gate.sh"
+
+# 7d — an interpreter flag must not be mistaken for the script. BOTH sides need the
+# `bash -x` shape, or the keys differ anyway and the case passes for the wrong reason —
+# which is what the first version of this fixture did, caught by deleting the flag skip
+# and watching all 16 still pass. That is why the template side has a seam too.
+alt_template="$fixture/template.json"
+python3 - "$repo/claude/settings.template.json" "$alt_template" "$live" <<'PY'
+import json, sys
+
+src, tmpl_out, live_out = sys.argv[1:4]
+
+def find(doc, script_suffix):
+    for group in doc["hooks"].get("PreToolUse", []):
+        for hook in group.get("hooks", []):
+            if hook.get("command", "").endswith(script_suffix):
+                return hook
+    raise SystemExit(f"fixture bug: no PreToolUse hook ending in {script_suffix}")
+
+for out, script in (
+    (tmpl_out, "review-receipt-gate.sh"),
+    (live_out, "completely-unrelated-noop.sh"),
+):
+    doc = json.load(open(src))
+    find(doc, "review-receipt-gate.sh")["command"] = f"bash -x $HOME/.claude/hooks/{script}"
+    json.dump(doc, open(out, "w"), indent=2)
+PY
+cases=$((cases + 1))
+out=$(ECOMONO_TEMPLATE_SETTINGS="$alt_template" ECOMONO_LIVE_SETTINGS="$live" \
+      bash "$repo/check-hook-install-drift.sh" 2>&1)
+if [ $? -ne 0 ] && printf '%s\n' "$out" | grep -qF "review-receipt-gate.sh"; then
+  echo "ok   bash -x <script> on both sides compares the script, not the flag"
+else
+  echo "FAIL bash -x <script> on both sides compares the script, not the flag"
+  printf '     %s\n' "$out"
+  fail=1
+fi
+
+# 7e — a fully expanded $HOME on the live side still matches the template's $HOME form.
+build "expanded-home"
+t pass "an expanded absolute path matches the template's \$HOME spelling"
 
 # 7b — one of two registrations that differ only by `if:`. The gate keeps firing for
 # one delivery shape and silently stops for the other.
