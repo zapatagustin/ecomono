@@ -104,4 +104,49 @@ else
 fi
 chmod 755 "$needed"
 
+# ---- ensure_mcp ------------------------------------------------------------
+# The bug this replaced was presence-only registration: `mcp get && skip`, which
+# leaves a machine launching whatever it first registered, forever, through every
+# later version bump. Every case below drives a fake `claude` on PATH and asserts on
+# the subcommands it received — the real one is never invoked and no MCP entry on this
+# machine is touched.
+mcpbin="$tmp/bin"; mkdir -p "$mcpbin"
+calls="$tmp/mcp-calls"
+cat > "$mcpbin/claude" <<'STUB'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >> "$MCP_CALLS"
+if [ "$1 $2" = "mcp get" ]; then
+  [ -n "${MCP_REGISTERED:-}" ] || exit 1
+  printf '%s\n' "$MCP_REGISTERED"
+fi
+exit 0
+STUB
+chmod +x "$mcpbin/claude"
+export MCP_CALLS="$calls"
+PATH="$mcpbin:$PATH"
+
+mcp_case() { # mcp_case <label> <registered-output-or-empty> <expect-add: yes|no> <expect-remove: yes|no>
+  : > "$calls"
+  MCP_REGISTERED="$2" ensure_mcp context7 npx -y --package=@upstash/context7-mcp@2.2.5 -- context7-mcp >/dev/null 2>&1
+  local added=no removed=no
+  grep -q '^mcp add' "$calls" && added=yes
+  grep -q '^mcp remove' "$calls" && removed=yes
+  if [ "$added" = "$3" ] && [ "$removed" = "$4" ]; then
+    ok "$1"
+  else
+    bad "$1 (added=$added wanted=$3, removed=$removed wanted=$4)"
+  fi
+}
+
+matching='context7:
+  Command: npx
+  Args: -y --package=@upstash/context7-mcp@2.2.5 -- context7-mcp'
+stale='context7:
+  Command: npx
+  Args: -y --package=@upstash/context7-mcp@2.1.0 -- context7-mcp'
+
+mcp_case "an unregistered server is added"                ""          yes no
+mcp_case "a matching registration is left alone"          "$matching" no  no
+mcp_case "a stale version pin is removed and re-added"    "$stale"    yes yes
+
 exit "$fail"

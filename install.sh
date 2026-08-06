@@ -94,13 +94,6 @@ if [ "${ECOMONO_SKIP_PLUGINS:-}" = 1 ]; then
   info "skipping plugin/mcp registration (ECOMONO_SKIP_PLUGINS=1)"
 elif have claude; then
   log "registering Claude plugins + MCP servers"
-  ensure_plugin() { # repo name [marketplace]
-    local repo="$1" name="$2" market="${3:-$2}"
-    if claude plugin list 2>/dev/null | grep -q "$name"; then info "plugin $name ✓"; return; fi
-    claude plugin marketplace add "https://github.com/$repo" >/dev/null 2>&1 || true
-    claude plugin install "$name@$market" \
-      || warn "could not install plugin $name (retry: claude plugin install $name@$market)"
-  }
   # Retire the superpowers plugin: its four load-bearing process skills now ship
   # from agent-skills/ as ecomono-brainstorm, ecomono-plan, ecomono-tdd and
   # ecomono-debug, under our own guidelines. Leaving it installed costs 15 skill
@@ -112,12 +105,9 @@ elif have claude; then
       || warn "could not uninstall superpowers (retry: claude plugin uninstall superpowers@claude-plugins-official)"
   fi
 
-  if claude mcp get context7 >/dev/null 2>&1; then
-    info "mcp context7 ✓"
-  else
-    claude mcp add --scope user context7 -- npx -y --package=@upstash/context7-mcp@2.2.5 -- context7-mcp \
-      || warn "could not add context7 mcp (retry: claude mcp add --scope user context7 -- npx -y --package=@upstash/context7-mcp -- context7-mcp)"
-  fi
+  # Reconciles rather than skipping on presence: the version below is a pin, and a
+  # bump has to reach machines that already registered an older one.
+  ensure_mcp context7 npx -y --package=@upstash/context7-mcp@2.2.5 -- context7-mcp
 
   # Retire the Gentleman-Programming engram plugin before registering ours: it
   # serves the same mem_* tools from the old Go binary, so leaving it installed
@@ -140,12 +130,13 @@ elif have claude; then
 
   # ecomono-memory = our native bun MCP server. Self-contained bundle: runs with
   # just bun, no node_modules.
+  # Both halves of this command move: bun's path on a toolchain change, the bundle's
+  # whenever the repo is cloned somewhere else. flake.nix reasoned its way to comparing
+  # them for exactly this reason; the non-Nix path — the more common one — kept skipping
+  # on presence and would have gone on launching whatever it was first registered with.
   MEMORY_MCP="$REPO/opencode/plugins/storage/mcp-server.js"
-  if claude mcp get ecomono-memory >/dev/null 2>&1; then
-    info "mcp ecomono-memory ✓"
-  elif [ -n "$BUN" ]; then
-    claude mcp add --scope user ecomono-memory -- "$BUN" "$MEMORY_MCP" \
-      || warn "could not add ecomono-memory mcp (retry: claude mcp add --scope user ecomono-memory -- $BUN $MEMORY_MCP)"
+  if [ -n "$BUN" ]; then
+    ensure_mcp ecomono-memory "$BUN" "$MEMORY_MCP"
   else
     warn "skipping ecomono-memory mcp — bun not found (install bun, then: claude mcp add --scope user ecomono-memory -- bun $MEMORY_MCP)"
   fi

@@ -34,7 +34,7 @@ The installer is **idempotent** and **non-destructive**: it symlinks config into
 from the template **only if absent** (never clobbers the runtime file); backs up any
 pre-existing real dir to `*.pre-ecomono.bak` before linking.
 
-It **registers** the `context7` MCP server and the native **ecomono-memory** MCP
+It **registers, and re-registers on drift,** the `context7` MCP server and the native **ecomono-memory** MCP
 server (a self-contained bun bundle, replacing the old `engram@engram` plugin,
 which it uninstalls). It also uninstalls the `superpowers` plugin, whose process
 skills now ship from `agent-skills/`.

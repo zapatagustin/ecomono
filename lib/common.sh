@@ -89,3 +89,47 @@ copy_patched() {
   sed "s|/home/agustin|$HOME|g" "$src" > "$dst"
 }
 
+# ---- MCP registration (reconciling, not presence-only) ----------------------
+# Register an MCP server, and RE-register it when what is already registered is
+# not what this repo now specifies.
+#
+#   ensure_mcp <name> <command> [args...]
+#
+# The presence-only form this replaces — `mcp get >/dev/null && skip` — is the same
+# seed-once-never-reconciled bug that let a hook sit in the template for days without
+# ever reaching a live machine. Here it bites through the version pin: bump
+# `@upstash/context7-mcp@2.2.5` in this repo and every machine that already registered
+# context7 keeps launching 2.2.5 forever, with no error and nothing to notice. The
+# ecomono-memory entry has the same shape and worse consequences, since its command is
+# an absolute path to a bundle that moves whenever the bundle is rebuilt.
+#
+# `flake.nix` already reasoned its way to this for ecomono-memory and not for context7,
+# which is how the gap was found — the fix existed, a few lines from the bug.
+#
+# ecomono: comparison is against `claude mcp get`'s printed `Command:` and `Args:`
+# lines, so it is exact rather than a substring grep for a distinctive path. That means
+# it re-registers on a purely cosmetic difference in how the args are spelled, which is
+# the safe direction: a needless re-add costs one command, and a missed one is the
+# stale-forever bug this exists to close.
+ensure_mcp() {
+  local name="$1"; shift
+  local want_cmd="$1"; shift
+  local want_args="$*"
+  local got got_cmd got_args
+
+  got="$(claude mcp get "$name" 2>/dev/null || true)"
+  if [ -n "$got" ]; then
+    got_cmd="$(printf '%s\n' "$got" | sed -n 's/^[[:space:]]*Command:[[:space:]]*//p')"
+    got_args="$(printf '%s\n' "$got" | sed -n 's/^[[:space:]]*Args:[[:space:]]*//p')"
+    if [ "$got_cmd" = "$want_cmd" ] && [ "$got_args" = "$want_args" ]; then
+      info "mcp $name ✓"
+      return 0
+    fi
+    warn "mcp $name is registered as '$got_cmd $got_args' — re-registering"
+    claude mcp remove "$name" >/dev/null 2>&1 || true
+  fi
+
+  claude mcp add --scope user "$name" -- "$want_cmd" "$@" \
+    || warn "could not register the $name mcp (retry: claude mcp add --scope user $name -- $want_cmd $want_args)"
+}
+

@@ -147,8 +147,27 @@
               if "$claude" plugin list 2>/dev/null | grep -q superpowers; then
                 "$claude" plugin uninstall superpowers@claude-plugins-official >/dev/null 2>&1 || true
               fi
-              if ! "$claude" mcp get context7 >/dev/null 2>&1; then
-                "$claude" mcp add --scope user context7 -- npx -y --package=@upstash/context7-mcp@2.2.5 -- context7-mcp \
+              # Reconciles, for the same reason the ecomono-memory block below does.
+              # This one skipped on presence until a judge pointed out the two sat a
+              # few lines apart with only one of them fixed: the version here is a
+              # pin, and bumping it has to reach a machine that already registered an
+              # older one. It never would have.
+              # Compared with `=` on the extracted Args line, not with grep. The first
+              # version grepped for the wanted string, which begins with `-y`: grep read
+              # it as a flag, failed, and the negation re-registered on every activation
+              # even when nothing had changed. `bash -n` passed it and so did a nix eval;
+              # running the rendered block against a stubbed `claude` showed it in one
+              # line. Equality cannot confuse a pattern with an option, so the class is
+              # gone rather than the instance. (The ecomono-memory check below still
+              # greps, and is safe only because its patterns are absolute paths.)
+              context7_want='-y --package=@upstash/context7-mcp@2.2.5 -- context7-mcp'
+              context7_have="$("$claude" mcp get context7 2>/dev/null | sed -n 's/^[[:space:]]*Args:[[:space:]]*//p')"
+              if [ "$context7_have" != "$context7_want" ]; then
+                if [ -n "$context7_have" ]; then
+                  "$claude" mcp remove context7 >/dev/null 2>&1 || true
+                fi
+                # shellcheck disable=SC2086
+                "$claude" mcp add --scope user context7 -- npx $context7_want \
                   || echo "warning: could not register context7 mcp"
               fi
               # Retire the old Gentleman-Programming engram plugin and the MCP

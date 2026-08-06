@@ -1034,6 +1034,29 @@ claim honestly: declared equals registered, never "will run" — and the header 
 two commits before a judge caught it, which is the same overclaim in the file that exists to
 argue against it.
 
+The same seam had two more instances, and they were found by a judge asked to sweep for them
+rather than by anyone noticing. `install.sh` and `flake.nix` both registered the `context7` MCP
+server on absence alone, and `install.sh` did the same for `ecomono-memory` — while `flake.nix`
+already implemented reconcile-on-drift for `ecomono-memory` a few lines above, having reasoned
+out the exact failure for that one and not looked sideways. Registering on absence means a bumped
+version pin, or a moved bundle path, reaches a machine that already registered once: never.
+
+`ensure_mcp` in `lib/common.sh` now compares the registered command against the intended one and
+re-registers on any difference; `flake.nix` does the same inline for `context7`, which is where
+the gap was.
+
+Two things about how that fix went are worth more than the fix. The flake's version had a real
+bug — it grepped for a string starting with `-y`, which grep read as a flag, so the check failed
+every time and re-registered on every activation. **`bash -n` passed it. A nix eval passed it.**
+What caught it was rendering the activation script and running the block against a stubbed
+`claude`, which showed it in one line of output. Syntax-checking generated shell proves the shell
+parses, nothing more, and that is a thin claim to rest on for code no test ever executes.
+
+And the fix for it was first `grep -qF --`, which closes the instance. It is now an `=` on the
+extracted `Args:` line, which closes the class: equality cannot mistake a pattern for an option.
+That is the same move as the hook check's — when the instance and the class cost about the same,
+take the class.
+
 What remains unported: `post-apply` and `pre-commit` have no reader. Neither is a delivery to
 anywhere — the bytes are still local and still revisable — which is why they were not built,
 not an oversight to be closed later. `release` does not exist here at all.
