@@ -3,17 +3,17 @@
 #
 # The check itself is the thing that catches a hook silently not running, so a
 # regression in it is silent by construction: it keeps printing `ok` while a declared
-# gate sits unwired. Across three review rounds, blind judges reproduced TEN ways two
-# earlier designs did exactly that — every case below named after one of them. The count
-# is not restated here as a number to keep in sync; `docs/DESIGN.md` holds the tally, and
-# the suite prints its own total by counting rather than by remembering. An earlier
-# version of this header said "four... five" long after there were eight, which is the
-# same staleness the closing comment warns about for the numeric total.
+# gate sits unwired. Across successive review rounds, blind judges reproduced a series of
+# ways two earlier designs did exactly that — every case below is named after one of
+# them. No tally here: an earlier version of this header carried one, and it was stale
+# within a round. The suite prints its own total by counting; the history is in
+# `git log -p`.
 #
-# The last three cases are the interesting ones: `args` and `once` are fields the check
-# never mentions, caught anyway because whole-entry comparison covers what nobody
-# enumerated. That is the claim of the current design, so it is tested rather than
-# asserted.
+# The interesting cases are the ones for `args` and `once`: neither has a dedicated
+# branch anywhere in the check, and both are caught because whole-entry comparison covers
+# what nobody implemented a rule for. (The claim used to be that the check "never
+# mentions" them, which was false — its comments name both. Naming an effect is not
+# implementing it, and the distinction is the whole point of the design.)
 #
 # Every case builds a throwaway "live settings" file and points the check at it
 # through ECOMONO_LIVE_SETTINGS, the seam the script already exposes. The real
@@ -132,11 +132,14 @@ elif mutation == "lost-one-if":
 elif mutation == "args-form":
     # Exec form: the script lives in `args`, and `command` is a bare executable name.
     # The old extractor read `command` only, resolved "node" to nothing, and dropped the
-    # entry from BOTH sides — a judge showed that reads as ok. Nothing in the check
-    # mentions `args`; whole-entry comparison covers it because it covers everything.
+    # entry from BOTH sides — a judge showed that reads as ok. No rule in the check
+    # handles `args`; whole-entry comparison covers it because it covers everything.
+    # `command` is left BYTE-IDENTICAL to the template on purpose. An earlier version
+    # also rewrote it to "node", which made the case pass on the command difference
+    # alone — it still passed with `args` fully excluded from the comparison, so it
+    # proved nothing about `args`. A judge isolated the two halves and caught it.
     _, hook = find("PreToolUse", "review-receipt-gate.sh")
-    hook["command"] = "node"
-    hook["args"] = ["$HOME/.claude/hooks/review-receipt-gate.sh"]
+    hook["args"] = ["--inspect"]
 
 elif mutation == "once-added":
     # `once: true` makes a hook self-delete after firing. No field of the old key
@@ -144,8 +147,14 @@ elif mutation == "once-added":
     _, hook = find("PreToolUse", "review-receipt-gate.sh")
     hook["once"] = True
 
-elif mutation == "vacuous-empty-hooks":
-    doc["hooks"] = {}
+elif mutation == "ignored-fields-differ":
+    # statusMessage and timeout are the two fields IGNORED_FIELDS excludes. A live file
+    # differing only in those must still pass, or the exclusion list is not doing the job
+    # that justifies calling the false-alarm rate low. Nothing tested this until a judge
+    # set IGNORED_FIELDS to () and watched every case stay green.
+    _, hook = find("PreToolUse", "review-receipt-gate.sh")
+    hook["statusMessage"] = "something else entirely"
+    hook["timeout"] = 99
 
 elif mutation == "disable-all":
     doc["disableAllHooks"] = True
@@ -254,19 +263,38 @@ build "lost-one-if"
 t fail "one of two registrations differing only by if: is gone"
 grep_out "check-diff-size.sh"
 
-# 7f, 7g — two fields NOBODY enumerated. The check never mentions `args` or `once`; if
-# whole-entry comparison works, these are caught anyway. That is the claim being tested.
+# 7f, 7g — two fields with no rule of their own anywhere in the check. If whole-entry
+# comparison works, they are caught regardless. That is the claim being tested.
 build "args-form"
-t fail "an args exec-form entry differs from the declared command form"
+t fail "an args key added live is drift, with command left identical"
 grep_out "review-receipt-gate.sh"
 
 build "once-added"
-t fail "a once: true added live is drift, though no field of the key names it"
+t fail "a once: true added live is drift, though no rule handles it"
 grep_out "review-receipt-gate.sh"
 
-# 7h — a live file with no hooks at all must not read as agreement.
-build "vacuous-empty-hooks"
-t fail "a live file with an empty hooks object is drift, not a vacuous pass"
+# 7h — the two IGNORED_FIELDS must actually be ignored. This is the case that keeps the
+# false-alarm rate honest: without it, shrinking the list breaks nothing visible.
+build "ignored-fields-differ"
+t pass "a differing statusMessage and timeout are ignored, not drift"
+
+# 7i — an empty TEMPLATE makes every comparison vacuous, so the check must refuse rather
+# than report `ok 0`. It has to be built on the template side: an earlier version emptied
+# the LIVE side instead, which is just case 2 for all eight hooks at once, and deleting
+# the guard entirely left all nineteen cases green. Both judges caught that independently.
+empty_tmpl="$fixture/empty-template.json"
+printf '{"hooks":{}}' > "$empty_tmpl"
+build ""
+cases=$((cases + 1))
+out=$(ECOMONO_TEMPLATE_SETTINGS="$empty_tmpl" ECOMONO_LIVE_SETTINGS="$live" \
+      bash "$repo/check-hook-install-drift.sh" 2>&1)
+if [ $? -ne 0 ] && printf '%s\n' "$out" | grep -qF "refusing to report a vacuous pass"; then
+  echo "ok   an empty template refuses rather than passing vacuously"
+else
+  echo "FAIL an empty template refuses rather than passing vacuously"
+  printf '     %s\n' "$out"
+  fail=1
+fi
 
 # 8 — disableAllHooks kill switch.
 build "disable-all"

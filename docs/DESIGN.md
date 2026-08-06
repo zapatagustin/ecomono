@@ -987,29 +987,37 @@ working that way, sitting two paragraphs below the correction that replaced it. 
 caught it. Worth naming because it is the failure this section is *about*, committed inside the
 account of it: a document describing a mechanism it no longer has.
 
-**Ten defects in three rounds, all one mistake, and the fix was to stop making the mistake
-possible.** Judges found ten ways this check printed `ok` while a declared hook was not running:
-wrong event, wrong matcher, a name inside a disabling comment, a same-named script in another
-tree, the two kill switches, a lost `if:` variant, a non-`command` type with a stale command
-string, an interpreter flag mistaken for the script, a quoted path with a space collapsing two
-scripts into one key, and an `args` exec-form entry invisible on both sides. Each round's fix
-exposed the next.
+**Round after round of one mistake, and the fix was to stop making the mistake possible.**
+Judges kept finding ways this check printed `ok` while a declared hook was not running: wrong
+event, wrong matcher, a name inside a disabling comment, the two kill switches, a lost `if:`
+variant, a non-`command` type with a stale command string, an interpreter flag mistaken for the
+script, a quoted path with a space collapsing two scripts into one key, an `args` exec-form entry
+invisible on both sides. Each round's fix exposed the next.
+
+That list used to carry a count, and the count was wrong three times — once miscounted, once
+padded with an item that had never actually failed, once attributing more of them to the
+tokenizer than the history supports. It is gone rather than corrected a fourth time. A tally
+maintained by hand in prose is the same object as a key maintained by hand in code: it rots
+quietly, and the only reason anyone noticed either was a reviewer going to the source. `git log
+-p` on the check is the derived version.
 
 The first two designs both picked fields by hand — a script basename, then
 `(event, matcher, if, script)`. Under a hand-picked key, **forgetting a field produces a false
-pass**, and the ways to forget are as open-ended as the schema. Nine of the ten were found by
-someone else, which is the number that settles whether "we have them all now" was ever a
-reasonable thing to believe.
+pass**, and the ways to forget are as open-ended as the schema. Almost every one was found by
+someone else, which settles whether "we have them all now" was ever a reasonable thing to
+believe.
 
 So the key became the whole hook entry, minus a two-name ignore list for `statusMessage` and
 `timeout`. Every field is compared because no field is chosen — `type`, `if`, `args`, `once`, and
 whatever the next release adds. The failure mode inverts with it: an unmodelled difference now
 reports drift, which is noisy and visible, instead of certifying a gate that is not there.
-Verified rather than argued — fixtures for `args` and `once` pass without either name appearing
-anywhere in the check.
+Verified rather than argued — fixtures for `args` and `once` fail correctly with no rule in the
+check handling either field. (The first version of this sentence said the names appeared nowhere
+in the check, which was false: its comments name both. Naming an effect is not implementing it,
+and a judge caught the claim in three files at once.)
 
 It also deleted the tokenizer. "Which token is the script" is a question about shell grammar, and
-four of the ten defects lived in the `str.split` that answered it. This document already carried
+several of the defects lived in the `str.split` that answered it. This document already carried
 that lesson for the review-receipt gate's own delivery scan, one section up, and the lesson did
 not transfer until the same bill arrived twice.
 

@@ -32,19 +32,35 @@
 #
 # ecomono: compares WHOLE HOOK ENTRIES, keyed by (event, matcher, the entry itself), not
 # a tuple of fields chosen by hand. Two earlier designs picked fields — first a bare
-# script basename, then (event, matcher, if, script) — and three review rounds found TEN
-# ways each of them printed `ok` while a declared hook was not running. Every one was the
-# same mistake: a field that decides whether a hook fires was not in the key, and
-# forgetting a field produced a false PASS. Comparing the entry makes forgetting
+# script basename, then (event, matcher, if, script) — and successive review rounds kept
+# finding fields neither key contained, each one a way to print `ok` while a declared
+# hook was not running. Every one was the same mistake: forgetting a field that decides
+# whether a hook fires produced a false PASS. Comparing the entry makes forgetting
 # impossible, and inverts the failure mode — an unmodelled difference now reports drift,
 # which is noisy and visible rather than silent and wrong. `IGNORED_FIELDS` is the
 # opt-out and it is two names long. hook_keys carries the full argument.
 #
+# No count here on purpose. Earlier revisions of this comment kept a running tally of
+# defects found, and it was wrong three times — miscounted, then padded with an item
+# that had never actually failed. A number maintained by hand in prose is the same
+# object as a key maintained by hand in code: it rots silently and nobody notices. The
+# history is in `git log -p` on this file and the narrative is in `docs/DESIGN.md`; both
+# are derived from something, which this sentence is not.
+#
 # It also deleted a tokenizer. "Which token is the script" is a question about shell
-# grammar, four of the ten defects lived in the `str.split` that answered it, and this
+# grammar, several of the defects lived in the `str.split` that answered it, and this
 # repo has the same postmortem already written for the review-receipt-gate's delivery
 # scan (see `docs/DESIGN.md`, "Delivery detection went the other way"). Nothing here
 # parses a command now.
+#
+# ecomono: ONE-DIRECTIONAL, deliberately. It reports what the template declares and the
+# live file lacks, never the reverse. An extra live hook is usually a local addition and
+# not this check's business — but a hook RETIRED from the template is a different story,
+# and this repo retires them routinely (the gentle-ai skill-registry hook, the caveman
+# plugin). Because settings.json is seeded once and never overwritten, a retired hook
+# stays wired and firing forever, and nothing here will say so. That is a known gap in
+# the opposite direction from the one this file was built for, recorded rather than
+# closed because reporting every local addition as drift is how a check gets ignored.
 #
 # `disableAllHooks` and `allowManagedHooksOnly` are checked directly and fail the run
 # whatever the entries say — both suppress hooks Claude Code would otherwise fire.
@@ -137,8 +153,11 @@ def hook_keys(doc):
     not in the key, so forgetting it produced a false PASS.
 
     Comparing the whole entry makes forgetting impossible by construction. `type`, `if`,
-    `args`, `once`, `async`, and any field a future Claude Code release adds are all in
-    the key without anyone having to notice them. The failure mode inverts with it: an
+    `args`, `once`, `async`, and any field a future release adds are all in the key with
+    NO DEDICATED BRANCH for any of them — naming them here is describing the effect, not
+    implementing it, and deleting this paragraph would change nothing about what is
+    compared. (An earlier version of this claim said such fields were "never named
+    anywhere in the check", which was false in three files at once, this one included.) The failure mode inverts with it: an
     unmodelled difference now reports drift — noisy, visible, and safe — instead of
     certifying a gate that is not there. `IGNORED_FIELDS` is the opt-out, and it is two
     names long and in plain sight, which is the opposite of a tuple whose omissions are
