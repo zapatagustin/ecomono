@@ -1017,6 +1017,18 @@ shapes failed. The rule this document keeps arriving at, applied here: a negativ
 the same standard of evidence as a positive one, and the cheap move when a test will not fail on
 a mutation is to keep removing things from the test, not to delete it.
 
+One more of these is worth recording, because it is the same shape arriving from the opposite
+direction. A judge reported that an `execFile` `maxBuffer` overrun sets `killed: true` with
+`code: null`, indistinguishable from a timeout, and that the captured bytes never reach the
+callback. Both halves went into a comment. The next round's other judge measured them: the code
+is `ERR_CHILD_PROCESS_STDIO_MAXBUFFER`, `killed` is `undefined`, and the bytes *do* arrive in
+`stdout` — the branch simply declines to read them, since a truncated JSON object is not a
+decision. Re-measured here on Node 24 and Bun 1.3.13 before believing either judge. The branch
+order was right the whole time and its justification was wrong, which is the failure this
+document has now recorded three times in one change: **a confident claim from a reviewer is a
+hypothesis, and this repo's convention of writing measurements into comments only pays off if
+the measurement is actually taken.**
+
 Three more things were found by building it. `os.homedir()` is documented to read `$HOME` on POSIX and
 bun does not — it resolves once at process start and ignores later assignment — so the plugin
 reads the variable first, which is both the documented semantics and what lets a test point at
