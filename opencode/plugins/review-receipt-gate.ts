@@ -52,6 +52,23 @@
  * repeated. Upgrade path is the same one: enforce in CI, where the party being gated
  * does not control the environment.
  *
+ * The other half of that ceiling, and a different risk class: an MCP tool that can
+ * deliver. `hook.tool !== "bash"` returns early, so a hypothetical
+ * `mcp__github__create_pull_request` is invisible here — and to the Claude hook too,
+ * whose matcher is the equally narrow `Bash`. The distinction from the `!` path is that
+ * the user initiates that one and already owns the override, while an MCP call is the
+ * agent's, which is exactly who this gates.
+ *
+ * Not built, and the reason is not just that no such server is configured today
+ * (`context7` and `ecomono-memory`, neither of which executes anything). It is that the
+ * check does not transfer: this gate scans a command STRING for a delivery written in
+ * the clear, and an MCP tool has structured arguments and no command string —
+ * `{owner, repo, head, base}` contains no `push` to find. Gating it means a different
+ * mechanism, deny-by-tool-name, sharing no code with this one, and today its list would
+ * be empty. Build it the day an exec- or delivery-capable MCP server is installed: the
+ * set of tools to refuse is knowable at that moment, which is the thing that makes
+ * deny-by-name workable then and impossible now.
+ *
  * Subagent `bash` calls ARE covered — verified from the shipped binary, not reasoned
  * about: `SessionTools.resolve` wraps every tool's `execute`, bash included, with
  * `i.trigger("tool.execute.before", ...)`, for a top-level session and a subagent
