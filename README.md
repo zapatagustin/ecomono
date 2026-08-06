@@ -249,8 +249,8 @@ to the top-level symlinks removed first, e.g. `~/.claude/CLAUDE.md.pre-ecomono.b
 Undo the MCP registrations:
 
 ```sh
-claude mcp remove context7
-claude mcp remove ecomono-memory
+claude mcp remove -s user context7
+claude mcp remove -s user ecomono-memory
 ```
 
 (the installer also retires the old `superpowers` and `engram` plugins/MCP entries —

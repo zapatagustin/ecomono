@@ -22,6 +22,11 @@ echo real > "$REPO/agent-skills/alpha/SKILL.md"
 
 # shellcheck source=/dev/null
 . lib/common.sh
+# common.sh sets `set -euo pipefail` at its own top, and sourcing leaks that errexit
+# into this file — which is built to tally every failure and keep going. Measured:
+# `$-` reads `ehuBc` after the source, and one failing check aborted the run with no
+# FAIL line for anything after it. Reset it, or this harness reports less than it saw.
+set +e
 
 # --- link ------------------------------------------------------------------
 dst="$tmp/dest"
@@ -110,6 +115,11 @@ chmod 755 "$needed"
 # later version bump. Every case below drives a fake `claude` on PATH and asserts on
 # the subcommands it received — the real one is never invoked and no MCP entry on this
 # machine is touched.
+# The real binary, resolved BEFORE the stub goes on PATH. The scope test below needs
+# the actual CLI; without this it silently drove the stub, which has no notion of scope
+# and made the case pass for nothing.
+REAL_CLAUDE="$(command -v claude || true)"
+
 mcpbin="$tmp/bin"; mkdir -p "$mcpbin"
 calls="$tmp/mcp-calls"
 cat > "$mcpbin/claude" <<'STUB'
@@ -215,6 +225,17 @@ onlycmd='context7:
   Command: npx
   Args: -y --package=@upstash/context7-mcp@2.1.0 -- context7-mcp'
 
+# A per-server Timeout: only reachable by `mcp add-json` or a hand edit, and the one
+# thing standing between it and remove-then-add. Deleting its clause used to fail
+# nothing at all.
+timedout='context7:
+  Scope: User config (available in all your projects)
+  Type: stdio
+  Command: npx
+  Args: -y --package=@upstash/context7-mcp@2.1.0 -- context7-mcp
+  Timeout: 5000ms'
+
+mcp_case "a per-server Timeout is never clobbered"           "$timedout"    no  no
 mcp_case "stdio but no Command is not reconcilable"          "$onlytype"    no  no
 mcp_case "a command under a non-stdio Type is not either"    "$onlycmd"     no  no
 
@@ -242,5 +263,45 @@ else
   ok "the log fallback never reaches a PATH binary named info"
 fi
 rm -f "$mcpbin/info"
+
+# ---- scope, against the REAL claude ---------------------------------------
+# Every case above stubs `claude`, and a stub has no notion of scope — which is
+# precisely how three rounds of review missed the worst defect this file ever had:
+# `mcp get` and `mcp remove` resolve a name across user, local AND project scope, so
+# an unscoped remove run from inside a repo whose committed .mcp.json names one of
+# these servers deleted that team's tracked entry. A stub cannot model that. This one
+# drives the real binary inside an isolated HOME and a throwaway project.
+if [ -n "$REAL_CLAUDE" ]; then
+  # `mcp get` and `mcp remove` resolve a name across USER, LOCAL and PROJECT scope, so
+  # an unscoped remove is decided by the invoking shell's cwd. With the same name in a
+  # project's .mcp.json and in user scope, a bare `mcp remove` refuses ("exists in
+  # multiple scopes"), `|| true` swallows it, the following `add` fails as "already
+  # exists", and the stale entry survives — the feature silently doing nothing, which
+  # is precisely the bug it was built to close. Measured both ways: scoped, the pin
+  # moves to the current one; unscoped, it stays behind.
+  repo_root="$PWD"
+  scope_home="$tmp/scope-home"; scope_proj="$tmp/scope-proj"
+  mkdir -p "$scope_home" "$scope_proj"
+  printf '{"mcpServers":{"context7":{"command":"someone-elses","args":["--x"]}}}' \
+    > "$scope_proj/.mcp.json"
+  HOME="$scope_home" "$REAL_CLAUDE" mcp add --scope user context7 \
+    -- npx -y --package=@upstash/context7-mcp@2.1.0 -- context7-mcp >/dev/null 2>&1
+  (
+    cd "$scope_proj" || exit 1
+    export HOME="$scope_home" CLAUDE_BIN="$REAL_CLAUDE"
+    # shellcheck source=/dev/null
+    . "$repo_root/lib/mcp.sh"
+    ensure_context7_mcp
+  ) >/dev/null 2>&1
+  got_pin="$(HOME="$scope_home" "$REAL_CLAUDE" mcp get context7 2>/dev/null \
+             | sed -n 's/^[[:space:]]*Args:[[:space:]]*//p')"
+  check "a colliding project entry does not stall the reconcile" \
+    "$got_pin" "-y --package=@upstash/context7-mcp@2.2.5 -- context7-mcp"
+  check "and the project's own .mcp.json is left alone" \
+    "$(cat "$scope_proj/.mcp.json")" \
+    '{"mcpServers":{"context7":{"command":"someone-elses","args":["--x"]}}}'
+else
+  ok "skip: claude not on PATH, cannot exercise real scope behaviour"
+fi
 
 exit "$fail"

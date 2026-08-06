@@ -82,12 +82,22 @@ ensure_mcp() {
     if [ -z "$reconcilable" ]; then
       _mcp_warn "mcp $name differs from this repo's spec, and is not a plain stdio entry this installer can rebuild."
       _mcp_warn "  leaving it alone. To take the new spec and re-apply your own settings:"
-      _mcp_warn "    claude mcp remove $name && claude mcp add --scope user $name -- $want_cmd $want_args"
+      _mcp_warn "    claude mcp remove -s user $name && claude mcp add --scope user $name -- $want_cmd $want_args"
       return 0
     fi
 
     _mcp_warn "mcp $name is registered as '$got_cmd $got_args' — re-registering"
-    "$CLAUDE_BIN" mcp remove "$name" >/dev/null 2>&1 || true
+    # `-s user`, never bare. `mcp get` and `mcp remove` resolve a name across USER,
+    # LOCAL and PROJECT scope, so without this the reconciler is scope-blind and the
+    # invoking shell's cwd decides what it touches. Two things measured, both bad:
+    # inside a repo whose committed `.mcp.json` happens to name one of these servers,
+    # an unscoped remove DELETES that team's tracked entry ("File modified:
+    # .../.mcp.json"); and when the name exists in user AND project scope it refuses
+    # with "exists in multiple scopes", which `|| true` swallows, so the following
+    # `add` fails as "already exists" and the entry stays exactly as stale as before —
+    # the feature silently doing nothing, which is the bug it was built to close.
+    # Scoped, a name that only exists elsewhere is simply not ours to touch.
+    "$CLAUDE_BIN" mcp remove -s user "$name" >/dev/null 2>&1 || true
   fi
 
   "$CLAUDE_BIN" mcp add --scope user "$name" -- "$want_cmd" "$@" \
