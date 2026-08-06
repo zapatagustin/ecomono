@@ -956,8 +956,17 @@ The cause is a seam nobody was watching. `claude/settings.template.json` is the 
 for which hooks exist, but it is only ever a SEED: `install.sh` writes it once and then refuses
 to touch it, because Claude Code rewrites that file at runtime, and `flake.nix` declines to
 manage it for the same reason. Both refusals are correct. Together they mean a hook added to the
-template after a machine was set up reaches that machine never, silently — the template names
-eight hooks, the live file had seven, and nothing compared them.
+template after a machine was set up reaches that machine never, silently — the template declares
+eight hook registrations across seven distinct scripts (`check-diff-size.sh` is registered twice,
+once per `if:` condition), the live file had seven, and nothing compared them.
+
+The unit matters and cost two corrections to settle. The check counts REGISTRATIONS, because a
+registration is what decides whether a hook fires: two entries naming one script under different
+`if:` conditions are two gates, and losing one is a real loss. An earlier version keyed on the
+script alone, reported seven where the template has eight, and — measured, not supposed — printed
+`ok` after one of the `check-diff-size.sh` pair was deleted from the live file. Whatever the
+settings file uses to decide whether a hook runs belongs in the key; anything left out is a
+dimension along which the check will certify a gate that is not there.
 
 The lesson is not "check your config". It is that **verifying a mechanism is not verifying its
 wiring**, and the two are easy to confuse precisely when the mechanism is elaborate enough to be

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Every hook the template declares is actually registered in the live settings.
+# Every hook the template declares is actually running in the live settings.
 #
 # This exists because the gap it checks for shipped silently and stayed hidden for
 # days. `claude/settings.template.json` is the source of truth for which hooks should
@@ -17,12 +17,38 @@
 # a marker file sitting next to receipts reads exactly like protection while providing
 # none.
 #
-# ecomono: this compares two artifacts as sets — the hook COMMANDS the template names
-# against the ones the live file names — and makes no judgment about whether either is
-# correct or whether a registered hook would do anything useful. That is the shape
-# `docs/DESIGN.md` argues survives. It deliberately does not check matchers, ordering,
-# statusMessage or timeout: those are edited on purpose per machine, and failing on them
-# would train the reader to ignore this. Missing entirely is the failure that was real.
+# The first version of this check compared a flat set of script basenames found
+# anywhere in any command string, and ignored matchers as "per-machine customization".
+# Two blind judges reproduced, against a copy of the live settings, four ways that
+# shape prints `ok` while the declared gate does not run: the script registered under
+# the wrong EVENT (`Notification` instead of `PreToolUse`), the same script under a
+# MATCHER that never fires for the tool it is meant to gate, the script named only in
+# a disabling comment (`true # was .../foo.sh, disabled pending fix`), and
+# `disableAllHooks: true` set alongside every entry still present. The matcher
+# justification was wrong for this hook family; dropped.
+#
+# ecomono: compares (event, matcher, script) TRIPLES, not basenames, and requires the
+# script in EXECUTABLE POSITION — token 0 of the command, or token 1 if token 0 is a
+# known interpreter (node/bash/sh/python3/python). That is a question about tokens, not
+# about what the command would do: the same class of question this repo already got
+# wrong once in the review-receipt-gate's own delivery-detection scan (see
+# `docs/DESIGN.md`, "Delivery detection went the other way" and the key-learnings
+# postmortem it references) — a text scanner reasoning about meaning keeps passing for
+# the wrong reason, and a fifth pattern is not the fix. A leading `$HOME`, `${HOME}` or
+# `~` is normalized on both sides so the template's unexpanded path and a fully
+# expanded live path compare equal, while a same-named script filed under an unrelated
+# tree does not. `disableAllHooks` and `allowManagedHooksOnly` are checked directly and
+# fail the run whatever the triples say — both suppress hooks Claude Code itself would
+# otherwise fire.
+#
+# ecomono: still deliberately blind to whether a registered hook would actually run.
+# Reading a settings file cannot know: managed-settings precedence over this one,
+# hooks a plugin contributes outside this file, or whether a hook that IS wired fires
+# and exits zero for a real tool call. A judge measured the way to close that last gap:
+# `claude -p "<probe>" --output-format stream-json --include-hook-events` emits a real
+# `hook_started` per hook that actually fired — genuine ground truth, but it costs a
+# model turn per run, so it belongs in an occasional manual check or a CI smoke test,
+# not in this script.
 #
 # ecomono: it skips rather than fails when there is no live settings file, because a
 # fresh clone and CI both legitimately have none. That is a silent pass on the machine
@@ -44,43 +70,101 @@ fi
 command -v python3 >/dev/null 2>&1 || { echo "skip python3 unavailable"; exit 0; }
 
 python3 - "$TEMPLATE" "$LIVE" <<'PY'
-import json, sys, re
+import json, os, sys
 
-def hook_commands(path):
-    """The set of ~/.claude/hooks/ scripts a settings file registers, by basename.
+INTERPRETERS = {"node", "bash", "sh", "python3", "python"}
+HOME = os.environ.get("HOME", "")
 
-    Basename, not the whole command: the template writes `$HOME/...` while a live file
-    may hold an expanded path, and a `node "$HOME/..."` wrapper puts the script in
-    argument position. Comparing raw strings reports drift on two spellings of one hook.
-    """
+def load(path):
     try:
         with open(path) as fh:
-            doc = json.load(fh)
+            return json.load(fh)
     except (OSError, json.JSONDecodeError) as exc:
         print(f"error: cannot read {path}: {exc}", file=sys.stderr)
         sys.exit(1)
-    found = set()
-    for entries in (doc.get("hooks") or {}).values():
-        for group in entries:
+
+def normalize_path(token):
+    """Collapse $HOME, ${HOME}, ~ and an already-expanded $HOME into one spelling.
+
+    So the template's `$HOME/...` and a live file holding either the unexpanded
+    string or a fully expanded path compare equal, while a same-named script filed
+    under an unrelated tree does not.
+    """
+    for prefix in ("${HOME}", "$HOME"):
+        if token.startswith(prefix):
+            return "~" + token[len(prefix):]
+    if token.startswith("~"):
+        return token
+    if HOME and token.startswith(HOME):
+        return "~" + token[len(HOME):]
+    return token
+
+def invoked_script(command):
+    """The token in executable position — token 0, or token 1 behind a known
+    interpreter. A question about tokens, not about what the command would do."""
+    tokens = [t.replace('"', "").replace("'", "") for t in command.split()]
+    if not tokens:
+        return None
+    first = tokens[0]
+    if os.path.basename(first) in INTERPRETERS and len(tokens) > 1:
+        return normalize_path(tokens[1])
+    return normalize_path(first)
+
+def hook_keys(doc):
+    """The set of (event, matcher, if, invoked-script) keys a settings file registers.
+
+    `if` is part of the key, not a detail. `check-diff-size.sh` is registered TWICE
+    under the same event and matcher, separated only by its `if:` condition — one per
+    delivery shape it guards. Keyed on (event, matcher, script) alone the two collapse
+    into one, and dropping either registration reads as fully installed while the gate
+    silently stops firing for that shape. Measured on the real live file: deleting one
+    of the pair printed `ok`. That is the same defect two judges had just closed one
+    dimension up, reappearing here — every dimension the settings file uses to decide
+    WHETHER a hook runs has to be part of the key.
+    """
+    keys = set()
+    for event, groups in (doc.get("hooks") or {}).items():
+        for group in groups:
+            matcher = group.get("matcher", "")
             for hook in group.get("hooks", []):
                 command = hook.get("command", "")
-                for match in re.finditer(r"\.claude/hooks/([A-Za-z0-9._-]+)", command):
-                    found.add(match.group(1))
-    return found
+                script = invoked_script(command)
+                if script:
+                    keys.add((event, matcher, hook.get("if", ""), script))
+    return keys
 
-template, live = sys.argv[1], sys.argv[2]
-declared = hook_commands(template)
-installed = hook_commands(live)
+template_path, live_path = sys.argv[1], sys.argv[2]
+template_doc, live_doc = load(template_path), load(live_path)
+
+fail = False
+
+for flag, meaning in (
+    ("disableAllHooks", "suppresses every hook, managed or not"),
+    ("allowManagedHooksOnly", "suppresses every user-configured hook"),
+):
+    if live_doc.get(flag) is True:
+        print(f"DRIFT — {live_path} sets \"{flag}\": true, which {meaning}")
+        print("       whatever the registered hooks say, none of them are running.")
+        fail = True
+
+declared = hook_keys(template_doc)
+installed = hook_keys(live_doc)
 missing = sorted(declared - installed)
 
 if missing:
-    print(f"DRIFT — {live} is missing {len(missing)} hook(s) the template declares:")
-    for name in missing:
-        print(f"       {name}")
+    print(f"DRIFT — {live_path} is missing {len(missing)} hook(s) the template declares:")
+    for event, matcher, cond, script in missing:
+        where = f"event={event} matcher={matcher!r}"
+        if cond:
+            where += f" if={cond!r}"
+        print(f"       {where} script={script}")
     print("       settings.json is seeded once and never overwritten, so a hook added to")
-    print("       the template after install never arrives. Add them by hand, or the gate")
-    print("       they implement is not running on this machine.")
-    sys.exit(1)
+    print("       the template — or moved to a different event/matcher — never arrives.")
+    print("       Add it by hand, or the gate it implements is not running on this machine.")
+    fail = True
 
-print(f"ok   all {len(declared)} template hooks are registered live")
+if not fail:
+    print(f"ok   all {len(declared)} template hooks are registered live")
+
+sys.exit(1 if fail else 0)
 PY
