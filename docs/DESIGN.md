@@ -987,17 +987,44 @@ working that way, sitting two paragraphs below the correction that replaced it. 
 caught it. Worth naming because it is the failure this section is *about*, committed inside the
 account of it: a document describing a mechanism it no longer has.
 
-The dimension count is the part worth carrying forward. Three rounds found eight ways this check
-printed `ok` while a declared hook was not running — wrong event, wrong matcher, a name inside a
-disabling comment, a same-named script in another tree, the two kill switches, a lost `if:`
-variant, a non-`command` type with a stale command string, and an interpreter flag mistaken for
-the script. Each round's fix exposed the next. They share one shape: **every field the settings
-file uses to decide whether a hook runs must be part of the key, and anything left out is an axis
-along which the check certifies a gate that is not there.** The check is worth keeping despite
-that history — a judge measured the alternative, `claude -p --include-hook-events`, which is real
-ground truth but costs a model turn per run, needs auth, is non-deterministic, and this repo has
-no CI to put it in. What is shipped makes the smaller claim honestly: declared equals registered,
-never "will run".
+**Ten defects in three rounds, all one mistake, and the fix was to stop making the mistake
+possible.** Judges found ten ways this check printed `ok` while a declared hook was not running:
+wrong event, wrong matcher, a name inside a disabling comment, a same-named script in another
+tree, the two kill switches, a lost `if:` variant, a non-`command` type with a stale command
+string, an interpreter flag mistaken for the script, a quoted path with a space collapsing two
+scripts into one key, and an `args` exec-form entry invisible on both sides. Each round's fix
+exposed the next.
+
+The first two designs both picked fields by hand — a script basename, then
+`(event, matcher, if, script)`. Under a hand-picked key, **forgetting a field produces a false
+pass**, and the ways to forget are as open-ended as the schema. Nine of the ten were found by
+someone else, which is the number that settles whether "we have them all now" was ever a
+reasonable thing to believe.
+
+So the key became the whole hook entry, minus a two-name ignore list for `statusMessage` and
+`timeout`. Every field is compared because no field is chosen — `type`, `if`, `args`, `once`, and
+whatever the next release adds. The failure mode inverts with it: an unmodelled difference now
+reports drift, which is noisy and visible, instead of certifying a gate that is not there.
+Verified rather than argued — fixtures for `args` and `once` pass without either name appearing
+anywhere in the check.
+
+It also deleted the tokenizer. "Which token is the script" is a question about shell grammar, and
+four of the ten defects lived in the `str.split` that answered it. This document already carried
+that lesson for the review-receipt gate's own delivery scan, one section up, and the lesson did
+not transfer until the same bill arrived twice.
+
+**The general form, which is the part worth carrying to the next check:** when a comparison must
+model something open-ended, choose the direction where omissions are loud. A key of chosen fields
+fails silently and needs a reviewer to notice each gap; a key of everything fails noisily and
+needs an explicit, visible exception per thing you decide not to care about. The second is worse
+to read and better to trust.
+
+The check is worth keeping despite the history. A judge measured the alternative,
+`claude -p --include-hook-events`, which is real ground truth but costs a model turn, needs auth,
+is non-deterministic, and this repo has no CI to put it in. What is shipped makes the smaller
+claim honestly: declared equals registered, never "will run" — and the header said "running" for
+two commits before a judge caught it, which is the same overclaim in the file that exists to
+argue against it.
 
 What remains unported: `post-apply` and `pre-commit` have no reader. Neither is a delivery to
 anywhere — the bytes are still local and still revisable — which is why they were not built,

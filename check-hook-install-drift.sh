@@ -1,5 +1,8 @@
 #!/usr/bin/env bash
-# Every hook the template declares is actually running in the live settings.
+# Every hook the template declares is registered in the live settings. Registered, not
+# running — see the ceiling below. An earlier revision of this line said "running", which
+# is the overclaim this whole file exists to argue against, and two review rounds read past
+# it. Corrected on the third.
 #
 # This exists because the gap it checks for shipped silently and stayed hidden for
 # days. `claude/settings.template.json` is the source of truth for which hooks should
@@ -27,19 +30,24 @@
 # `disableAllHooks: true` set alongside every entry still present. The matcher
 # justification was wrong for this hook family; dropped.
 #
-# ecomono: compares (event, matcher, script) TRIPLES, not basenames, and requires the
-# script in EXECUTABLE POSITION — token 0 of the command, or token 1 if token 0 is a
-# known interpreter (node/bash/sh/python3/python). That is a question about tokens, not
-# about what the command would do: the same class of question this repo already got
-# wrong once in the review-receipt-gate's own delivery-detection scan (see
-# `docs/DESIGN.md`, "Delivery detection went the other way" and the key-learnings
-# postmortem it references) — a text scanner reasoning about meaning keeps passing for
-# the wrong reason, and a fifth pattern is not the fix. A leading `$HOME`, `${HOME}` or
-# `~` is normalized on both sides so the template's unexpanded path and a fully
-# expanded live path compare equal, while a same-named script filed under an unrelated
-# tree does not. `disableAllHooks` and `allowManagedHooksOnly` are checked directly and
-# fail the run whatever the triples say — both suppress hooks Claude Code itself would
-# otherwise fire.
+# ecomono: compares WHOLE HOOK ENTRIES, keyed by (event, matcher, the entry itself), not
+# a tuple of fields chosen by hand. Two earlier designs picked fields — first a bare
+# script basename, then (event, matcher, if, script) — and three review rounds found TEN
+# ways each of them printed `ok` while a declared hook was not running. Every one was the
+# same mistake: a field that decides whether a hook fires was not in the key, and
+# forgetting a field produced a false PASS. Comparing the entry makes forgetting
+# impossible, and inverts the failure mode — an unmodelled difference now reports drift,
+# which is noisy and visible rather than silent and wrong. `IGNORED_FIELDS` is the
+# opt-out and it is two names long. hook_keys carries the full argument.
+#
+# It also deleted a tokenizer. "Which token is the script" is a question about shell
+# grammar, four of the ten defects lived in the `str.split` that answered it, and this
+# repo has the same postmortem already written for the review-receipt-gate's delivery
+# scan (see `docs/DESIGN.md`, "Delivery detection went the other way"). Nothing here
+# parses a command now.
+#
+# `disableAllHooks` and `allowManagedHooksOnly` are checked directly and fail the run
+# whatever the entries say — both suppress hooks Claude Code would otherwise fire.
 #
 # ecomono: still deliberately blind to whether a registered hook would actually run.
 # Reading ONE settings file cannot know: precedence from the other layers Claude Code
@@ -79,8 +87,12 @@ command -v python3 >/dev/null 2>&1 || { echo "skip python3 unavailable"; exit 0;
 python3 - "$TEMPLATE" "$LIVE" <<'PY'
 import json, os, sys
 
-INTERPRETERS = {"node", "bash", "sh", "python3", "python"}
 HOME = os.environ.get("HOME", "")
+
+# Cosmetic per-hook fields, excluded from the comparison BY NAME so the exclusion is
+# visible and short. Everything not listed here is compared. That direction is the whole
+# point of this rewrite — see hook_keys.
+IGNORED_FIELDS = ("statusMessage", "timeout")
 
 def load(path):
     try:
@@ -90,75 +102,69 @@ def load(path):
         print(f"error: cannot read {path}: {exc}", file=sys.stderr)
         sys.exit(1)
 
-def normalize_path(token):
-    """Collapse $HOME, ${HOME}, ~ and an already-expanded $HOME into one spelling.
+def normalize_home(text):
+    """One spelling for the home directory, whichever way a file spells it.
 
-    So the template's `$HOME/...` and a live file holding either the unexpanded
-    string or a fully expanded path compare equal, while a same-named script filed
-    under an unrelated tree does not.
+    The template writes `$HOME/...`; a live file may hold that, `${HOME}/...`, `~/...`,
+    or a fully expanded absolute path. All four mean the same location and must compare
+    equal, while a same-named script under an unrelated tree must not.
     """
-    for prefix in ("${HOME}", "$HOME"):
-        if token.startswith(prefix):
-            return "~" + token[len(prefix):]
-    if token.startswith("~"):
-        return token
-    if HOME and token.startswith(HOME):
-        return "~" + token[len(HOME):]
-    return token
+    if not isinstance(text, str):
+        return text
+    for spelling in ("${HOME}", "$HOME"):
+        text = text.replace(spelling, "~")
+    if HOME:
+        text = text.replace(HOME, "~")
+    return text
 
-def invoked_script(command):
-    """The token in executable position — token 0, or the first non-flag token behind a
-    known interpreter. A question about tokens, not about what the command would do.
-
-    The flag skip is not cosmetic. Taking token 1 unconditionally returned the FLAG for
-    `bash -x foo.sh`, so `bash -x foo.sh` and `bash -x totally-different.sh` produced the
-    identical key `-x` and compared equal — two different scripts, one key, a false `ok`
-    with the declared gate replaced by something else entirely. Reproduced by a judge
-    against the real template. Returning None when nothing resolves is deliberate: an
-    unresolvable command must not silently become a match, and dropping it from the
-    declared set surfaces as drift rather than as agreement.
-    """
-    tokens = [t.replace('"', "").replace("'", "") for t in command.split()]
-    if not tokens:
-        return None
-    if os.path.basename(tokens[0]) in INTERPRETERS:
-        for token in tokens[1:]:
-            if not token.startswith("-"):
-                return normalize_path(token)
-        return None
-    return normalize_path(tokens[0])
+def canonical(hook):
+    """A hook entry reduced to a comparable form: every field kept except the cosmetic
+    ones, key order irrelevant."""
+    kept = {k: v for k, v in hook.items() if k not in IGNORED_FIELDS}
+    return json.dumps(kept, sort_keys=True, default=str)
 
 def hook_keys(doc):
-    """The set of (event, matcher, if, invoked-script) keys a settings file registers.
+    """The set of (event, matcher, whole-hook) keys a settings file registers.
 
-    `if` is part of the key, not a detail. `check-diff-size.sh` is registered TWICE
-    under the same event and matcher, separated only by its `if:` condition — one per
-    delivery shape it guards. Keyed on (event, matcher, script) alone the two collapse
-    into one, and dropping either registration reads as fully installed while the gate
-    silently stops firing for that shape. Measured on the real live file: deleting one
-    of the pair printed `ok`. That is the same defect two judges had just closed one
-    dimension up, reappearing here — every dimension the settings file uses to decide
-    WHETHER a hook runs has to be part of the key.
+    THIS COMPARES THE ENTIRE HOOK ENTRY, not a tuple of fields picked by hand, and that
+    inversion is the point. Three review rounds found TEN ways the hand-picked version
+    printed `ok` while a declared hook was not running: wrong event, wrong matcher, the
+    script named inside a disabling comment, a same-named script in another tree, the two
+    kill switches, a lost `if:` variant, a non-`command` `type` with a stale command
+    string, an interpreter flag mistaken for the script, a quoted path containing a space
+    collapsing two scripts into one key, and an `args` exec-form entry invisible on both
+    sides. Every one was the same mistake: a field that decides whether a hook runs was
+    not in the key, so forgetting it produced a false PASS.
 
-    Only `type: "command"` hooks are registrations for this purpose. The real schema
-    also has `prompt`, `agent`, `callback` and `mcp_tool` types, none of which execute
-    the `command` field — a hook whose type was changed while its stale `command` string
-    stayed behind does not run, and keying on the command alone computed the same key
-    and printed `ok`. Also reproduced by a judge against the real template. An entry with
-    a type this does not recognise contributes to neither side, so a template that starts
-    using one will read as absent from live rather than as silently satisfied.
+    Comparing the whole entry makes forgetting impossible by construction. `type`, `if`,
+    `args`, `once`, `async`, and any field a future Claude Code release adds are all in
+    the key without anyone having to notice them. The failure mode inverts with it: an
+    unmodelled difference now reports drift — noisy, visible, and safe — instead of
+    certifying a gate that is not there. `IGNORED_FIELDS` is the opt-out, and it is two
+    names long and in plain sight, which is the opposite of a tuple whose omissions are
+    invisible.
+
+    It also deleted the tokenizer. Extracting "the script" from a command string was a
+    question about shell grammar answered with `str.split`, and four of the ten defects
+    lived in it. Nothing here parses a command any more; two commands are the same
+    command when their text matches after the home directory is spelled one way.
     """
     keys = set()
     for event, groups in (doc.get("hooks") or {}).items():
         for group in groups:
             matcher = group.get("matcher", "")
             for hook in group.get("hooks", []):
-                if hook.get("type", "command") != "command":
-                    continue
-                script = invoked_script(hook.get("command", ""))
-                if script:
-                    keys.add((event, matcher, hook.get("if", ""), script))
+                keys.add((event, matcher, canonical(normalize_tree(hook))))
     return keys
+
+def normalize_tree(value):
+    """normalize_home applied through nested lists and dicts, so a path inside `args`
+    normalizes the same way one inside `command` does."""
+    if isinstance(value, dict):
+        return {k: normalize_tree(v) for k, v in value.items()}
+    if isinstance(value, list):
+        return [normalize_tree(v) for v in value]
+    return normalize_home(value)
 
 template_path, live_path = sys.argv[1], sys.argv[2]
 template_doc, live_doc = load(template_path), load(live_path)
@@ -180,18 +186,28 @@ missing = sorted(declared - installed)
 
 if missing:
     print(f"DRIFT — {live_path} is missing {len(missing)} hook(s) the template declares:")
-    for event, matcher, cond, script in missing:
-        where = f"event={event} matcher={matcher!r}"
-        if cond:
-            where += f" if={cond!r}"
-        print(f"       {where} script={script}")
+    for event, matcher, entry in missing:
+        # The whole entry is printed, not a summary of it. The operator has to add this
+        # by hand, and a summary would omit exactly the field that differs — which is
+        # the mistake the key itself just stopped making.
+        print(f"       event={event} matcher={matcher!r} hook={entry}")
     print("       settings.json is seeded once and never overwritten, so a hook added to")
     print("       the template — or moved to a different event/matcher — never arrives.")
     print("       Add it by hand, or the gate it implements is not running on this machine.")
     fail = True
 
+if not declared:
+    # An empty declared set makes `declared - installed` empty too, so every check below
+    # passes vacuously. Reachable by pointing either env seam at a file with no hooks —
+    # most plausibly a human who exported one while debugging this script and forgot to
+    # unset it before running check.sh for real. A technically-true `ok 0` on a check
+    # whose entire subject is false confidence is the one output it must never produce.
+    print(f"error: {template_path} declares no hooks — refusing to report a vacuous pass",
+          file=sys.stderr)
+    sys.exit(1)
+
 if not fail:
-    print(f"ok   all {len(declared)} template hooks are registered live")
+    print(f"ok   all {len(declared)} template hook registrations are present live")
 
 sys.exit(1 if fail else 0)
 PY

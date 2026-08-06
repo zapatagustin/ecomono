@@ -3,10 +3,17 @@
 #
 # The check itself is the thing that catches a hook silently not running, so a
 # regression in it is silent by construction: it keeps printing `ok` while a declared
-# gate sits unwired. Two blind judges reproduced, against a copy of the real live
-# settings, four ways the previous basename-set version passed while a declared hook
-# was not running (cases 3-6 below) plus the kill switches (cases 8-9) — this suite
-# exists so none of the five can regress unnoticed.
+# gate sits unwired. Across three review rounds, blind judges reproduced TEN ways two
+# earlier designs did exactly that — every case below named after one of them. The count
+# is not restated here as a number to keep in sync; `docs/DESIGN.md` holds the tally, and
+# the suite prints its own total by counting rather than by remembering. An earlier
+# version of this header said "four... five" long after there were eight, which is the
+# same staleness the closing comment warns about for the numeric total.
+#
+# The last three cases are the interesting ones: `args` and `once` are fields the check
+# never mentions, caught anyway because whole-entry comparison covers what nobody
+# enumerated. That is the claim of the current design, so it is tested rather than
+# asserted.
 #
 # Every case builds a throwaway "live settings" file and points the check at it
 # through ECOMONO_LIVE_SETTINGS, the seam the script already exposes. The real
@@ -92,7 +99,7 @@ elif mutation == "node-wrapped":
     hook["command"] = 'node "$HOME/.claude/hooks/secret-access-gate.sh"'
 
 elif mutation == "wrong-type":
-    # Type changed, stale command left behind. A prompt/agent/callback/mcp_tool hook
+    # Type changed, stale command left behind. A prompt/agent/http/mcp_tool hook
     # never executes the command field, so the gate does not run — but keyed on the
     # command alone it computed the same key and read as installed.
     _, hook = find("PreToolUse", "review-receipt-gate.sh")
@@ -121,6 +128,24 @@ elif mutation == "lost-one-if":
         raise SystemExit("fixture bug: expected check-diff-size.sh registered twice")
     group, hook = matches[1]
     group["hooks"].remove(hook)
+
+elif mutation == "args-form":
+    # Exec form: the script lives in `args`, and `command` is a bare executable name.
+    # The old extractor read `command` only, resolved "node" to nothing, and dropped the
+    # entry from BOTH sides — a judge showed that reads as ok. Nothing in the check
+    # mentions `args`; whole-entry comparison covers it because it covers everything.
+    _, hook = find("PreToolUse", "review-receipt-gate.sh")
+    hook["command"] = "node"
+    hook["args"] = ["$HOME/.claude/hooks/review-receipt-gate.sh"]
+
+elif mutation == "once-added":
+    # `once: true` makes a hook self-delete after firing. No field of the old key
+    # modelled it. Same construction argument: not enumerated, still compared.
+    _, hook = find("PreToolUse", "review-receipt-gate.sh")
+    hook["once"] = True
+
+elif mutation == "vacuous-empty-hooks":
+    doc["hooks"] = {}
 
 elif mutation == "disable-all":
     doc["disableAllHooks"] = True
@@ -169,9 +194,14 @@ build "unrelated-tree"
 t fail "same basename filed under an unrelated tree"
 grep_out "review-receipt-gate.sh"
 
-# 7 — a node "$HOME/..." wrapped command still resolves to the right script.
+# 7 — the live command wraps the declared script in an interpreter the template does
+# not use. The old extractor called these equal because it reached past the wrapper for
+# "the script"; comparing the whole entry calls it what it is. `node foo.sh` and
+# `foo.sh` are not the same command, and a wrapper appearing on one side only is either
+# a deliberate local change worth surfacing or a mistake worth catching.
 build "node-wrapped"
-t pass "a node \"\$HOME/...\" wrapped command is still recognized"
+t fail "a wrapper the template does not declare is drift"
+grep_out "secret-access-gate.sh"
 
 # 7c — type changed away from "command", stale command string left in place.
 build "wrong-type"
@@ -224,14 +254,28 @@ build "lost-one-if"
 t fail "one of two registrations differing only by if: is gone"
 grep_out "check-diff-size.sh"
 
+# 7f, 7g — two fields NOBODY enumerated. The check never mentions `args` or `once`; if
+# whole-entry comparison works, these are caught anyway. That is the claim being tested.
+build "args-form"
+t fail "an args exec-form entry differs from the declared command form"
+grep_out "review-receipt-gate.sh"
+
+build "once-added"
+t fail "a once: true added live is drift, though no field of the key names it"
+grep_out "review-receipt-gate.sh"
+
+# 7h — a live file with no hooks at all must not read as agreement.
+build "vacuous-empty-hooks"
+t fail "a live file with an empty hooks object is drift, not a vacuous pass"
+
 # 8 — disableAllHooks kill switch.
 build "disable-all"
-t fail "disableAllHooks: true fails regardless of the triples"
+t fail "disableAllHooks: true fails regardless of the registrations"
 grep_out "disableAllHooks"
 
 # 9 — allowManagedHooksOnly kill switch.
 build "managed-only"
-t fail "allowManagedHooksOnly: true fails regardless of the triples"
+t fail "allowManagedHooksOnly: true fails regardless of the registrations"
 grep_out "allowManagedHooksOnly"
 
 # 10 — live file absent: skip, exit 0.
