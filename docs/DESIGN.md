@@ -947,6 +947,30 @@ The tradeoff costs nothing in real enforcement, since anything that can empty `P
 set the release valve; a client-side hook was never protection against intent. It is recorded
 in an `ecomono:` comment in the gate, as this document argued it should be.
 
+**And for its first days none of it ran.** The gate was written, reviewed across four rounds
+and a 4R pass, armed with a marker, and watched refusing a push — by invoking the script by hand.
+Its hook was never in the live `~/.claude/settings.json`. A real `git push` went straight through
+an armed repository while this document claimed the mechanism worked.
+
+The cause is a seam nobody was watching. `claude/settings.template.json` is the source of truth
+for which hooks exist, but it is only ever a SEED: `install.sh` writes it once and then refuses
+to touch it, because Claude Code rewrites that file at runtime, and `flake.nix` declines to
+manage it for the same reason. Both refusals are correct. Together they mean a hook added to the
+template after a machine was set up reaches that machine never, silently — the template names
+eight hooks, the live file had seven, and nothing compared them.
+
+The lesson is not "check your config". It is that **verifying a mechanism is not verifying its
+wiring**, and the two are easy to confuse precisely when the mechanism is elaborate enough to be
+worth verifying. Every test written for this gate was real and passed; the marker file sat next
+to real receipts; the refusal text was correct. All of it described a gate that was not
+installed. A marker that reads as protection while providing none is worse than no marker,
+because it retires the question.
+
+`check-hook-install-drift.sh` closes the seam: the set of hook scripts the template names,
+against the set the live settings names. It skips when there is no live file, since a fresh clone
+and CI both legitimately have none — a silent pass on the machine least likely to need it, which
+is the honest tradeoff for a check about an installed machine drifting from its source.
+
 What remains unported: `post-apply` and `pre-commit` have no reader. Neither is a delivery to
 anywhere — the bytes are still local and still revisable — which is why they were not built,
 not an oversight to be closed later. `release` does not exist here at all.
