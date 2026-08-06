@@ -1044,18 +1044,19 @@ NixOS — and the check that would catch it is a check for a list that should no
 The flake now enumerates the directory with `builtins.readDir`, which deletes the class instead
 of guarding it.
 
-### Open: onboard is registered as delegated and written as interactive
+### Onboard was registered as delegated and written as interactive
 
 `agent-skills/ecomono-sdd-onboard/SKILL.md` says it "runs **inline**, not delegated… a
 sub-agent cannot have it", and carries `metadata.delegate_only: false` — the only SDD phase
-skill that does. Five places disagree: `claude/agents/ecomono-sdd-onboard.md` exists with
-`model: haiku`, both command files delegate to it, and the orchestrator's model table assigns
-it a tier as a delegated phase. Its own procedure then asks the user to pick among options and
-to approve each phase, which a delegated call cannot do — on opencode only the `orchestrator`
-holds `question: true`, and the Claude agent's tool list has no ask mechanism either.
+skill that does. Five places disagreed: `claude/agents/ecomono-sdd-onboard.md` existed with
+`model: haiku`, both command files delegated to it, and the orchestrator's model table assigned
+it a tier as a delegated phase. Its own procedure asks the user to pick among options and to
+approve each phase, which a delegated call cannot do — on opencode only the `orchestrator` holds
+`question: true`, and the Claude agent's tool list had no ask mechanism either.
 
-Nothing reads `delegate_only`; it is self-descriptive metadata. So this is a truth problem
-rather than a runtime one, which is how it survived unnoticed.
+Nothing read `delegate_only`; it was self-descriptive metadata. So this was a truth problem
+rather than a runtime one, which is how it survived unnoticed — a flag stating a constraint,
+with no reader to enforce it, next to five files quietly violating it.
 
 An attempt to close it during an unrelated review made it worse and was reverted. Flipping the
 flag to match the five places that delegate it left the interactive steps asserting something
@@ -1065,33 +1066,32 @@ a `{change-name}`, which in the normal flow arrives as the literal `/ecomono-sdd
 argument, and no phase here has ever had to derive one from a runtime conversation. Two blind
 judges traced that independently; the receipt at `review/07569a6f9102` records the chain.
 
-Closing it properly needs three things at once. Each is a decision, not just an edit, which is
-why this is its own cycle rather than a fix to bolt onto a review of something else — the more
-useful lesson here than any of the individual defects.
+**Closed by deleting the delegation, not by supporting it.** The tool grants decide it and
+nothing else gets a vote: `question` appears exactly twice in `opencode.json` and both are the
+`orchestrator`, and no Claude sub-agent holds an ask mechanism either. A delegated onboard cannot
+perform its own procedure. So `claude/agents/ecomono-sdd-onboard.md` is gone, the opencode
+sub-agent definition and its task-allowlist entry are gone, both command files run the skill
+inline unconditionally, and the orchestrator's model table no longer assigns it a tier — a phase
+nothing delegates to has no model to pick.
 
-**1. Where a `{change-name}` comes from.** Every artifact key is `sdd/{change-name}/{type}`, and
-in the normal flow that slug is the literal `/ecomono-sdd-new <name>` argument. Onboard chooses
-its change mid-conversation, so no argument exists. No phase in this repo has ever had to derive
-one, so there is no pattern to copy: it has to be minted, either by the pick step from the option
-the user chose, or by the orchestrator when it collects that answer. Whichever mints it also has
-to forward it on *every* later relaunch, not only the first — a phase name alone does not tell a
-resumed agent which change it is continuing. `ecomono-sdd-explore`'s `sdd/explore/{topic-slug}`
-standalone fallback does not apply, because onboard produces real artifacts.
+Two of the three decisions this section used to demand dissolved on contact with that, and the
+dissolution is the lesson. **Inline onboard *is* the orchestrator.** `sdd/{change-name}/state` is
+already documented in `memory-convention.md` as orchestrator-written, so state and read-back stop
+being onboard's problem the moment it stops pretending to be a sub-agent — no bespoke key, no
+bespoke read-back step. The third shrank to nothing: the change name is not *derived* from the
+conversation, it is **minted** at the end of the pick step by the thing that just spoke to the
+user, and from there the walkthrough is an ordinary named change indistinguishable from one
+started by `/ecomono-sdd-new <slug>`.
 
-**2. Which single persistence key.** The reverted attempt produced two, and neither read the
-other: `ecomono-sdd-onboard/{project}`, project-scoped and matching `ecomono-sdd-init/{project}`,
-and `sdd/{change-name}/state`, the canonical DAG-state key `memory-convention.md` defines. The two
-judges disagreed on which was correct — one read the project-scoped key as a parallel invention,
-the other as an established shorthand not meant to carry resume state. Note the constraint that
-settles it either way: a project-scoped key cannot hold per-change state for more than one
-walkthrough, and the canonical key needs decision 1 first.
+The reverted attempt failed because it tried to resolve all three from inside a delegated agent,
+which is the one place none of them are solvable. Three decisions that look independent can share
+a single wrong premise, and the useful move is to test the premise before pricing the decisions.
 
-**3. A read-back step.** Nothing searched the persisted state, so a compaction mid-cycle would
-silently restart at the pick step with the written data orphaned. `claude/commands/ecomono-sdd-apply.md`'s
-"CHECK PREVIOUS PROGRESS" step is the shape to copy; onboard has no equivalent.
-
-One trap, because it caught this twice: `agent-skills/ecomono-sdd-onboard/SKILL.md` and
-`claude/agents/ecomono-sdd-onboard.md` are loaded independently and nothing enforces they agree.
-The second is where "execute all steps in this context window" lives. Editing either alone
-produces two files actively contradicting each other about the same agent.
+The trap that caught this twice — `SKILL.md` and `claude/agents/*.md` loaded independently with
+nothing enforcing agreement — is now guarded by `check-inline-skill-drift.sh`: for every skill
+declaring `delegate_only: false`, no agent file and no `opencode.json` agent entry may exist. It
+is a set of skills compared against a set of files, which is the shape this document argues
+survives, and unlike the key-learnings check it was watched failing in both halves before being
+believed. That also gives `delegate_only` its first reader — until now it was self-descriptive
+metadata nothing consulted, which is precisely how the contradiction lived so long.
 

@@ -4,7 +4,7 @@ agent: orchestrator
 subtask: true
 ---
 
-You are the `orchestrator`, not an SDD executor. This command may launch the hidden `ecomono-sdd-onboard` sub-agent only after the orchestration gates below pass.
+You are the `orchestrator`. Onboard runs inline in this thread, unconditionally, once the orchestration gates below pass — there is no sub-agent to launch.
 
 CONTEXT:
 
@@ -17,6 +17,6 @@ HARD GATES:
 2. Use the resolved artifact store from session preflight; do not hardcode ecomono-memory.
 
 TASK:
-If all gates pass, launch the hidden `ecomono-sdd-onboard` sub-agent to guide the user through a real SDD cycle. Keep user-facing pauses in interactive mode and enforce the review budget before apply.
+If all gates pass, read the skill file at `~/.config/opencode/skills/ecomono-sdd-onboard/SKILL.md` and follow it exactly, inline, to guide the user through a real SDD cycle. Keep user-facing pauses in interactive mode and enforce the review budget before apply.
 
 Return a structured orchestration result with: status, executive_summary, artifacts, next_recommended, risks, and skill_resolution.

@@ -28,7 +28,6 @@
           "ecomono-sdd-design": "allow",
           "ecomono-sdd-explore": "allow",
           "ecomono-sdd-init": "allow",
-          "ecomono-sdd-onboard": "allow",
           "ecomono-sdd-propose": "allow",
           "ecomono-sdd-spec": "allow",
           "ecomono-sdd-tasks": "allow",
@@ -175,19 +174,6 @@
       "hidden": true,
       "mode": "subagent",
       "prompt": "You are an SDD executor for the init phase, not the orchestrator. Do this phase's work yourself. Do NOT delegate, Do NOT call task, and Do NOT launch sub-agents. Read your skill file at ~/.config/opencode/skills/ecomono-sdd-init/SKILL.md and follow it exactly.",
-      "tools": {
-        "bash": true,
-        "edit": true,
-        "read": true,
-        "write": true
-      }
-    },
-    "ecomono-sdd-onboard": {
-      "description": "Guide user through a complete SDD cycle using their real codebase",
-      "model": "nvidia/deepseek-ai/deepseek-v4-flash",
-      "hidden": true,
-      "mode": "subagent",
-      "prompt": "You are an SDD executor for the onboard phase, not the orchestrator. Do this phase's work yourself. Do NOT delegate, Do NOT call task, and Do NOT launch sub-agents. Read your skill file at ~/.config/opencode/skills/ecomono-sdd-onboard/SKILL.md and follow it exactly.",
       "tools": {
         "bash": true,
         "edit": true,

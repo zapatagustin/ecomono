@@ -2,8 +2,7 @@
 description: Guided SDD walkthrough — onboard a user through the full SDD cycle using their real codebase
 ---
 
-If the native `ecomono-sdd-onboard` sub-agent is available, delegate this command to it.
-Otherwise, read the skill file at `~/.claude/skills/ecomono-sdd-onboard/SKILL.md` FIRST, then follow its instructions exactly inline.
+Read the skill file at `~/.claude/skills/ecomono-sdd-onboard/SKILL.md` FIRST, then follow its instructions exactly inline. Onboard always runs inline — no sub-agent to delegate to.
 
 CONTEXT:
 - Working directory: Detect agent-side before proceeding by running `git rev-parse --show-toplevel` with the Bash tool; if that fails, run `pwd` with the Bash tool.

@@ -101,7 +101,7 @@ Phase skills, in autocomplete:
 | `/ecomono-sdd-apply [change]` | Implement tasks in batches, checking them off |
 | `/ecomono-sdd-verify [change]` | Validate against spec: CRITICAL / WARNING / SUGGESTION |
 | `/ecomono-sdd-archive [change]` | Close the change, persist final state |
-| `/ecomono-sdd-onboard` | Guided walkthrough on the user's real codebase |
+| `/ecomono-sdd-onboard` | Guided walkthrough on the user's real codebase — runs inline, never delegated |
 
 Meta-commands **you** handle — never invoke them as skills:
 
@@ -253,7 +253,6 @@ model is Claude Code's business, not this table's.
 | `ecomono-sdd-apply` | sonnet | Implementation |
 | `ecomono-sdd-verify` | sonnet | Validation against spec |
 | `ecomono-sdd-archive` | sonnet | Destructive merge into the baseline, behind four gates |
-| `ecomono-sdd-onboard` | haiku | Guided, pedagogical |
 | `ecomono-judge-a` | sonnet | Blind adversarial review |
 | `ecomono-judge-b` | sonnet | Blind adversarial review |
 | `ecomono-judge-fix` | sonnet | Surgical fixes from confirmed issues |
