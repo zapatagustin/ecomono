@@ -28,6 +28,10 @@ import { ReviewReceiptGatePlugin } from "../review-receipt-gate"
 
 const roots: string[] = []
 const realHome = process.env.HOME
+const realXdgConfigHome = process.env.XDG_CONFIG_HOME
+const realGitConfigGlobal = process.env.GIT_CONFIG_GLOBAL
+const realGitConfigSystem = process.env.GIT_CONFIG_SYSTEM
+const realGitConfigNosystem = process.env.GIT_CONFIG_NOSYSTEM
 
 /** A fixture HOME whose gate script is `body`. Omit `body` to leave it absent. */
 function fixture(body?: string) {
@@ -50,6 +54,17 @@ async function runHook(
   tool = "bash",
 ): Promise<Error | null> {
   process.env.HOME = fx.home
+  // Isolates the SCRIPT's own git calls, not just the ones made directly in this file.
+  // `runGate` spawns the script with `execFile(script, [], { cwd, ... })` — no `env` —
+  // so it inherits ambient `process.env`, where only `HOME` was mutated above. That left
+  // the script's own `git diff` / `git merge-base` / `git config` reading the operator's
+  // real global config. Verified: with `XDG_CONFIG_HOME` pointed at a config containing
+  // `[diff] noprefix = true`, the script computed a different subject hash than the one
+  // this file computes independently, and the suite failed on a wrong-reason assertion.
+  process.env.XDG_CONFIG_HOME = join(fx.home, ".config")
+  process.env.GIT_CONFIG_GLOBAL = "/dev/null"
+  process.env.GIT_CONFIG_SYSTEM = "/dev/null"
+  process.env.GIT_CONFIG_NOSYSTEM = "1"
   try {
     const hooks = await ReviewReceiptGatePlugin({ directory: fx.repo } as any)
     const before = hooks["tool.execute.before"]!
@@ -62,6 +77,14 @@ async function runHook(
   } finally {
     if (realHome === undefined) delete process.env.HOME
     else process.env.HOME = realHome
+    if (realXdgConfigHome === undefined) delete process.env.XDG_CONFIG_HOME
+    else process.env.XDG_CONFIG_HOME = realXdgConfigHome
+    if (realGitConfigGlobal === undefined) delete process.env.GIT_CONFIG_GLOBAL
+    else process.env.GIT_CONFIG_GLOBAL = realGitConfigGlobal
+    if (realGitConfigSystem === undefined) delete process.env.GIT_CONFIG_SYSTEM
+    else process.env.GIT_CONFIG_SYSTEM = realGitConfigSystem
+    if (realGitConfigNosystem === undefined) delete process.env.GIT_CONFIG_NOSYSTEM
+    else process.env.GIT_CONFIG_NOSYSTEM = realGitConfigNosystem
   }
 }
 
@@ -163,6 +186,35 @@ const DENY = (reason: string) =>
   )
 }
 
+// --- output.args.workdir overrides the session directory ---------------------------
+//
+// opencode's `bash` tool runs the command in `workdir` when the call sets one, not in
+// the session directory — see the comment beside `cwd` in review-receipt-gate.ts.
+
+{
+  const fx = fixture(`#!/usr/bin/env bash\ncat >/dev/null\npwd > "$(dirname "$0")/cwd.txt"\n`)
+  const target = mkdtempSync(join(fx.root, "workdir-"))
+  const err = await runHook(fx, { command: "git push", workdir: target })
+  assert.strictEqual(err, null)
+  assert.strictEqual(
+    readFileSync(join(fx.home, ".claude", "hooks", "cwd.txt"), "utf8").trim(),
+    target,
+    "an absolute workdir must be used verbatim, not the session directory",
+  )
+}
+
+{
+  const fx = fixture(`#!/usr/bin/env bash\ncat >/dev/null\npwd > "$(dirname "$0")/cwd.txt"\n`)
+  mkdirSync(join(fx.repo, "sub"))
+  const err = await runHook(fx, { command: "git push", workdir: "sub" })
+  assert.strictEqual(err, null)
+  assert.strictEqual(
+    readFileSync(join(fx.home, ".claude", "hooks", "cwd.txt"), "utf8").trim(),
+    join(fx.repo, "sub"),
+    "a relative workdir must resolve against the session directory, not the process cwd",
+  )
+}
+
 // --- what must never reach the script ---------------------------------------------
 
 {
@@ -240,6 +292,17 @@ const DENY = (reason: string) =>
   // timeout, hanging check.sh forever, and a global `core.autocrlf` or a diff `textconv`
   // changes the bytes `git diff` emits, so the subject hash stops matching the script's
   // and the test fails for a reason that has nothing to do with the plugin.
+  //
+  // That isolation used to cover only the `git` calls made directly below, through
+  // `gitEnv` and `execFileSync`. It did NOT cover the gate SCRIPT itself, spawned by
+  // `runHook` through the plugin's `runGate`, which passes no `env` to `execFile` and so
+  // inherited ambient `process.env` — where only `HOME` was mutated. `runHook` now
+  // mutates `GIT_CONFIG_GLOBAL`, `GIT_CONFIG_SYSTEM`, `GIT_CONFIG_NOSYSTEM` and
+  // `XDG_CONFIG_HOME` on `process.env` itself, restoring them the way `HOME` already
+  // was, so the spawned script gets the same isolation as the direct calls below.
+  // Verified by reproducing the exact failure and confirming the fix removes it: with
+  // `XDG_CONFIG_HOME` pointed at a config setting `[diff] noprefix = true`, this whole
+  // file failed on a wrong-reason assertion before this fix and passes after it.
   const gitEnv = {
     ...process.env,
     HOME: fx.home,

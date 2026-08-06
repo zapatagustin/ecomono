@@ -77,19 +77,18 @@
           # is a whole class of drift, and enumerating deletes it instead of
           # needing a check to catch it.
           #
-          # Untracked cruft is filtered here rather than left to .gitignore.
-          # `builtins.readDir` reads the filesystem at eval time and knows
-          # nothing about git: consumed as `github:zapatagustin/ecomono` the
-          # source only ever holds committed files, but a host evaluating this
-          # module from a local checkout (`home-manager switch --flake .`)
-          # copies the working directory verbatim. Reproduced, twice.
-          #
-          # The filter matches the classes .gitignore already names, not just
-          # node_modules — opencode installs deps into exactly this directory at
-          # runtime, and home-manager leaves *.hm-bak beside the files it
-          # replaces. A first version excluded node_modules alone while the
-          # comment claimed the general principle; a judge dropped a .hm-bak and
-          # a dotfile in and watched both ship.
+          # The name exclusions below cover node_modules, dotfiles, *.hm-bak and
+          # *.bak. Be precise about what they are worth, because two earlier
+          # versions of this comment overstated it and a judge disproved each:
+          # they matter only for a file that was actually COMMITTED. Nix's flake
+          # fetch is git-aware on every real consumption path — `github:` serves
+          # a tarball of committed content, and a local `--flake .` from inside
+          # this git repo sees only tracked files — so untracked cruft never
+          # reaches `builtins.readDir` at all, gitignored or not. The repro that
+          # appeared to show otherwise used `getFlake (toString ./.)` under
+          # `--impure`, which reads the raw working tree and is not how anyone
+          # consumes this. Cheap insurance against a bad commit, not a runtime
+          # guard.
           xdg.configFile = {
             "opencode/tui-plugins".source = ./opencode/tui-plugins;
             "opencode/package.json".source = ./opencode/package.json;
@@ -97,16 +96,21 @@
           # entry. Be clear about what it does NOT do, because the first version of
           # this comment claimed the fix and the claim did not survive being tested:
           # a FIFO, socket or device node directly under opencode/plugins/ still
-          # fails evaluation from a local checkout, with "file has an unsupported
-          # type", and it fails BEFORE this filter runs — reading the directory
-          # copies it, and the copy is what rejects the file type. No attribute
-          # filter can prevent that; only not reading the directory could.
+          # fails evaluation, with "file has an unsupported type", and it fails
+          # BEFORE this filter runs — reading the directory copies it, and the copy
+          # is what rejects the file type. No attribute filter can prevent that;
+          # only not reading the directory could.
           #
-          # It is narrow. `github:` and `git+file://` sources are git-filtered and a
-          # special file cannot be committed, so the documented consumption path
-          # never sees it; a dirty local checkout with a stray socket does. Recorded
-          # rather than closed, because closing it means going back to the
-          # hand-written list and the drift class that came with it.
+          # It reproduces only when there is no `.git` at the flake root at all. A
+          # judge showed the scenario the previous version of this comment named — "a
+          # dirty local checkout with a stray socket" — cannot happen: a local path
+          # flake evaluated from inside a git repository only ever sees git-tracked
+          # content, so an untracked special file never reaches `builtins.readDir` in
+          # the first place, and `git add` on a FIFO silently no-ops, so it cannot
+          # become tracked either. The name exclusions below (`node_modules`,
+          # dotfiles, `.hm-bak`, `.bak`) matter, with git filtering already in play,
+          # only for a file that was actually committed — an untracked one of those
+          # never reaches this filter to begin with.
           } // lib.mapAttrs' (name: _:
             lib.nameValuePair "opencode/plugins/${name}" {
               source = ./opencode/plugins + "/${name}";

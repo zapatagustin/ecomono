@@ -52,15 +52,13 @@
  * repeated. Upgrade path is the same one: enforce in CI, where the party being gated
  * does not control the environment.
  *
- * Subagent `bash` calls are believed covered and that belief is REASONED, not observed:
- * plugins register once per opencode server process, not per session, and the hook's
- * input carries a `sessionID` per call rather than one per plugin instance, which is the
- * shape of a single global interceptor. Nobody has driven a live subagent through it.
- * Two reviewers raised it independently and neither could settle it from a read-only
- * pass. It matters more than the usual unverified caveat, because this repo's own
- * workflow delegates shell work to subagents constantly: if the hook does not fire
- * there, a whole class of delivery is ungated and looks exactly like an allow. Settle it
- * before treating the marker as enforcement.
+ * Subagent `bash` calls ARE covered — verified from the shipped binary, not reasoned
+ * about: `SessionTools.resolve` wraps every tool's `execute`, bash included, with
+ * `i.trigger("tool.execute.before", ...)`, for a top-level session and a subagent
+ * session alike, and `SessionPrompt.handleSubtask` fires that same trigger itself
+ * before resolving the subagent's tools through that path. Two reviewers previously
+ * raised this as unsettled from a read-only pass; it is now settled in the
+ * affirmative.
  *
  * ecomono: a timeout kills the direct child, not its process group, so a `git diff` the
  * script spawned outlives it as an orphan. Bounded — one per timed-out call, and it
@@ -73,7 +71,7 @@
 import type { Plugin } from "@opencode-ai/plugin"
 import { execFile } from "node:child_process"
 import { homedir } from "node:os"
-import { join } from "node:path"
+import { join, resolve } from "node:path"
 
 // The script's slow path is one `git diff` per distinct merge-base. Generous, because
 // the cost of being wrong is a fail-open push on a large repository. Not measured
@@ -81,8 +79,11 @@ import { join } from "node:path"
 // bound chosen to be safe, not as a number anything established.
 const TIMEOUT_MS = 30_000
 
-// The script prints one small JSON object. Sized well past that so a stdout that grows
-// unexpectedly is truncated rather than silently dropping the decision.
+// The script prints one small JSON object. Sized well past that so an ordinary run never
+// gets near the limit. Exceeding it does NOT truncate: Node and Bun both KILL the child
+// and deliver ERR_CHILD_PROCESS_STDIO_MAXBUFFER once `maxBuffer` is crossed, so the bytes
+// captured so far never reach the callback — a plain fail-open, same as any other spawn
+// error, handled by the branch below rather than by reading a partial stdout.
 const MAX_STDOUT_BYTES = 4 * 1024 * 1024
 
 /**
@@ -100,7 +101,7 @@ function failedOpen(why: string) {
  * broken environment into a blocked push.
  */
 function runGate(script: string, payload: string, cwd: string): Promise<string> {
-  return new Promise((resolve) => {
+  return new Promise((settle) => {
     let child
     try {
       child = execFile(
@@ -108,14 +109,21 @@ function runGate(script: string, payload: string, cwd: string): Promise<string> 
         [],
         { cwd, timeout: TIMEOUT_MS, maxBuffer: MAX_STDOUT_BYTES },
         (err: any, stdout) => {
-          if (!err) return resolve(stdout)
-          // Named separately because they are different operator problems: a timeout is
-          // a repository too slow for the budget, a signal is the gate being killed, and
-          // the rest is usually a missing or unrunnable script.
-          if (err.killed) failedOpen(`the gate did not finish within ${TIMEOUT_MS}ms`)
-          else if (err.code === "ENOENT") failedOpen(`no gate script at ${script}`)
+          if (!err) return settle(stdout)
+          // Checked before `err.killed`: a `maxBuffer` overrun ALSO sets `killed: true`
+          // with `code: null`, which is otherwise indistinguishable from a real timeout.
+          // Named separately because they are different operator problems — a timeout is
+          // a repository too slow for the budget, an oversized stdout is the script
+          // breaking its own small-JSON contract — and the rest is usually a missing or
+          // unrunnable script.
+          if (err.code === "ERR_CHILD_PROCESS_STDIO_MAXBUFFER")
+            failedOpen(`the gate printed more than ${MAX_STDOUT_BYTES} bytes and was killed`)
+          else if (err.killed) failedOpen(`the gate did not finish within ${TIMEOUT_MS}ms`)
+          // execFile also returns ENOENT when `cwd` itself does not exist, not only when
+          // the script is missing — the message covers both rather than asserting one.
+          else if (err.code === "ENOENT") failedOpen(`no gate script at ${script}, or no such cwd (${cwd})`)
           else failedOpen(`the gate exited with ${err.code ?? err.signal ?? "an error"}`)
-          resolve("")
+          settle("")
         },
       )
     } catch (err: any) {
@@ -125,7 +133,7 @@ function runGate(script: string, payload: string, cwd: string): Promise<string> 
       // hook and refuse a delivery the gate never judged — fail-closed, on an
       // environment fault.
       failedOpen(`the gate could not be spawned (${err?.message ?? err})`)
-      resolve("")
+      settle("")
       return
     }
     // The script exits before reading stdin on its early-allow paths — the release
@@ -163,9 +171,22 @@ export const ReviewReceiptGatePlugin: Plugin = async (input) => {
       if (typeof command !== "string" || command === "") return
 
       // The script resolves the repository from its own cwd, exactly as the Claude
-      // hook does. `input.directory` is the session's, which is the one the bash tool
-      // will run in unless the command itself changes it.
-      const cwd = input.directory || input.worktree || process.cwd()
+      // hook does. But opencode's `bash` tool takes an optional `workdir` and RUNS THE
+      // COMMAND THERE — verified against the shipped binary (opencode 1.18.11): the
+      // tool's schema is `workdir: p.optional(p.String)`, its cwd is computed as
+      // `w.workdir ? resolve(w.workdir, U.directory) : U.directory`, and the tool's own
+      // description tells the model to prefer `workdir` over an embedded `cd <dir> &&`.
+      // Reading only `input.directory`/`input.worktree` evaluated the wrong repository
+      // whenever a call set `workdir`: a silent allow when the session directory was
+      // unarmed and the workdir target was armed, and a wrong approval the other way
+      // round. So `output.args.workdir` is resolved the same way the tool resolves it —
+      // relative to the session directory, an absolute path left untouched — and only
+      // the fallback chain below is used when it is absent. Claude Code's Bash tool has
+      // no per-call cwd override, which is why the shell hook this plugin shells out to
+      // needs no equivalent.
+      const sessionDir = input.directory || input.worktree || process.cwd()
+      const workdir = output?.args?.workdir
+      const cwd = typeof workdir === "string" && workdir !== "" ? resolve(sessionDir, workdir) : sessionDir
 
       const stdout = await runGate(script, JSON.stringify({ tool_input: { command } }), cwd)
       if (stdout.trim() === "") return // allow: the script prints nothing to permit
