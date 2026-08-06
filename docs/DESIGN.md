@@ -1053,15 +1053,30 @@ more duplication. The copies had already diverged inside that single commit: the
 `Command` and `Args`, the flake's copy compared only `Args`, so a launcher swapped from `npx` to
 `bunx` was invisible on NixOS. No test caught it; a judge did, by mutation.
 
-Two measurements shaped what the helper does, and both contradicted a plausible guess. `claude
-mcp add` **refuses an existing name** — exit 1, entry unchanged — so reconciling really does need
-remove-then-add; a judge had reasoned from the config file's shape that `add` was an upsert and
-that the `remove` bought nothing, and it does not. But `mcp add` cannot express everything an
-entry can carry: `-e/--env`, `-H/--header`, OAuth credentials, a non-stdio transport. So a routine
-version bump would have silently destroyed an operator's `CONTEXT7_API_KEY`. Reporting drift by
-deleting an API key is a worse failure than the drift. The helper now refuses to touch an entry
-carrying anything it cannot reproduce, and prints the command to run instead — the drift is still
-surfaced, which was the whole point, and nothing is lost.
+Two measurements shaped what the helper does, and both contradicted a plausible guess.
+`claude mcp add` **refuses an existing name in the same scope** — exit 1, entry unchanged — so
+reconciling really does need remove-then-add; a judge had reasoned from the config file's shape
+that `add` was an upsert and the `remove` bought nothing, and it does not. The second correction
+came the round after: the same judge said `mcp add` could not express `-e/--env` or `-H/--header`,
+which is false — those flags exist and `mcp get` prints their values back in plaintext. What
+cannot carry them is the helper's own signature, `ensure_mcp <name> <command> [args...]`, which
+never parses a flag. OAuth secrets and a per-entry `Timeout:` are out of reach either way.
+
+So it refuses to touch anything that is not a plain stdio entry. **That refusal started as a
+denylist and had to become an allowlist**, which is the third time this document records the same
+correction. Listing the shapes to reject — an `Environment:` block, a non-stdio `Type:` — meant a
+shape nobody thought of fell through to the destructive path, and a judge found one immediately:
+a claude.ai-scope connector prints only `Scope:` and `Status:`, no Command, no Args, no Type, no
+Environment. Empty command, empty args, nothing to trigger a refusal, straight to remove-then-add.
+Listing what to ACCEPT — stdio transport, a command present, nothing extra — makes the forgotten
+shape a needless refusal instead of a silent clobber.
+
+The fixtures for that took two attempts, and the failed one is worth keeping. The first pair of
+cases exercised entries that failed *both* allowlist conditions, so cutting either guard alone
+left them passing and a mutation pass reported nothing. Isolating a guard needs a fixture that
+differs from a valid entry in exactly that one field. The same round also found the stubs had
+never carried `Type: stdio` at all, which is in every real `claude mcp get` — a stub easier to
+satisfy than reality proves nothing about reality.
 
 The other thing worth keeping is how the flake's version failed. It grepped for a wanted string
 beginning with `-y`, which grep read as a flag; the check failed every time and re-registered on

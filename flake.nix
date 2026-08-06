@@ -159,7 +159,7 @@
               # few lines apart with only one of them fixed: the version here is a
               # pin, and bumping it has to reach a machine that already registered an
               # older one. It never would have.
-              ensure_mcp context7 npx -y --package=@upstash/context7-mcp@2.2.5 -- context7-mcp
+              ensure_context7_mcp
 
               # Retire the old Gentleman-Programming engram plugin and the MCP
               # entry earlier versions named "engram": both serve the same mem_*

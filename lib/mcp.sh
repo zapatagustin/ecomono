@@ -1,3 +1,4 @@
+# shellcheck shell=bash
 # MCP registration that reconciles, and refuses to clobber.  Sourced, not run.
 #
 # Sourced by lib/common.sh (so install.sh gets it) and by flake.nix's activation
@@ -17,14 +18,17 @@
 # Args, the flake's compared only Args, so a launcher swapped from npx to bunx was
 # invisible there). Now the flake sources this file.
 #
-# ecomono: `claude mcp add` REFUSES an existing name — measured, exit 1, entry
-# unchanged — so reconciling genuinely requires remove-then-add. That is not an
-# in-place update, and `claude mcp add` cannot express everything an entry can carry:
-# `-e/--env`, `-H/--header`, OAuth client id/secret, a non-stdio transport. So this
-# refuses to touch an entry that holds anything of the kind and prints what to run
-# instead. Reporting the drift was the whole point; destroying an operator's API key
-# to report it would be a worse bug than the one this closes, which is exactly what
-# the first version did.
+# ecomono: `claude mcp add` REFUSES an existing name in the same scope — measured, exit
+# 1, entry unchanged — so reconciling genuinely requires remove-then-add. What this
+# helper cannot rebuild is not `mcp add`'s fault, and an earlier version of this comment
+# said it was: `mcp add` does have `-e/--env` and `-H/--header`, and `mcp get` prints
+# their values back in plaintext, so those two ARE recoverable in principle. What cannot
+# carry them is this function's own signature, `ensure_mcp <name> <command> [args...]`,
+# which never parses or reconstructs a flag. OAuth secrets and a per-entry `Timeout:`
+# are genuinely out of reach either way. So it refuses to touch anything that is not a
+# plain stdio entry and prints what to run instead. Reporting drift by deleting an
+# operator's API key would be a worse bug than the drift, which is what the first
+# version did.
 #
 # ecomono: it compares only what `claude mcp get` prints as `Command:` and `Args:`.
 # A registration differing in some field that command does not print reads as
@@ -54,18 +58,29 @@ ensure_mcp() {
       return 0
     fi
 
-    # Anything indented under `Environment:` is an env var the operator set, and a
-    # `Type:` that is not stdio means a transport this cannot rebuild. Either way the
-    # entry carries more than `mcp add` is being given here.
-    extras="$(printf '%s\n' "$got" | awk '
+    # ALLOWLIST, not denylist. Reconcile only an entry whose shape is recognisably one
+    # `mcp add --scope user -- <cmd> <args>` produced: stdio transport, a command, and
+    # nothing indented under `Environment:`. Anything else is left alone.
+    #
+    # The first version listed what to refuse — an `Environment:` block, a non-stdio
+    # `Type:` — and a judge found the shape it forgot: a claude.ai-scope connector
+    # prints only `Scope:` and `Status:`, no Command, Args, Type or Environment at all.
+    # Empty command, empty args, no refusal trigger, straight to remove-then-add. That
+    # is the same mistake as every other one this repo has paid for: a list of what to
+    # reject makes forgetting a false PASS, and forgetting is the thing that keeps
+    # happening. Listing what to accept makes forgetting a needless refusal instead.
+    reconcilable="$(printf '%s\n' "$got" | awk '
+      /^[[:space:]]*Type:[[:space:]]*stdio[[:space:]]*$/ { stdio = 1 }
+      /^[[:space:]]*Command:[[:space:]]*[^[:space:]]/    { cmd = 1 }
       /^[[:space:]]*Environment:/ { inenv = 1; next }
-      inenv && /^[[:space:]]+[^[:space:]]/ { print "env"; exit }
+      inenv && /^[[:space:]]+[^[:space:]]/ { extra = 1; inenv = 0; next }
       inenv { inenv = 0 }
-      /^[[:space:]]*Type:[[:space:]]*/ && $0 !~ /stdio/ { print "transport"; exit }
+      /^[[:space:]]*Timeout:[[:space:]]*[^[:space:]]/    { extra = 1 }
+      END { if (stdio && cmd && !extra) print "yes" }
     ')"
 
-    if [ -n "$extras" ]; then
-      _mcp_warn "mcp $name differs from this repo's spec, and carries $extras this installer cannot reproduce."
+    if [ -z "$reconcilable" ]; then
+      _mcp_warn "mcp $name differs from this repo's spec, and is not a plain stdio entry this installer can rebuild."
       _mcp_warn "  leaving it alone. To take the new spec and re-apply your own settings:"
       _mcp_warn "    claude mcp remove $name && claude mcp add --scope user $name -- $want_cmd $want_args"
       return 0
@@ -79,7 +94,30 @@ ensure_mcp() {
     || _mcp_warn "could not register the $name mcp (retry: claude mcp add --scope user $name -- $want_cmd $want_args)"
 }
 
-# common.sh defines info/warn with colours; the flake's activation script does not.
-# Defined only when absent so the installer's output stays consistent.
-_mcp_info() { if command -v info >/dev/null 2>&1; then info "$@"; else printf '  %s\n' "$*"; fi; }
-_mcp_warn() { if command -v warn >/dev/null 2>&1; then warn "$@"; else printf 'warn: %s\n' "$*" >&2; fi; }
+# common.sh defines info/warn as FUNCTIONS with colours; the flake's activation script
+# sources only this file and has neither.
+#
+# ecomono: `declare -F`, never `command -v`. The first version probed with `command -v
+# info`, which finds a function when one is loaded — and finds GNU Texinfo's `info`
+# BINARY when one is not. That is the flake's situation exactly: on NixOS
+# `documentation.info.enable` defaults on, so `info` is at /run/current-system/sw/bin/info,
+# and `info "mcp context7 ✓"` exits 1. home-manager concatenates every module's
+# activation into one script under a single `set -eu`, so that nonzero exit aborts the
+# whole `home-manager switch` — on the steady-state path, every run after the first.
+# Reproduced end to end by a judge and again by hand. `declare -F` only ever finds a
+# function, so a binary of the same name cannot be mistaken for one.
+_mcp_info() { if declare -F info >/dev/null 2>&1; then info "$@"; else printf '  %s\n' "$*"; fi; }
+_mcp_warn() { if declare -F warn >/dev/null 2>&1; then warn "$@"; else printf 'warn: %s\n' "$*" >&2; fi; }
+
+# The servers this repo registers, spelled once. install.sh and flake.nix both call
+# this rather than each carrying the pin: deduplicating the reconcile LOGIC while
+# leaving the version string in two files would have left exactly the drift the logic
+# exists to catch — bump one, forget the other, and the forgotten side keeps comparing
+# against its own stale value and matching. A judge counted the copies.
+#
+# ecomono-memory is not here: its command is two paths that differ per platform (a bun
+# on PATH and a repo checkout, versus two nix store paths), so there is nothing shared
+# to hoist. Its caller passes them.
+ensure_context7_mcp() {
+  ensure_mcp context7 npx -y --package=@upstash/context7-mcp@2.2.5 -- context7-mcp
+}

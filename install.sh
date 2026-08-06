@@ -107,7 +107,7 @@ elif have claude; then
 
   # Reconciles rather than skipping on presence: the version below is a pin, and a
   # bump has to reach machines that already registered an older one.
-  ensure_mcp context7 npx -y --package=@upstash/context7-mcp@2.2.5 -- context7-mcp
+  ensure_context7_mcp
 
   # Retire the Gentleman-Programming engram plugin before registering ours: it
   # serves the same mem_* tools from the old Go binary, so leaving it installed
