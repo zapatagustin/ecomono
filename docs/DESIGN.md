@@ -1086,6 +1086,45 @@ one line of output. Syntax-checking generated shell proves the shell parses and 
 that file's embedded bash is executed by no test in this repo. Sourcing the shared helper is what
 finally gave it coverage, since the helper has fixtures.
 
+**Two more rounds found two more dimensions, and the second one was the method, not the code.**
+
+`claude mcp get` and `claude mcp remove` resolve a name across user, local AND project scope, so
+an unscoped remove is decided by the invoking shell's cwd. With the same name in a project's
+`.mcp.json` and in user scope, a bare remove refuses with "exists in multiple scopes", `|| true`
+swallows it, the following `add` fails as "already exists", and the stale pin survives — the
+feature silently doing nothing, which is the bug it exists to close. `-s user` fixes it.
+
+Then the round after found the same raw call twice more, in the same two files, cleaning up the
+old `engram` registration — never routed through the hardened helper because nobody grepped for
+other callers of the primitive. A bare remove there deletes a team's committed `.mcp.json` entry,
+and `engram` is a name this repo itself used until recently. There is a `remove_mcp` now and no
+raw call left to forget: **hardening one path is not hardening an operation.**
+
+The method failure is worth more than either. A round-3 commit recorded that the destructive
+project-scope path "could not be reproduced" — a project entry printed only `Scope:` and
+`Status:`, so the allowlist refused it before any remove. That was measured, and it was wrong: the
+fixture hand-wrote `.mcp.json`, and an entry created the ordinary way, `claude mcp add --scope
+project`, prints the full `Type:`/`Command:`/`Args:` shape and passes the allowlist. Two judges in
+the following round then contradicted each other about it — one repeating the hand-written result,
+one finding the CLI-created one — and the tiebreak was running it here. **A fixture built the way
+that happens to be safe is not evidence of safety**, and "I could not reproduce it" is a claim
+about the fixture at least as much as about the code.
+
+The test harness had the same shape of bug. It isolated by setting `HOME`, and `CLAUDE_CONFIG_DIR`
+overrides `HOME` entirely for where Claude Code stores state — so running the suite with that
+variable set wrote a real `context7` entry into the operator's own config. Zero before, one after.
+The file whose header promises `$HOME` is never touched was mutating live state, and only for
+operators who use a documented feature of the CLI it drives. Its "vacuity guard" was also dead: a
+plain `( … )` subshell inherits every function the parent already sourced, so re-sourcing inside
+one proved nothing until it became a `bash -c`.
+
+Four rounds, four dimensions nobody had looked at — entry shape, transport and hook type, scope,
+and the harness's own isolation. The honest summary is not that the code converged; it is that
+**each round's fix was correct and each round's confidence was not.** What bounds this is not more
+guards but a smaller claim: a reconciler that mutates an operator's configuration earns a review
+per dimension it touches, and the alternative — print the mismatch and let the operator run one
+command — was on the table from the first round and still is.
+
 What remains unported: `post-apply` and `pre-commit` have no reader. Neither is a delivery to
 anywhere — the bytes are still local and still revisable — which is why they were not built,
 not an oversight to be closed later. `release` does not exist here at all.

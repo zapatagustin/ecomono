@@ -123,9 +123,9 @@ elif have claude; then
   fi
   # Earlier ecomono versions registered this same bundle under the name "engram".
   if claude mcp get engram >/dev/null 2>&1; then
-    claude mcp remove engram >/dev/null 2>&1 \
+    remove_mcp engram \
       && info "removed the old engram mcp entry (now ecomono-memory)" \
-      || warn "could not remove the old engram mcp (retry: claude mcp remove engram)"
+      || warn "could not remove the old engram mcp (retry: claude mcp remove -s user engram)"
   fi
 
   # ecomono-memory = our native bun MCP server. Self-contained bundle: runs with

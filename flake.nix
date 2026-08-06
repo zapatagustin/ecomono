@@ -169,7 +169,7 @@
                 "$claude" plugin uninstall engram@engram >/dev/null 2>&1 || true
                 "$claude" plugin marketplace remove engram >/dev/null 2>&1 || true
               fi
-              "$claude" mcp get engram >/dev/null 2>&1 && "$claude" mcp remove engram >/dev/null 2>&1 || true
+              "$claude" mcp get engram >/dev/null 2>&1 && remove_mcp engram || true
               # ecomono-memory: our native bun MCP server (self-contained bundle,
               # runs from the store with no node_modules).
               #

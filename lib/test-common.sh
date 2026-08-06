@@ -284,16 +284,24 @@ if [ -n "$REAL_CLAUDE" ]; then
   mkdir -p "$scope_home" "$scope_proj"
   printf '{"mcpServers":{"context7":{"command":"someone-elses","args":["--x"]}}}' \
     > "$scope_proj/.mcp.json"
+  # CLAUDE_CONFIG_DIR overrides HOME COMPLETELY for where claude stores state, so
+  # isolating by HOME alone is not isolating. Measured: with it set in the ambient
+  # shell, running this suite wrote a real context7 entry into the operator's own
+  # config — zero before, one after. The header two hundred lines up promises `$HOME`
+  # is never touched; that promise was only true for operators who do not use this
+  # variable. Both are pinned to the throwaway dir now.
+  export CLAUDE_CONFIG_DIR="$scope_home"
   HOME="$scope_home" "$REAL_CLAUDE" mcp add --scope user context7 \
     -- npx -y --package=@upstash/context7-mcp@2.1.0 -- context7-mcp >/dev/null 2>&1
-  (
-    cd "$scope_proj" || exit 1
-    export HOME="$scope_home" CLAUDE_BIN="$REAL_CLAUDE"
-    # shellcheck source=/dev/null
-    . "$repo_root/lib/mcp.sh"
-    ensure_context7_mcp
+  # `bash -c`, not a plain `( ... )`. A subshell inherits every function the parent
+  # already sourced — lib/common.sh pulls in lib/mcp.sh at line 24 — so re-sourcing
+  # inside one proves nothing and a broken path passes for free. A judge showed the
+  # previous "vacuity guard" was exactly that: dead. A fresh process makes the source
+  # load-bearing.
+  ( cd "$scope_proj" && HOME="$scope_home" CLAUDE_CONFIG_DIR="$scope_home" \
+      CLAUDE_BIN="$REAL_CLAUDE" bash -c ". '$repo_root/lib/mcp.sh'; ensure_context7_mcp"
   ) >/dev/null 2>&1
-  got_pin="$(HOME="$scope_home" "$REAL_CLAUDE" mcp get context7 2>/dev/null \
+  got_pin="$(HOME="$scope_home" CLAUDE_CONFIG_DIR="$scope_home" "$REAL_CLAUDE" mcp get context7 2>/dev/null \
              | sed -n 's/^[[:space:]]*Args:[[:space:]]*//p')"
   check "a colliding project entry does not stall the reconcile" \
     "$got_pin" "-y --package=@upstash/context7-mcp@2.2.5 -- context7-mcp"

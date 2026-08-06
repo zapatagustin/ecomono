@@ -58,6 +58,14 @@ ensure_mcp() {
       return 0
     fi
 
+    # NOTE what this does NOT protect. A project-scope entry created with `claude mcp
+    # add --scope project` prints the full `Type: stdio`/`Command:`/`Args:` shape and
+    # passes this allowlist — measured, after a round-3 commit claimed the opposite on
+    # the strength of a hand-written `.mcp.json`, which prints only `Scope:`/`Status:`
+    # and refuses for the wrong reason. What keeps a project's file safe is `-s user` on
+    # the remove, nothing here. Do not "simplify" that flag away reasoning that the
+    # shape check already covers it.
+    #
     # ALLOWLIST, not denylist. Reconcile only an entry whose shape is recognisably one
     # `mcp add --scope user -- <cmd> <args>` produced: stdio transport, a command, and
     # nothing indented under `Environment:`. Anything else is left alone.
@@ -97,7 +105,7 @@ ensure_mcp() {
     # `add` fails as "already exists" and the entry stays exactly as stale as before —
     # the feature silently doing nothing, which is the bug it was built to close.
     # Scoped, a name that only exists elsewhere is simply not ours to touch.
-    "$CLAUDE_BIN" mcp remove -s user "$name" >/dev/null 2>&1 || true
+    remove_mcp "$name" || true
   fi
 
   "$CLAUDE_BIN" mcp add --scope user "$name" -- "$want_cmd" "$@" \
@@ -118,6 +126,21 @@ ensure_mcp() {
 # function, so a binary of the same name cannot be mistaken for one.
 _mcp_info() { if declare -F info >/dev/null 2>&1; then info "$@"; else printf '  %s\n' "$*"; fi; }
 _mcp_warn() { if declare -F warn >/dev/null 2>&1; then warn "$@"; else printf 'warn: %s\n' "$*" >&2; fi; }
+
+# Remove a registration this repo owns. The ONLY sanctioned way to call `mcp remove`
+# in this codebase.
+#
+# ecomono: `-s user`, always. A bare `claude mcp remove <name>` resolves across user,
+# local and project scope, so the invoking shell's cwd decides what it deletes — inside
+# a repo whose committed `.mcp.json` names the server, it removes that team's tracked
+# entry and says "File modified: .../.mcp.json". Measured. `ensure_mcp` was scoped for
+# this a round ago; the two hand-written `mcp remove engram` calls in install.sh and
+# flake.nix were not, because nobody grepped the same files for other callers of the
+# raw primitive. A judge did. Hardening one path is not hardening the operation — this
+# function exists so there is no raw call left to forget.
+remove_mcp() {
+  "$CLAUDE_BIN" mcp remove -s user "$1" >/dev/null 2>&1
+}
 
 # The servers this repo registers, spelled once. install.sh and flake.nix both call
 # this rather than each carrying the pin: deduplicating the reconcile LOGIC while
