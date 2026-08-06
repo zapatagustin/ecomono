@@ -128,8 +128,15 @@
             # The activation service does not reliably have the new profile on
             # PATH, so fall back to it explicitly before giving up. Still not a
             # pinned package: `claude` stays bring-your-own.
+            # One implementation of MCP reconciliation, shared with install.sh. Sourcing
+            # rather than reimplementing: the previous inline copies diverged from the
+            # helper in the same commit that added it — one compared Command and Args,
+            # the other only Args — and neither had a test.
+            # shellcheck source=lib/mcp.sh
+            . ${./lib/mcp.sh}
             claude="$(command -v claude || true)"
             [ -x "$claude" ] || claude="${config.home.profileDirectory}/bin/claude"
+            CLAUDE_BIN="$claude"
             if [ -x "$claude" ]; then
               ensurePlugin() {
                 local repo="$1" name="$2" market="''${3:-$2}"
@@ -152,24 +159,8 @@
               # few lines apart with only one of them fixed: the version here is a
               # pin, and bumping it has to reach a machine that already registered an
               # older one. It never would have.
-              # Compared with `=` on the extracted Args line, not with grep. The first
-              # version grepped for the wanted string, which begins with `-y`: grep read
-              # it as a flag, failed, and the negation re-registered on every activation
-              # even when nothing had changed. `bash -n` passed it and so did a nix eval;
-              # running the rendered block against a stubbed `claude` showed it in one
-              # line. Equality cannot confuse a pattern with an option, so the class is
-              # gone rather than the instance. (The ecomono-memory check below still
-              # greps, and is safe only because its patterns are absolute paths.)
-              context7_want='-y --package=@upstash/context7-mcp@2.2.5 -- context7-mcp'
-              context7_have="$("$claude" mcp get context7 2>/dev/null | sed -n 's/^[[:space:]]*Args:[[:space:]]*//p')"
-              if [ "$context7_have" != "$context7_want" ]; then
-                if [ -n "$context7_have" ]; then
-                  "$claude" mcp remove context7 >/dev/null 2>&1 || true
-                fi
-                # shellcheck disable=SC2086
-                "$claude" mcp add --scope user context7 -- npx $context7_want \
-                  || echo "warning: could not register context7 mcp"
-              fi
+              ensure_mcp context7 npx -y --package=@upstash/context7-mcp@2.2.5 -- context7-mcp
+
               # Retire the old Gentleman-Programming engram plugin and the MCP
               # entry earlier versions named "engram": both serve the same mem_*
               # tools, so leaving them registered means two memory stores answer
@@ -190,15 +181,7 @@
               # is current and the thing pointed at it is not. Compare the paths.
               ecomono_bun=${pkgs.bun}/bin/bun
               ecomono_mcp=${./opencode/plugins/storage/mcp-server.js}
-              ecomono_registered="$("$claude" mcp get ecomono-memory 2>/dev/null || true)"
-              if ! printf '%s' "$ecomono_registered" | grep -qF "$ecomono_bun" \
-                 || ! printf '%s' "$ecomono_registered" | grep -qF "$ecomono_mcp"; then
-                if [ -n "$ecomono_registered" ]; then
-                  "$claude" mcp remove ecomono-memory >/dev/null 2>&1 || true
-                fi
-                "$claude" mcp add --scope user ecomono-memory -- "$ecomono_bun" "$ecomono_mcp" \
-                  || echo "warning: could not register ecomono-memory mcp"
-              fi
+              ensure_mcp ecomono-memory "$ecomono_bun" "$ecomono_mcp"
             fi
           '';
         };

@@ -145,8 +145,27 @@ stale='context7:
   Command: npx
   Args: -y --package=@upstash/context7-mcp@2.1.0 -- context7-mcp'
 
-mcp_case "an unregistered server is added"                ""          yes no
-mcp_case "a matching registration is left alone"          "$matching" no  no
-mcp_case "a stale version pin is removed and re-added"    "$stale"    yes yes
+# Same args, different launcher. The flake's now-deleted inline copy compared only
+# Args and would have called this up to date; nothing caught that until a judge
+# mutated the helper. Both fields are part of the comparison, and this is what says so.
+relaunched='context7:
+  Command: bunx
+  Args: -y --package=@upstash/context7-mcp@2.2.5 -- context7-mcp'
+
+# An operator-set env var. Reconciling means remove-then-add, because `claude mcp add`
+# refuses an existing name — measured. Re-adding cannot carry an env var, a header or
+# OAuth config, so an entry holding any of them is reported and left alone. Destroying
+# an API key to report drift would be a worse bug than the drift.
+customized='context7:
+  Command: npx
+  Args: -y --package=@upstash/context7-mcp@2.1.0 -- context7-mcp
+  Environment:
+    CONTEXT7_API_KEY=secret'
+
+mcp_case "an unregistered server is added"                   ""             yes no
+mcp_case "a matching registration is left alone"             "$matching"    no  no
+mcp_case "a stale version pin is removed and re-added"       "$stale"       yes yes
+mcp_case "a changed launcher with identical args is caught"  "$relaunched"  yes yes
+mcp_case "an entry with operator env vars is never clobbered" "$customized" no  no
 
 exit "$fail"

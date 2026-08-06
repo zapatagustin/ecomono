@@ -1034,28 +1034,42 @@ claim honestly: declared equals registered, never "will run" — and the header 
 two commits before a judge caught it, which is the same overclaim in the file that exists to
 argue against it.
 
-The same seam had two more instances, and they were found by a judge asked to sweep for them
-rather than by anyone noticing. `install.sh` and `flake.nix` both registered the `context7` MCP
-server on absence alone, and `install.sh` did the same for `ecomono-memory` — while `flake.nix`
-already implemented reconcile-on-drift for `ecomono-memory` a few lines above, having reasoned
-out the exact failure for that one and not looked sideways. Registering on absence means a bumped
-version pin, or a moved bundle path, reaches a machine that already registered once: never.
+The same seam had two more instances, found by a judge asked to sweep for them rather than by
+anyone noticing. `install.sh` and `flake.nix` both registered the `context7` MCP server on
+absence alone, and `install.sh` did the same for `ecomono-memory` — while `flake.nix` already
+implemented reconcile-on-drift for `ecomono-memory` a few lines above, having reasoned out the
+exact failure for that one and not looked sideways. Registering on absence means a bumped version
+pin, or a moved bundle path, reaches a machine that already registered once: never.
 
-`ensure_mcp` in `lib/common.sh` now compares the registered command against the intended one and
-re-registers on any difference; `flake.nix` does the same inline for `context7`, which is where
-the gap was.
+`lib/mcp.sh` holds the one implementation. `lib/common.sh` sources it for `install.sh`, and
+`flake.nix`'s activation script sources it too, by the same `${./path}` inlining it already used
+for the memory bundle. Its own file rather than living in `common.sh` because that sets
+`set -euo pipefail`, which a home-manager activation script must not inherit.
 
-Two things about how that fix went are worth more than the fix. The flake's version had a real
-bug — it grepped for a string starting with `-y`, which grep read as a flag, so the check failed
-every time and re-registered on every activation. **`bash -n` passed it. A nix eval passed it.**
-What caught it was rendering the activation script and running the block against a stubbed
-`claude`, which showed it in one line of output. Syntax-checking generated shell proves the shell
-parses, nothing more, and that is a thin claim to rest on for code no test ever executes.
+**The first version of this fix was the bug it was closing.** It added a helper AND left a
+separate inline copy in the flake, so one intent had three implementations and the pinned version
+string lived in three files — in a repo with four drift-checkers, answering a duplication bug with
+more duplication. The copies had already diverged inside that single commit: the helper compared
+`Command` and `Args`, the flake's copy compared only `Args`, so a launcher swapped from `npx` to
+`bunx` was invisible on NixOS. No test caught it; a judge did, by mutation.
 
-And the fix for it was first `grep -qF --`, which closes the instance. It is now an `=` on the
-extracted `Args:` line, which closes the class: equality cannot mistake a pattern for an option.
-That is the same move as the hook check's — when the instance and the class cost about the same,
-take the class.
+Two measurements shaped what the helper does, and both contradicted a plausible guess. `claude
+mcp add` **refuses an existing name** — exit 1, entry unchanged — so reconciling really does need
+remove-then-add; a judge had reasoned from the config file's shape that `add` was an upsert and
+that the `remove` bought nothing, and it does not. But `mcp add` cannot express everything an
+entry can carry: `-e/--env`, `-H/--header`, OAuth credentials, a non-stdio transport. So a routine
+version bump would have silently destroyed an operator's `CONTEXT7_API_KEY`. Reporting drift by
+deleting an API key is a worse failure than the drift. The helper now refuses to touch an entry
+carrying anything it cannot reproduce, and prints the command to run instead — the drift is still
+surfaced, which was the whole point, and nothing is lost.
+
+The other thing worth keeping is how the flake's version failed. It grepped for a wanted string
+beginning with `-y`, which grep read as a flag; the check failed every time and re-registered on
+every activation. **`bash -n` passed it. `nix eval` passed it. `nix flake check` passed it.** What
+caught it was rendering the activation script and running the block against a stubbed `claude` —
+one line of output. Syntax-checking generated shell proves the shell parses and nothing else, and
+that file's embedded bash is executed by no test in this repo. Sourcing the shared helper is what
+finally gave it coverage, since the helper has fixtures.
 
 What remains unported: `post-apply` and `pre-commit` have no reader. Neither is a delivery to
 anywhere — the bytes are still local and still revisable — which is why they were not built,
