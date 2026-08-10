@@ -1457,10 +1457,38 @@ not do its job." **Every artifact was correct and consistent. The action simply 
 and nothing observed that it hadn't** — the value is a trailing field in a long report, and a
 delegator reading its own omission can keep going. Which is what happened, eight times.
 
-There is no check for this and there cannot be one in this repo. The artifact the rule constrains
-is a prompt string assembled in a model turn; it never touches disk, so no `check-*.sh` can ever
-see it. That is a real boundary and not a backlog item, and it means the rule has to be
-self-evidencing through the report rather than verifiable.
+**The first version of this section said there could be no check for it, and that was wrong.** It
+argued that the constrained artifact is a prompt string assembled in a model turn, never touching
+disk, so no `check-*.sh` could ever see it — a real boundary rather than a backlog item, leaving
+the rule self-evidencing through its report. A judge went looking instead of reasoning and found
+the mechanism already shipped, one section above the claim: `claude/hooks/agent-model-gate.sh` is a
+`PreToolUse` hook on this very `Agent` matcher that reads `.tool_input.model` and denies, and its
+own test passes `"prompt":"find X"` inside `tool_input`. The prompt is in the payload. It is
+inspectable **before** the sub-agent runs.
+
+That is the sharpest instance of this document's recurring defect yet, because of where it sat: a
+boundary asserted without checking whether this repo already had the tool to cross it, published
+in the section arguing that exact mistake. The narrow claim was true — a static `check-*.sh` run
+off-session sees nothing — and it was used to carry a broader one it did not support.
+
+So `claude/hooks/judge-standards-gate.sh` now denies the launch of `ecomono-judge-a`, `-b` or
+`-fix` when the prompt carries no populated standards block. Denying beats reporting for one
+reason: a report arrives after the round is paid for and can be read past, and this one was, eight
+times. A denial cannot be forgotten.
+
+It asks three byte-level questions and no others — is the heading there, does the section hold a
+non-blank line before the next `## ` heading, and is that line still the unfilled template. The
+third exists because the placeholder used to name two REAL repository paths, so an unfilled block
+did not read as empty to a sub-agent; it read as content, and could have produced a false
+`paths-injected` where the old bug produced an honest `none`. A judge caught that shape before it
+shipped, and the fix was both the gate branch and a placeholder that names no real path.
+
+What the gate cannot see is stated in it: whether the paths are right, which is a claim about
+content, and whether two sub-agents in one round got the SAME block, since the hook sees one launch
+at a time and holds no state. The static half of symmetry is `check-judge-twins.sh`; the per-round
+half stays reported rather than enforced. That one IS a boundary — and this section has earned some
+distrust of the word, so the upgrade path is named rather than implied: a PostToolUse audit that
+records each launch's block and compares them within a round.
 
 The gates table had a row for "no skill registry" and none for "registry present, delegator
 skipped it" — it excused the environment and tolerated the omission. That asymmetry is fixed: a
@@ -1492,10 +1520,18 @@ Its one design decision is worth recording because the naive version passes the 
 to catch. Each file is normalised with ITS OWN letter, never with both. Collapsing `a` and `b`
 everywhere maps a copy-paste error — judge-b's own text calling itself judge A — onto the same
 string on both sides, and it passes. Mutation-proven: swapping in the both-letter version flips
-exactly the two fixtures written for that error. Most of the nine fixtures guard the same
-direction, an over-wide normalisation quietly erasing real drift, rather than the obvious one; a
-standalone `A`/`B` used to enumerate options has to survive as a difference, and there is a case
-for that too.
+exactly the two fixtures written for that error. Two more guard the opposite axis — that the
+normalisation is not too WIDE, since a standalone `A`/`B` enumerating options has to survive as a
+difference — and the rest are ordinary diff sanity. An earlier version of this sentence claimed
+most of them guarded the width axis; a judge counted and refuted it, so the counting is left to
+the reader, as everywhere else here that tried to keep a tally.
+
+One of those fixtures was claiming credit it had not earned, which is the `t pass` problem in a
+different costume. The case for a missing agent file passes whether or not the `[ -r ]` guard
+exists, because one absent file shows up as a whole-file difference anyway. What the guard actually
+prevents had no case at all: with BOTH files absent the two empty streams diff as equal, so the
+check printed `ok` and exited 0 on a repository containing neither judge — reachable by running it
+from the wrong directory. Measured, then covered.
 
 No exception mechanism, deliberately. No legitimate asymmetry exists, so an ignore list would be
 scaffolding for a case nobody has; if one appears the check fails loudly and whoever needs it adds

@@ -87,12 +87,23 @@ reset
 sed -i 's/ecomono-judge-b/ecomono-judge-a/g' "$fixture/$b"
 t fail "judge-b naming itself with judge-a's identifier"
 
-# 8 — a missing file must be loud, not a silent pass on an empty comparison.
+# 8 — one file absent. Kept, but it does NOT exercise the `[ -r ]` guard, and saying so is the
+# point: measured, removing that guard leaves this case failing anyway, because one file's absence
+# still shows up as a whole-file difference in the diff. A judge caught the fixture claiming
+# credit for a guard it never reached.
 reset
 rm -f "$fixture/$b"
 t fail "one judge file is absent"
 
-# 9 — back to clean, proving no case leaked state into the fixture tree.
+# 9 — BOTH files absent, which is what the `[ -r ]` guard actually prevents and what nothing
+# covered. Two missing files produce two empty streams, and empty streams diff as equal: with the
+# guard removed the check prints `ok` and exits 0 on a repository where neither judge exists.
+# Reachable by running the check from the wrong directory, which is the ordinary way to hit it.
+reset
+rm -f "$fixture/$a" "$fixture/$b"
+t fail "both judge files are absent"
+
+# 10 — back to clean, proving no case leaked state into the fixture tree.
 reset
 t pass "the real pair again after every mutation"
 

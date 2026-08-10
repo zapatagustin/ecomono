@@ -79,6 +79,10 @@ are writing a new one, resolve here rather than inventing a second selection pat
 
 `ecomono-judgment` is a scoped user, and the scoping is measured rather than assumed. It resolves
 here when the target is SDD-shaped work, where the phase skills ARE the contract being reviewed.
+**SDD-shaped** means exactly one thing, stated because leaving it to judgment would just move the
+original problem: the target is a phase's own artifacts or the files implementing them — anything
+under `sdd/{change-name}/`, or a change to an `ecomono-sdd-*` skill, agent or command. Everything
+else is an arbitrary diff.
 For an arbitrary diff it builds its standards block from the project's own rules instead: eight
 judge runs and two fix runs in one session resolved nothing from the registry while their
 delegator hand-wrote a richer block than the registry would have yielded, because the registry

@@ -148,7 +148,7 @@ a negative array length" trains the reader to skim both.
 |---|---|
 | Target unclear | Ask for scope. Do not launch |
 | Subject hash changed since the judges were launched | Discard the round. Re-launch on the new hash |
-| No skill registry | Warn, use generic criteria, record `Skill Resolution: none` |
+| No skill registry, SDD-shaped target | Say which skills you could not resolve, build the block from the project's own standards instead, and record `Skill Resolution: fallback-path`. A missing registry is never licence to send no block |
 | A sub-agent reports it received no standards block | The round's SETUP was defective, not its findings. Name it beside the verdict, build the block before the next launch, and do NOT discard the round over it |
 | Both judges find the same CRITICAL or real WARNING | **Confirmed.** Fix per the round rules |
 | One judge finds it | **Suspect.** Report and triage. Never auto-fix |

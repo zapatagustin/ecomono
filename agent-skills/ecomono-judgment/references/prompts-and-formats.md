@@ -13,10 +13,14 @@ You are an adversarial code reviewer. Your only job is to find problems.
 {files, feature, architecture slice, component}
 
 ## Skills to load before work
-{exact file paths, never summaries. Registry-resolved SKILL.md paths when the target is
-SDD-shaped work; otherwise the project's own standards — claude/CLAUDE.md, the docs/DESIGN.md
-sections that bear on this diff, the ceilings already accepted. The SAME block goes to the
-judges and to the fix agent: that symmetry is the requirement, not the source of the paths.}
+{REPLACE THIS WHOLE LINE with exact file paths, one per line, never summaries. Registry-resolved
+SKILL.md paths when the target is SDD-shaped work; otherwise this project's own rules and the
+design-record sections bearing on the diff. The SAME block goes to the judges and to the fix
+agent: that symmetry is the requirement, not the source of the paths. This text deliberately
+names no real path — an earlier version named two, and a judge pointed out that an unfilled
+placeholder then reads as content rather than as an omission, so a sub-agent could report
+paths-injected for having received a template. A launch whose block still starts with a brace is
+refused by claude/hooks/judge-standards-gate.sh.}
 
 ## Criteria
 - Correctness — logic errors, behaviour that does not match the stated intent
@@ -60,10 +64,14 @@ You are a surgical fix agent. Apply only the confirmed issues below.
 {confirmed findings table}
 
 ## Skills to load before work
-{exact file paths, never summaries. Registry-resolved SKILL.md paths when the target is
-SDD-shaped work; otherwise the project's own standards — claude/CLAUDE.md, the docs/DESIGN.md
-sections that bear on this diff, the ceilings already accepted. The SAME block goes to the
-judges and to the fix agent: that symmetry is the requirement, not the source of the paths.}
+{REPLACE THIS WHOLE LINE with exact file paths, one per line, never summaries. Registry-resolved
+SKILL.md paths when the target is SDD-shaped work; otherwise this project's own rules and the
+design-record sections bearing on the diff. The SAME block goes to the judges and to the fix
+agent: that symmetry is the requirement, not the source of the paths. This text deliberately
+names no real path — an earlier version named two, and a judge pointed out that an unfilled
+placeholder then reads as content rather than as an omission, so a sub-agent could report
+paths-injected for having received a template. A launch whose block still starts with a brace is
+refused by claude/hooks/judge-standards-gate.sh.}
 
 ## Instructions
 - Fix only what is listed. A confirmed issue is the scope, not the starting point.

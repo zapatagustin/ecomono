@@ -41,7 +41,7 @@ norm() {
   local l=$2 u
   u=$(printf '%s' "$l" | tr '[:lower:]' '[:upper:]')
   sed -e "s/ecomono-judge-$l/ecomono-judge-X/g" \
-      -e "s/judge-$l/judge-X/g" \
+      -e "s/\bjudge-$l/judge-X/g" \
       -e "s/\bjudge $u\b/judge X/g" \
       -e "s/\bJudge $u\b/Judge X/g" "$1"
 }

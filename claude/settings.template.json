@@ -90,6 +90,11 @@
             "type": "command",
             "command": "$HOME/.claude/hooks/agent-model-gate.sh",
             "statusMessage": "Checking sub-agent model (tier gate)"
+          },
+          {
+            "type": "command",
+            "command": "$HOME/.claude/hooks/judge-standards-gate.sh",
+            "statusMessage": "Checking the judge's standards block"
           }
         ]
       }
