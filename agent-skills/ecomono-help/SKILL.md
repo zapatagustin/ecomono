@@ -63,4 +63,4 @@ Config file (`~/.config/ecomono/config.json`):
 
 ## More
 
-Full docs: https://github.com/JuliusBrussee/ecomono
+Full docs: https://github.com/zapatagustin/ecomono

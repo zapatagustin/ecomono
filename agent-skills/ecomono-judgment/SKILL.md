@@ -2,7 +2,7 @@
 name: ecomono-judgment
 description: "Trigger: judgment day, dual review, adversarial review, juzgar. Two blind judges review in parallel, confirmed issues get fixed, then re-judged."
 metadata:
-  version: "1.13"
+  version: "1.14"
 ---
 
 Two independent reviewers, neither of which saw the work being written, agreeing on a
@@ -50,6 +50,46 @@ Resolve `{base-branch}` to the change's actual base branch — `master` in this 
 hardcode a name. `git diff <commit>` with no second ref compares that commit against the
 **working tree**, so committed, staged and unstaged work all land in the same hash in one
 shot.
+
+**Measure the candidate, not just name it.** The same diff answers how big it is:
+
+```bash
+git diff --numstat "$(git merge-base HEAD {base-branch})" | awk '{a+=$1; d+=$2} END{print a+d+0}'
+```
+
+Report that count beside the hash, pass it to every judge, and record it in both copies of the
+receipt. A judge handed more candidate than it can hold reviews part of it and returns a verdict
+that reads exactly like full coverage. The size is not the defect — the silence about it is.
+
+Over **400 changed lines** the round states what it covered instead of leaving coverage implied:
+the judges are told the count and asked to report what they actually read against what the diff
+contained, and an APPROVED on a candidate that size carries that statement or it is not terminal.
+400 is not a new number invented here. It is `claude/hooks/check-diff-size.sh`'s `THRESHOLD`, the
+reviewability budget this repo already committed to and already warns on. The THRESHOLD is shared;
+the MEASUREMENT is not, and the two can disagree loudly. That hook counts `master...HEAD`, which
+sees committed work only, so on a candidate that is still uncommitted it answers zero while the
+formula above answers the real size — a gap that is structural, not a stale count to correct,
+since the formula above measures the very diff this sentence lives in and would go stale again
+on the next edit. The formula above is the one that matches the frozen hash, which is the point:
+the count has to describe the bytes the judges were given.
+
+This is **not** a reviewer tier. `sdd-orchestrator.md` is explicit that size is a reviewability
+budget and never a risk signal — a large mechanical rename does not become dangerous by being
+large, and a three-line change to a token path does not become safe by being small. The count
+changes what the round DISCLOSES, never who reviews it or how many lenses run.
+
+`ecomono: nothing enforces the coverage statement. It is a judgment the coordinator makes, and
+this repo has buried two checks that tried to answer a question about what a sentence means. What
+is mechanical here is the count, and a receipt carrying it is what makes a missing coverage
+statement visible to the next reader instead of indistinguishable from full coverage. Upgrade
+path: have each judge return the list of paths it actually read and compare that against the
+diff's own path list, which is a comparison of two lists rather than a claim about prose.`
+
+`ecomono: the count has one measured blind spot, stated rather than left to be discovered:
+`--numstat` reports binary files as a pair of dashes, which the sum treats as zero, so a candidate
+of nothing but binary files reports 0 changed lines. Verified. Lines are the wrong unit for those
+bytes and no threshold in this repo has a right one, so the number is honest about text and silent
+about the rest — read it as "text lines", never as "size of the candidate".`
 
 `ecomono: the frozen subject is the whole branch diff and may carry bytes unrelated to
 what the judges review, so a receipt over-claims coverage when the branch mixes concerns.
@@ -141,7 +181,7 @@ needs in order to check the claim instead of trusting it.
 ```bash
 d="$(git rev-parse --git-common-dir)/ecomono/receipts" && mkdir -p "$d" && printf '%s\n' \
   '{APPROVED|ESCALATED}' 'hash: {subject-hash}' "base: $(git merge-base HEAD {base})" \
-  'target: {target}' 'rounds: {n}' > "$d/{subject-hash}"
+  'target: {target}' 'lines: {changed-lines}' 'rounds: {n}' > "$d/{subject-hash}"
 ```
 
 The first line is the verdict token alone, so a gate reads one line and refuses on anything
@@ -187,8 +227,11 @@ refuse there instead of prompting.
 
 `ecomono: two gates read a receipt — that hook, and one of `ecomono-sdd-archive`'s four,
 which reads the memory copy because the archive agent has no `Bash`. Upstream validates at
-five delivery boundaries; `post-apply` and `pre-commit` have no reader here. See
-docs/DESIGN.md, "What the port still owes".`
+five delivery boundaries; this port validates at the two that deliver — `pre-push` and
+`pre-pr` — and declines `post-apply` (the receipt would have to predate the bytes it
+certifies), `pre-commit` (a commit delivers nowhere, and committing reviewed bytes does not
+move the hash) and `release` (does not exist here). See docs/DESIGN.md, "What the port took,
+and what it declined".`
 
 **The memory copy.** `mem_save` with:
 
@@ -198,9 +241,9 @@ topic_key: review/{subject-hash}
 type:      decision
 ```
 
-Body: the subject hash and how it was computed, the target, the judges or lenses run, the
-round count, the confirmed / suspect / contradiction counts, fixes applied, and the
-terminal verdict verbatim. `judgment_required` on the save → resolve each candidate with
+Body: the subject hash and how it was computed, the target, the candidate's changed-line
+count, the judges or lenses run, the round count, the confirmed / suspect / contradiction
+counts, fixes applied, and the terminal verdict verbatim. `judgment_required` on the save → resolve each candidate with
 its own `suggested_relation` per
 [sdd-phase-common.md](../ecomono-sdd-shared/sdd-phase-common.md) §C.
 `ecomono-sdd-archive` searches `review/{hash}` and treats a missing receipt as unreviewed.
@@ -214,7 +257,8 @@ under an invented key is worse than no receipt.
 
 ## Output
 
-`## Judgment Day — {target}` with the subject hash, the round number, the verdict table,
+`## Judgment Day — {target}` with the subject hash, the candidate's changed-line count, the
+round number, the verdict table,
 counts for confirmed / suspect / contradiction, fixes applied, the re-judgment result,
 `Skill Resolution`, both receipt locations — the file path and the memory key
 `review/{subject-hash}`, or why neither was written —

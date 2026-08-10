@@ -711,7 +711,8 @@ Declined once and then taken: the kill switch. While the gate lived only in the 
 phase's prose, upstream's `review mode disable` was ceremony here — the archive gate reuses
 the partial-archive idiom, reporting unreviewed and letting the user decide, and one operator
 who can decline *was* the kill switch. That reasoning expired the moment a hook could block
-`git push`. It shipped as the `ecomono/review-mode` marker; see "What the port still owes".
+`git push`. It shipped as the `ecomono/review-mode` marker; see "What the port took, and what it
+declined".
 
 The upstream gap worth knowing: gentle-ai's own `sdd-archive` prose still hard-requires
 `reviewGate.result: allow` while its native gate already allows. Prose and code disagreeing
@@ -756,19 +757,70 @@ The distinction worth keeping: `check-persona-drift.sh` diffs two persona blocks
 lines and fails on any difference not listed as deliberate — purely syntactic, no judgment
 about what either block means. Most of `check-gate-drift.sh` has that same shape: it counts
 `###` gate titles in the skill file and confirms each one is also named in the agent's gate
-list, and that the spelled-out count agrees across three files. But one of its four checks
-does not — the check that the two `/ecomono-sdd-archive` command files forward the subject
-hash is a bare `grep -qF 'SUBJECT HASH'`, presence-only, the same shape that failed for
-key-learnings four times. It has not yet drifted into a false pass, but nothing about the
-check rules that out; a command file could mention `SUBJECT HASH` in an unrelated sentence
-and still pass. Before writing the next check, decide which shape it is — a two-artifact
-comparison, or a claim about what a sentence means — and do not assume presence checks are
-safe just because this one has not failed yet.
+list, and that the spelled-out count agrees across three files. One of its checks did not —
+whether the two `/ecomono-sdd-archive` command files forward the subject hash was a bare
+`grep -qF 'SUBJECT HASH'`, presence-only, the same shape that failed for key-learnings four
+times. It never drifted into a false pass, but nothing about it ruled that out.
 
-### What the port still owes
+**That question is now decided, and the answer was to add the comparison rather than sharpen
+the presence check.** Sharpening it would have meant a more specific pattern, which is how the
+buried checks died: each round adds one more pattern and the question stays "what does this
+sentence mean". What was available instead is a genuine two-artifact comparison nobody had
+taken: five files produce or consume that carrier, and they must AGREE on how it is spelled. The
+check now collects every carrier-shaped token across all five and requires exactly one distinct
+value. A renamed carrier feeds the gate nothing while each file remains individually fine, and
+that is precisely what per-file presence cannot see.
 
-Measured against the five ideas named above as RDD's irreducible core, two shipped, one was
-declined on purpose, and two are missing:
+The direction is the one this document already argued for under `check-hook-install-drift.sh`:
+there is no per-file expectation to forget, so a file that introduces a second spelling ADDS a
+variant and fails loudly rather than passing quietly.
+
+The two checks stay, and the division between them is narrower than it first looks. **Presence
+requires the literal in each of all five files** — not in two of them; the old two-file loop was
+folded into the five-file one, because a rename that drops the literal from the skill, the agent
+or the orchestrator starves the gate exactly as silently as one in a command file. The census
+owns exactly one thing presence cannot see: a second spelling **ADDED** while the literal stays
+intact, where every file read alone is still fine. That distinction is load-bearing and was
+measured, not reasoned — deleting the census leaves every fixture green except the one written
+for it. A rename, by contrast, is caught by both.
+
+The census's reach is narrower than "a second spelling", and the narrowing is forced rather than
+chosen. It is case-sensitive and knows only space, underscore and hyphen as the separator, so
+`subject_hash`, `SUBJECT.HASH`, `SubjectHash` or a non-breaking space between the words are all
+invisible — two judges reproduced three such escapes against the shipped check. Case-insensitivity
+is not the fix: every one of the five files already uses the lowercase form in ordinary prose,
+about the `review/{subject-hash}` memory key rather than about the carrier, so an `-i` census
+finds several distinct spellings on a clean tree and refuses it — verified by mutation, which
+breaks the baseline fixture. Two versions of this sentence carried counts instead, both labelled
+measured and both wrong, which is why it now carries none: the command that answers it is in the
+check's own comment. Separating the carrier token from prose about the
+same concept is a question about meaning — the shape buried twice above. So the boundary is stated
+in the check and pinned by a fixture that asserts the lowercase addition PASSES, which is the only
+way a ceiling stays honest as the files around it change.
+
+An earlier version of this paragraph got that wrong in the direction that costs the most: it
+described the two-file split the fix had just deleted, and attached "only the new check can fail"
+to the renamed-carrier fixture instead of the added-spelling one. Both judges reproduced it.
+Recorded rather than quietly corrected, because the failure mode is specific: this document is
+what a maintainer reads before deciding the presence loop only needs two files, and narrowing it
+back on the strength of that sentence would have reopened the exposure the round before it fixed.
+
+Writing it produced one instance of this document's own recurring defect, caught by running the
+fixture rather than by reading: the new check's comment claimed a consistent rename would still
+pass, since the contract is internal agreement rather than a name. The fixture said otherwise —
+the pre-existing presence check hardcodes the literal, so a full rename fails on both checks at
+once. The comment was corrected to match. The prose was wrong for about four minutes, which is
+the shortest such interval recorded here, and only because a fixture existed to disagree with it.
+
+### What the port took, and what it declined
+
+Measured against the five ideas named above as RDD's irreducible core. The heading used to say
+"still owes" and the sentence here used to count the rows — two shipped, one declined, two
+missing. The count was wrong by the time anyone read it, and this document has already deleted
+hand-maintained tallies for rotting the same way — a count of them would be one more, and a judge
+asked for evidence of the number that used to stand here and could not confirm it, which settles
+the point better than any figure would. It is gone rather than corrected. The
+rows say what each idea's state is; counting them is the reader's business.
 
 | Idea | State |
 |---|---|
@@ -776,7 +828,7 @@ declined on purpose, and two are missing:
 | Reviewer tier from risk evidence, not diff size | shipped |
 | A kill switch that is structurally absent when off | shipped, once the gate became a hook that can actually block — the `ecomono/review-mode` marker |
 | A refusal may name a command only if running it resolves the block | followed by the push gate's refusal, asserted by its test on both harnesses. Not enforced anywhere as a rule, and deliberately not: upstream's version is an AST test over refusal strings, which is a question about what a sentence means — the shape this document has already buried twice |
-| One receipt validated identically at **every** delivery gate | two of upstream's five — `pre-push` and `pre-pr` — plus archive, which is this repo's own boundary and not one of the five. Both harnesses now, from one script |
+| One receipt validated identically at **every** delivery gate | **shipped at every boundary that delivers, and declined at the rest.** `pre-push` and `pre-pr` are two of upstream's five and are the only two ways bytes leave this machine; archive is this repo's own boundary and not one of the five. `post-apply`, `pre-commit` and `release` have no reader and will not get one — the reasons are below and they are properties of those boundaries, not work left over |
 
 Upstream validates a receipt at `post-apply`, `pre-commit`, `pre-push`, `pre-pr` and
 `release`. The port originally checked one of those, in the archive phase, which meant the
@@ -1214,9 +1266,34 @@ guards but a smaller claim: a reconciler that mutates an operator's configuratio
 per dimension it touches, and the alternative — print the mismatch and let the operator run one
 command — was on the table from the first round and still is.
 
-What remains unported: `post-apply` and `pre-commit` have no reader. Neither is a delivery to
-anywhere — the bytes are still local and still revisable — which is why they were not built,
-not an oversight to be closed later. `release` does not exist here at all.
+What is declined rather than unbuilt: `post-apply`, `pre-commit` and `release` have no reader,
+and each is refused for a reason that belongs to the boundary rather than to the schedule.
+
+These names are also used by `sdd-orchestrator.md`'s trigger table, for something else, and the
+overlap is only partial — stating it precisely because the first version of this paragraph
+flattened it and a judge caught the flattening. There, `post-apply` is where the table says to
+strongly consider `ecomono-judgment`, which is the only thing in this repo that WRITES a receipt.
+`pre-commit` is not that: the table pairs it with `pre-push` under one cheap advisory lens
+(`ecomono-r2-readability`), and a single lens produces no receipt at all. So for `post-apply` the
+two uses genuinely differ — advising that a receipt be written there says nothing about whether a
+gate should read one — and for `pre-commit` there is no second use to reconcile.
+
+`post-apply` cannot work here. The receipt certifies a hash of the bytes apply has just written,
+so at that boundary the thing being checked is younger than the check — there is nothing a
+receipt could have been written under yet. Upstream reaches it because its receipt is minted by a
+Go binary inside the same transaction; a gate that reads a file written by a later review cannot.
+
+`pre-commit` buys no coverage. The hash covers `git diff <merge-base>` against the WORKING TREE,
+so committing reviewed bytes does not move it — pinned as a test case — which means a commit gate
+would never catch a delivery that `pre-push` does not already catch. What it would add is a
+demand to review before every intermediate commit, since a commit of NEW bytes is a new hash with
+no receipt. That trades the whole value of local, revisable commits for nothing: a commit
+delivers nowhere.
+
+`release` does not exist here at all.
+
+Between them, `pre-push` and `pre-pr` are the only two ways bytes leave this machine, and both
+validate. The port is closed on this idea, not partially done.
 
 **The gate now runs on both harnesses, from one implementation.**
 `opencode/plugins/review-receipt-gate.ts` intercepts the `bash` tool and shells out to

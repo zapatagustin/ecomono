@@ -35,8 +35,10 @@ reset() {
 }
 
 fail=0
+cases=0
 t() { # t <expected pass|fail> <description>
   local out rc got
+  cases=$((cases + 1))
   out=$(bash "$fixture/check-gate-drift.sh" 2>&1); rc=$?
   got=$([ $rc -eq 0 ] && echo pass || echo fail)
   if [ "$got" = "$1" ]; then
@@ -126,9 +128,84 @@ reset
 sed -i 's/SUBJECT HASH/SUBJECT-HASH-REMOVED/g' "$fixture/$ocmd"
 t fail "opencode command file stops forwarding the subject hash"
 
-# 13 — back to clean, proving no case leaked state into the fixture tree.
+# 13 — the carrier renamed in the ORCHESTRATOR. The presence loop covers all five files, so
+# this file now lacks the literal on its own and fails there directly; the census also fails,
+# since the other four files still contribute `SUBJECT HASH`. Both mechanisms catch this one.
+reset
+sed -i 's/SUBJECT HASH/SUBJECT_HASH/g' "$fixture/$orch"
+t fail "the carrier is renamed in the orchestrator only"
+
+# 14 — renamed consistently EVERYWHERE. This is refused, and the case exists to pin WHY rather
+# than to leave a reader guessing which check owns it: the presence loop requires the literal
+# `SUBJECT HASH` in each of the five files, so the carrier's name is fixed and not a free choice.
+# Measured when this case was written: it fails on the presence loop AND on the carrier count
+# simultaneously, which is why neither check's comment may claim a consistent rename survives.
+reset
+for f in "$skill" "$agent" "$orch" "$ccmd" "$ocmd"; do
+  sed -i 's/SUBJECT HASH/CANDIDATE FINGERPRINT/g' "$fixture/$f"
+done
+t fail "the carrier renamed consistently in every file is still refused"
+
+# 15 — shape (a): the rename ESCAPES the carrier-shaped pattern entirely, in one file only.
+# The census cannot fail on this: the mutated file contributes zero matching tokens and drops
+# out of the vote silently, while the other four still agree, so `n_carriers` stays 1 and a
+# census-only check would print `ok`. A census over pattern matches cannot notice an absence —
+# this is caught by the per-file presence loop, which requires the literal in THIS file too.
+reset
+sed -i 's/SUBJECT HASH: {hash}/REVIEW TOKEN: {hash}/' "$fixture/$orch"
+t fail "carrier renamed to text outside the pattern, in one file only"
+
+# 16 — shape (b): text appended with no separator, in one file only. A prefix match (no `\b`)
+# still extracts the literal `SUBJECT HASH` out of the widened `SUBJECT HASHES`, so both the
+# old presence loop and the census would stay green. Caught only by requiring a trailing word
+# boundary on the literal — not by adding another alternative to the carrier-shaped pattern,
+# which is the fix this repo has buried twice already.
+reset
+sed -i 's/`SUBJECT HASH`/`SUBJECT HASHES`/' "$fixture/$skill"
+t fail "carrier widened in place in one file, no separator"
+
+# 17 — shape (c): text glued to the FRONT of the literal, in one file only. The trailing `\b`
+# added for case 16 does not help here — a match may start anywhere in the line, so `NONSUBJECT
+# HASH` satisfies it — and the census is blind too, because `grep -o` returns only the matched
+# substring and discards the prefix, leaving the pooled spelling unchanged. Caught only by the
+# LEADING `\b`. Found by a judge one round after case 16, in the fix for case 16.
+reset
+sed -i 's/SUBJECT HASH: {hash}/NONSUBJECT HASH: {hash}/' "$fixture/$orch"
+t fail "carrier widened at the front in one file, no separator"
+
+# 18 — a second spelling ADDED while the literal stays intact. This is the only case the census
+# owns: every file still carries `SUBJECT HASH`, so the per-file presence loop is satisfied and
+# reads green, and the drift is visible only by pooling the tokens and finding two distinct
+# values. Written because deleting the census left all other cases passing — an assertion nothing
+# can fail is not a check, and the census's own comment claimed exactly this capability.
+reset
+printf '\nForward `SUBJECT_HASH: {hash}` into the launch prompt.\n' >> "$fixture/$orch"
+t fail "a second carrier spelling added alongside the literal"
+
+# 19 — the census's disclosed ceiling, asserted as a PASS so the boundary is pinned rather than
+# implied. A lowercase second spelling added alongside the intact literal is NOT caught: the
+# census is case-sensitive on purpose, because all five files already use the lowercase form in
+# ordinary prose about the `review/{subject-hash}` memory key, so `-i` finds several spellings on
+# a clean tree and refuses it. No count here — two earlier versions carried one, both wrong.
+# Two judges reproduced this escape plus variants with a dot, CamelCase and a non-breaking space.
+# The day someone finds a way to tell the carrier token from prose about it, this is the case that
+# flips.
+#
+# This case cannot fail on its own, which two judges checked and is worth stating where a reader
+# will see it: a `t pass` assertion holds against a census-less check, a presence-loop-less one,
+# and one that exits 0 unconditionally. Its discriminating power is borrowed from case 18 directly
+# above — the only case that fails when the census is deleted. Delete 18 and this stops meaning
+# anything while still printing `ok`.
+reset
+printf '\nForward `subject_hash={hash}` into the environment.\n' >> "$fixture/$orch"
+t pass "a lowercase second spelling is outside the census, by design"
+
+# 20 — back to clean, proving no case leaked state into the fixture tree.
 reset
 t pass "baseline again after every mutation"
 
-[ $fail -eq 0 ] && echo "gate-drift: 13 cases passed"
+# The count is computed, never typed. Three hand-maintained tallies in this repo rotted and were
+# deleted rather than corrected a fourth time; a test that reports its own case count is the
+# cheapest place to stop making the mistake.
+[ $fail -eq 0 ] && echo "gate-drift: $cases cases passed"
 exit $fail
