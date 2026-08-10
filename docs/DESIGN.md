@@ -1439,3 +1439,64 @@ survives, and unlike the key-learnings check it was watched failing in both halv
 believed. That also gives `delegate_only` its first reader — until now it was self-descriptive
 metadata nothing consulted, which is precisely how the contradiction lived so long.
 
+
+### A rule nobody executed, and the difference between a mechanism and an invariant
+
+`ecomono-judgment`'s hard rules said judges receive exact skill paths resolved from the registry
+per `skill-resolver.md`, the same block injected into judge and fix prompts alike. Across two
+judgments in one session — eight judge runs and two fix runs — every single sub-agent reported
+`Skill Resolution: none`. The orchestrator never built the block, ten times running.
+
+Worth being precise about what was and was not broken, because the parts are usually confused.
+The registry (`.atl/skill-registry.md`) is real and regenerated per session. `skill-resolver.md`
+gives four mechanically followable steps. The judge and fix prompt templates both carry the
+`## Skills to load before work` placeholder in exactly the resolver's format. The sub-agents
+reported the omission accurately, using the value the protocol defines for it, and the resolver
+even states what that value means: "anything other than `paths-injected` means the delegator did
+not do its job." **Every artifact was correct and consistent. The action simply never happened,
+and nothing observed that it hadn't** — the value is a trailing field in a long report, and a
+delegator reading its own omission can keep going. Which is what happened, eight times.
+
+There is no check for this and there cannot be one in this repo. The artifact the rule constrains
+is a prompt string assembled in a model turn; it never touches disk, so no `check-*.sh` can ever
+see it. That is a real boundary and not a backlog item, and it means the rule has to be
+self-evidencing through the report rather than verifiable.
+
+The gates table had a row for "no skill registry" and none for "registry present, delegator
+skipped it" — it excused the environment and tolerated the omission. That asymmetry is fixed: a
+sub-agent reporting it received no standards block is now a defect of the round's SETUP, named
+beside the verdict rather than after the receipts, and explicitly NOT grounds to discard the
+round. Eight rounds of good findings would be absurd to throw away over a missing block.
+
+**The deeper correction is what the rule now requires.** Ten consecutive skips by a delegator who
+was, in the same breath, hand-writing a RICHER standards block than the registry would have
+produced — `claude/CLAUDE.md`, the `docs/DESIGN.md` sections bearing on the diff, the ceilings
+already accepted, the mutation convention — is not evidence of a lazy operator. It is evidence
+that the rule named a mechanism where it meant an invariant. What matters is that judges and the
+fix agent review against the SAME standards, because a judge applying a different bar than the
+fixer produces churn. Registry-resolved `SKILL.md` paths are one way to build that block, and the
+right one when the target is SDD-shaped work, where the phase skills ARE the contract under
+review. For an arbitrary diff the registry lists sixteen skills of which most — `compress`,
+`help`, `proxy-manager` — have nothing to say about the code. So the requirement is now the
+symmetry, the mechanism is scoped to where it earns its cost, and `paths-injected` is stated to
+be about receiving exact paths rather than about where the delegator found them.
+
+One thing this leaves mechanically checkable, and it is the only piece: `claude/agents/`'s two
+judges are byte-identical modulo the letter, verified. Their symmetry is what makes a two-judge
+round mean anything — an asymmetric tools list or an instruction one has and the other lacks
+breaks the premise silently, exactly as it would have if the reporting sentence added here had
+gone into one file and not the other. So `check-judge-twins.sh` now compares them: normalise the
+identity letter, diff, fail on anything left.
+
+Its one design decision is worth recording because the naive version passes the error it exists
+to catch. Each file is normalised with ITS OWN letter, never with both. Collapsing `a` and `b`
+everywhere maps a copy-paste error — judge-b's own text calling itself judge A — onto the same
+string on both sides, and it passes. Mutation-proven: swapping in the both-letter version flips
+exactly the two fixtures written for that error. Most of the nine fixtures guard the same
+direction, an over-wide normalisation quietly erasing real drift, rather than the obvious one; a
+standalone `A`/`B` used to enumerate options has to survive as a difference, and there is a case
+for that too.
+
+No exception mechanism, deliberately. No legitimate asymmetry exists, so an ignore list would be
+scaffolding for a case nobody has; if one appears the check fails loudly and whoever needs it adds
+it visibly. And the check covers only the two judges — `ecomono-judge-fix` is a twin of nothing.

@@ -13,7 +13,10 @@ You are an adversarial code reviewer. Your only job is to find problems.
 {files, feature, architecture slice, component}
 
 ## Skills to load before work
-{matching SKILL.md paths, if available}
+{exact file paths, never summaries. Registry-resolved SKILL.md paths when the target is
+SDD-shaped work; otherwise the project's own standards — claude/CLAUDE.md, the docs/DESIGN.md
+sections that bear on this diff, the ceilings already accepted. The SAME block goes to the
+judges and to the fix agent: that symmetry is the requirement, not the source of the paths.}
 
 ## Criteria
 - Correctness — logic errors, behaviour that does not match the stated intent
@@ -43,6 +46,9 @@ description of what changed as evidence — derive every finding from the files 
 Clean: `VERDICT: CLEAN — No issues found.`
 
 End with: `Skill Resolution: {paths-injected|fallback-registry|fallback-path|none} — {details}`
+(`paths-injected` whenever the block above named exact files, wherever the delegator got them;
+`none` only if you were handed nothing to review against. The value describes the delegator's
+work, not yours.)
 ```
 
 ## Fix agent prompt
@@ -54,7 +60,10 @@ You are a surgical fix agent. Apply only the confirmed issues below.
 {confirmed findings table}
 
 ## Skills to load before work
-{matching SKILL.md paths, if available}
+{exact file paths, never summaries. Registry-resolved SKILL.md paths when the target is
+SDD-shaped work; otherwise the project's own standards — claude/CLAUDE.md, the docs/DESIGN.md
+sections that bear on this diff, the ceilings already accepted. The SAME block goes to the
+judges and to the fix agent: that symmetry is the requirement, not the source of the paths.}
 
 ## Instructions
 - Fix only what is listed. A confirmed issue is the scope, not the starting point.
@@ -65,6 +74,9 @@ You are a surgical fix agent. Apply only the confirmed issues below.
 - Return the changed file, the line, and a one-line summary per fix.
 
 End with: `Skill Resolution: {paths-injected|fallback-registry|fallback-path|none} — {details}`
+(`paths-injected` whenever the block above named exact files, wherever the delegator got them;
+`none` only if you were handed nothing to review against. The value describes the delegator's
+work, not yours.)
 ```
 
 ## Verdict table

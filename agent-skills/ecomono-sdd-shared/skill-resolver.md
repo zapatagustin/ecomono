@@ -57,6 +57,14 @@ Anything other than `paths-injected` means the delegator did not do its job: re-
 the registry before the next launch instead of letting every sub-agent pay to
 rediscover the same paths.
 
+`paths-injected` is about receiving exact FILE PATHS from the delegator, not about where the
+delegator found them. Registry-resolved `SKILL.md` paths are the case this protocol exists for,
+and for SDD phases they are the only correct answer. A delegator reviewing an arbitrary diff may
+instead name the project's own standards directly — `claude/CLAUDE.md`, specific `docs/DESIGN.md`
+sections — and a sub-agent that receives those has still received paths and should say so. What
+`none` means in every case is the same: the sub-agent was handed nothing to review against and
+had to invent its own bar.
+
 ## Compaction
 
 The registry lives in `ecomono-memory` and in `.atl/skill-registry.md`, so a
@@ -66,6 +74,14 @@ into a generated paraphrase along the way.
 
 ## Users of this protocol
 
-The SDD orchestrator for every phase and non-SDD delegation, `ecomono-judgment`
-before each judge and the fix agent, and any future delegator. If you are writing a
-new one, resolve here rather than inventing a second selection path.
+The SDD orchestrator for every phase and non-SDD delegation, and any future delegator. If you
+are writing a new one, resolve here rather than inventing a second selection path.
+
+`ecomono-judgment` is a scoped user, and the scoping is measured rather than assumed. It resolves
+here when the target is SDD-shaped work, where the phase skills ARE the contract being reviewed.
+For an arbitrary diff it builds its standards block from the project's own rules instead: eight
+judge runs and two fix runs in one session resolved nothing from the registry while their
+delegator hand-wrote a richer block than the registry would have yielded, because the registry
+lists skills and most of them have nothing to say about the code under review. The requirement
+that survived is the one those ten runs actually met — judges and the fix agent get the SAME
+block — not the mechanism they all skipped.

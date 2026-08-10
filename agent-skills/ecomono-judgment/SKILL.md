@@ -2,7 +2,7 @@
 name: ecomono-judgment
 description: "Trigger: judgment day, dual review, adversarial review, juzgar. Two blind judges review in parallel, confirmed issues get fixed, then re-judged."
 metadata:
-  version: "1.14"
+  version: "1.15"
 ---
 
 Two independent reviewers, neither of which saw the work being written, agreeing on a
@@ -19,10 +19,15 @@ slice.
   to run the rounds.
 - Launch **both judges in parallel**, same target, same criteria, neither seeing the
   other. Sequential launches leak the first verdict into the second.
-- Judges get exact skill paths, resolved from the registry per
-  [skill-resolver.md](../ecomono-sdd-shared/skill-resolver.md) — the same block injected
-  into judge and fix prompts alike. A judge reviewing against different standards than
-  the fixer applies produces churn.
+- **Judge and fix prompts carry the SAME standards block.** That symmetry is the
+  requirement: a judge reviewing against different standards than the fixer applies
+  produces churn. Exact file paths, never summaries — a summary is a second copy of
+  someone else's rules with nothing keeping the two equal. For SDD-shaped work the block
+  is the registry-resolved `SKILL.md` paths per
+  [skill-resolver.md](../ecomono-sdd-shared/skill-resolver.md); for an arbitrary diff it
+  is normally the project's own standards, since the registry lists skills and most of
+  them say nothing about the code under review. Either way every sub-agent reports which
+  it received, and a report of none is about the delegator, not about the sub-agent.
 - Wait for both. Never synthesize from a partial verdict.
 - **Ask before fixing** in round 1.
 - After any fix agent runs, re-launch both judges **before** commit, push, done, or a
@@ -144,6 +149,7 @@ a negative array length" trains the reader to skim both.
 | Target unclear | Ask for scope. Do not launch |
 | Subject hash changed since the judges were launched | Discard the round. Re-launch on the new hash |
 | No skill registry | Warn, use generic criteria, record `Skill Resolution: none` |
+| A sub-agent reports it received no standards block | The round's SETUP was defective, not its findings. Name it beside the verdict, build the block before the next launch, and do NOT discard the round over it |
 | Both judges find the same CRITICAL or real WARNING | **Confirmed.** Fix per the round rules |
 | One judge finds it | **Suspect.** Report and triage. Never auto-fix |
 | Judges contradict each other | **Escalate** for a human decision |
@@ -155,7 +161,9 @@ converge, which is information about the finding, not about the judge.
 ## Sequence
 
 1. Confirm the target and any custom criteria. Freeze the subject hash.
-2. Resolve exact skill paths, or warn that you could not.
+2. Build the standards block — exact file paths, one block for both sides — or warn that you
+   could not. Build it BEFORE step 3, because the judges and the fix agent have to receive the
+   same one, and the fix agent runs a step later where the block is easy to forget.
 3. Launch Judge A and Judge B concurrently.
 4. Re-compute the subject hash. Changed → discard the round and re-launch on the new hash
    rather than synthesizing verdicts about bytes that no longer exist.
@@ -258,9 +266,11 @@ under an invented key is worse than no receipt.
 ## Output
 
 `## Judgment Day — {target}` with the subject hash, the candidate's changed-line count, the
-round number, the verdict table,
+round number, the verdict table with
+`Skill Resolution` beside it rather than trailing after the receipts — an omission that
+reads as a footnote gets skimmed past, and this one was, eight rounds running —
 counts for confirmed / suspect / contradiction, fixes applied, the re-judgment result,
-`Skill Resolution`, both receipt locations — the file path and the memory key
+both receipt locations — the file path and the memory key
 `review/{subject-hash}`, or why neither was written —
 and a final `JUDGMENT: APPROVED` or `JUDGMENT: ESCALATED`.
 

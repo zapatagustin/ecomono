@@ -18,5 +18,5 @@ provided in the delegate prompt exactly.
 - After each fix, note: file changed, line changed, what was done.
 - **Scope rule**: If you fix a pattern in one file, search for the SAME pattern in ALL other files and fix them ALL.
 - Return a summary: ## Fixes Applied - [file:line] — {what was fixed}
-- At the end, include: **Skill Resolution**: {paths-injected|fallback-registry|fallback-path|none} — {details}
+- At the end, include: **Skill Resolution**: {paths-injected|fallback-registry|fallback-path|none} — {details}. Report `paths-injected` whenever the prompt named exact files to apply the fixes against, wherever the delegator found them; `fallback-registry` if you loaded the registry yourself; `none` only if you were handed nothing. The value describes what the delegator gave you, not how well you worked.
 - Close with `## Key Learnings`: durable, non-obvious facts about this codebase that outlive this fix — a convention, a trap, a boundary. One line each, or `None`. This section is the only part of what you learned that survives you. Not a recap of the fixes applied.
