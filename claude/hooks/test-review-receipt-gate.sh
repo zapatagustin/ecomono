@@ -49,6 +49,12 @@ subject_hash() { # subject_hash [repo] [base]
 arm()    { : > "$marker"; }
 disarm() { rm -f "$marker"; }
 receipt() { printf '%s\n' "$1" "hash: $2" > "${3:-$receipts}/$2"; }   # receipt <verdict> <hash> [dir]
+# Same file with the reviewed merge-base recorded, which is what lets the gate re-derive the
+# hash after the base branch has moved. Written in the skill's own field order so a drift
+# between the two shows up here.
+receipt_based() {  # receipt_based <verdict> <hash> <base-sha> <dir>
+  printf '%s\n' "$1" "hash: $2" "base: $3" "target: fixture" "rounds: 1" > "$4/$2"
+}
 
 # decision <command> [repo] -> "allow" when the gate stays silent, else "<decision>:<reason>"
 decision() {
@@ -292,9 +298,20 @@ h_dev=$(subject_hash "$repo2" develop)
 h_master=$(subject_hash "$repo2" master)
 [ "$h_dev" != "$h_master" ] && echo "ok   the two bases really do disagree" \
   || { echo "FAIL fixture bases produce the same hash"; fail=1; }
+mb_dev=$(git -C "$repo2" merge-base HEAD develop)
 receipt APPROVED "$h_dev" "$r2dir/ecomono/receipts"
 check "stale master shadows the real base" 'git push' '^deny:' "$repo2"
 check "and the refusal points at the config" 'git push' 'ecomono.reviewBase' "$repo2"
+
+# F2: a receipt recording the REAL base is honoured in this same shape, where the base-less
+# receipt above is refused. `ecomono.reviewBase` is still unset here — this is the
+# recorded-base loop consulting the receipt's own `base:` line, not the config.
+rm -f "$r2dir/ecomono/receipts"/*
+receipt_based APPROVED "$h_dev" "$mb_dev" "$r2dir/ecomono/receipts"
+check "a recorded base survives the stale-master shadow" 'git push' '^allow$' "$repo2"
+rm -f "$r2dir/ecomono/receipts"/*
+receipt APPROVED "$h_dev" "$r2dir/ecomono/receipts"
+
 git -C "$repo2" config ecomono.reviewBase develop
 check "the configured base is used alone"  'git push' '^allow$' "$repo2"
 # A configured base that does not resolve must say so, and must not claim the setting is
@@ -309,6 +326,17 @@ got=$(decision 'git push' "$repo2")
 printf '%s' "$got" | grep -q 'The candidate list was not tried' \
   && echo "ok   and says the fallback was deliberately skipped" \
   || { echo "FAIL bad-config message does not explain the missing fallback"; fail=1; }
+
+# F1: a base:-bearing receipt is honoured even though `ecomono.reviewBase` names a branch that
+# does not resolve. "a bad reviewBase asks" above keeps passing only because that receipt has NO
+# `base:` line — kept base-less on purpose — so this is the paired case for the same broken
+# config: a receipt for the same hash that DOES record its base is honoured instead of asked.
+rm -f "$r2dir/ecomono/receipts"/*
+receipt_based APPROVED "$h_dev" "$mb_dev" "$r2dir/ecomono/receipts"
+check "a recorded base is honoured though reviewBase does not resolve" 'git push' '^allow$' "$repo2"
+rm -f "$r2dir/ecomono/receipts"/*
+receipt APPROVED "$h_dev" "$r2dir/ecomono/receipts"
+
 git -C "$repo2" config --unset ecomono.reviewBase
 
 # Two candidates, one ESCALATED and one with no receipt at all: the refusal must still list
@@ -339,6 +367,19 @@ r3dir="$repo3/.git"; mkdir -p "$r3dir/ecomono/receipts"; : > "$r3dir/ecomono/rev
 
 check "no resolvable base asks, never silently allows" 'git push' '^ask:' "$repo3"
 check "and names the config that fixes it" 'git push' 'ecomono.reviewBase' "$repo3"
+
+# F3: with no candidate base resolving at all, a receipt whose recorded base matches allows,
+# instead of the ask above. No `git merge-base` call here — the recorded-base loop diffs the
+# receipt's own value directly, so mb3 is just the commit the review would have used as its base.
+mb3=$(git -C "$repo3" rev-parse HEAD~1)
+h3=$(git -C "$repo3" diff "$mb3" | sha256sum | cut -c1-12)
+receipt APPROVED "$h3" "$r3dir/ecomono/receipts"
+check "still asks with a base-less receipt" 'git push' '^ask:' "$repo3"
+rm -f "$r3dir/ecomono/receipts"/*
+receipt_based APPROVED "$h3" "$mb3" "$r3dir/ecomono/receipts"
+check "a recorded base allows when no candidate base resolves at all" 'git push' '^allow$' "$repo3"
+rm -f "$r3dir/ecomono/receipts"/*
+
 # Unarmed, the same repo must stay silent — the marker is what turns this on.
 rm -f "$r3dir/ecomono/review-mode"
 check "unarmed, no base, still silent"     'git push' '^allow$' "$repo3"
@@ -368,6 +409,137 @@ git -C "$repo4" diff "$(git -C "$repo4" merge-base HEAD master)" >/dev/null 2>&1
 check "a failed diff asks, never silently allows" 'git push' '^ask:'        "$repo4"
 check "and says the diff failed"                  'git push' 'git diff'     "$repo4"
 check "and names how to repair the clone"         'git push' 'refetch'      "$repo4"
+
+# ------------------------------------------------ fixture 5: the base branch moves underneath
+echo
+echo "-- a receipt against a base that has since advanced"
+# Upstream RDD shipped a "pre-PR review tolerates compatible base advance" fix, and this
+# repo's own review history records a round whose freeze stopped reproducing when
+# origin/master moved with no byte changing. Measured before writing these cases, because the
+# framing turned out to be wrong in two of three shapes:
+#
+#   base gains UNRELATED commits  -> the hash does NOT move. `git merge-base` answers the fork
+#                                    point, and commits that are not ancestors of HEAD do not
+#                                    move it. The gate is already immune.
+#   base absorbs ALL of the work  -> the diff is empty, which the EMPTY_DIFF_HASH skip already
+#                                    treats as nothing under review.
+#   base absorbs PART of the work -> the hash moves and the receipt stops matching. The one
+#                                    real gap, asserted as a known ceiling below.
+#
+# The immunity is a property of the formula that nothing asserted, so it is pinned here: swap
+# the gate's `git diff "$mb"` for `git diff "$ref"` and the second case flips to deny.
+repo5="$tmproot/repo5"
+mkdir -p "$repo5"
+git -C "$repo5" init -q -b master .
+printf 'base\n' > "$repo5/base.txt"
+git -C "$repo5" add base.txt
+git_c "$repo5" commit -q -m base
+git -C "$repo5" checkout -q -b work
+printf 'one\n' > "$repo5/f.txt"
+git -C "$repo5" add f.txt
+git_c "$repo5" commit -q -m c1
+printf 'two\n' >> "$repo5/f.txt"
+git -C "$repo5" add f.txt
+git_c "$repo5" commit -q -m c2
+r5dir="$repo5/.git"; mkdir -p "$r5dir/ecomono/receipts"; : > "$r5dir/ecomono/review-mode"
+
+h5=$(subject_hash "$repo5" master)
+mb5=$(git -C "$repo5" merge-base HEAD master)      # the base as the review saw it
+receipt APPROVED "$h5" "$r5dir/ecomono/receipts"
+check "receipt matches before the base moves" 'git push' '^allow$' "$repo5"
+
+# Someone else's commit lands on the base. Real content, not --allow-empty: an empty commit
+# leaves the tree identical, so the diff would be unchanged for the wrong reason.
+before=$(git -C "$repo5" rev-parse master)
+git -C "$repo5" checkout -q master
+printf 'theirs\n' > "$repo5/other.txt"
+git -C "$repo5" add other.txt
+git_c "$repo5" commit -q -m "someone else"
+git -C "$repo5" checkout -q work
+[ "$(git -C "$repo5" rev-parse master)" != "$before" ] \
+  && echo "ok   the fixture really did advance the base" \
+  || { echo "FAIL base did not move, the case below proves nothing"; fail=1; }
+[ "$(subject_hash "$repo5" master)" = "$h5" ] \
+  && echo "ok   an unrelated base advance does not move the subject hash" \
+  || { echo "FAIL unrelated base advance moved the hash"; fail=1; }
+check "the receipt survives an unrelated base advance" 'git push' '^allow$' "$repo5"
+
+# The base absorbs PART of the reviewed work: master merges c1, so the merge-base advances into
+# the branch and the diff narrows to c2 alone. Not a rewind of master — the unrelated commit
+# above stays, because the two advances have to be able to coexist.
+git -C "$repo5" checkout -q master
+git_c "$repo5" merge -q --no-edit work~1
+git -C "$repo5" checkout -q work
+[ "$(subject_hash "$repo5" master)" != "$h5" ] \
+  && echo "ok   partial absorption really does move the hash" \
+  || { echo "FAIL partial absorption left the hash alone, the cases below prove nothing"; fail=1; }
+
+# A receipt written before this mechanism existed carries no `base:` line, and there is nothing
+# to re-derive from — so it keeps the old behaviour rather than being honoured on a guess. This
+# is also what proves the tolerance below is driven by the recorded base and not by something
+# else in the fixture.
+check "a receipt with no recorded base still refuses" 'git push' '^deny:' "$repo5"
+
+# With the reviewed merge-base recorded, the gate re-derives the hash from it: the bytes are
+# unchanged relative to what was reviewed, so the receipt still covers them.
+receipt_based APPROVED "$h5" "$mb5" "$r5dir/ecomono/receipts"
+check "a recorded base survives partial absorption" 'git push' '^allow$' "$repo5"
+
+# ...and every way that must NOT become an allow. The tolerance re-derives a hash from a value
+# read out of the receipt BODY, where nothing before it carried a contract, so each of these is
+# the boundary rather than a precaution.
+#
+# 1. The recorded base must reproduce the receipt's OWN name. Otherwise a receipt could name any
+#    base and approve bytes nobody reviewed.
+rm -f "$r5dir/ecomono/receipts"/*
+wrong=$(printf 'not-the-reviewed-bytes' | sha256sum | cut -c1-12)
+receipt_based APPROVED "$wrong" "$mb5" "$r5dir/ecomono/receipts"
+check "a base that does not reproduce the filename is ignored" 'git push' '^deny:' "$repo5"
+
+# 2. Bytes that moved after the review must still be refused — the whole point of the hash.
+rm -f "$r5dir/ecomono/receipts"/*
+receipt_based APPROVED "$h5" "$mb5" "$r5dir/ecomono/receipts"
+printf 'three\n' >> "$repo5/f.txt"
+check "bytes moved since the review are still refused" 'git push' '^deny:' "$repo5"
+git -C "$repo5" checkout -q -- f.txt
+check "and reverting them makes the same receipt valid again" 'git push' '^allow$' "$repo5"
+
+# 3. A non-approving verdict is not an approval on this path either.
+receipt_based ESCALATED "$h5" "$mb5" "$r5dir/ecomono/receipts"
+check "an escalated receipt is not honoured by re-derivation" 'git push' '^deny:' "$repo5"
+
+# 4. The empty-diff constant is a public value and must stay a non-key HERE too, not only in the
+#    candidate loop. A receipt named e3b0c44298fc whose recorded base is HEAD re-derives to its
+#    own name on any clean tree in any repository — the exact skeleton key the candidate loop
+#    already refuses. Drop the EMPTY_DIFF_HASH guard from the re-derivation and this flips.
+rm -f "$r5dir/ecomono/receipts"/*
+receipt_based APPROVED e3b0c44298fc "$(git -C "$repo5" rev-parse HEAD)" "$r5dir/ecomono/receipts"
+check "an empty-diff receipt unlocks nothing on re-derivation" 'git push' '^deny:' "$repo5"
+
+# 5. A base value that is not a commit id must be refused without reaching git with it. The body
+#    is operator-editable text, so `HEAD`, a refspec or a git option arriving here as a base is
+#    input at a trust boundary, not a typo to be forgiving about.
+rm -f "$r5dir/ecomono/receipts"/*
+for bogus in HEAD master --upstream '$(touch /dev/null)' 0000000000000000000000000000000000000000; do
+  receipt_based APPROVED "$h5" "$bogus" "$r5dir/ecomono/receipts"
+  got=$(decision 'git push' "$repo5")
+  printf '%s' "$got" | grep -Eq '^deny:' \
+    && echo "ok   a base of '$bogus' is refused, not resolved" \
+    || { echo "FAIL base '$bogus' produced: ${got:0:80}"; fail=1; }
+done
+
+# 6. ...and a revision EXPRESSION is refused even though it resolves to the very commit the
+#    review used. This is what makes the 40-hex validation load-bearing rather than decorative:
+#    loosen the pattern to accept anything and this is the case that flips to allow. Refusing it
+#    is the point — `work~2` names a different commit after one more commit lands, so it cannot
+#    carry a claim about immutable bytes the way an object id can.
+rm -f "$r5dir/ecomono/receipts"/*
+[ "$(git -C "$repo5" rev-parse 'work~2')" = "$mb5" ] \
+  && echo "ok   work~2 really does resolve to the reviewed base" \
+  || { echo "FAIL fixture: work~2 is not the reviewed base, case 6 proves nothing"; fail=1; }
+receipt_based APPROVED "$h5" 'work~2' "$r5dir/ecomono/receipts"
+check "a base as a revision expression is refused though it resolves" 'git push' '^deny:' "$repo5"
+rm -f "$r5dir/ecomono/receipts"/*
 
 echo
 echo "-- an unarmed repository pays nothing for alias resolution"
@@ -434,8 +606,25 @@ rmdir "$empty"
 # jq present, sha256sum absent. Emptying PATH cannot test this: the jq check short-circuits
 # first, so the sha256sum branch would never be reached and the case would pass for the
 # wrong reason.
+#
+# The list has two kinds of entry and conflating them is what kept this case green for several
+# rounds while it proved nothing. Two judges mutation-proved that: deleting
+# `command -v sha256sum` entirely left the case passing.
+#
+#   REACH the guard: `jq`, `cat`, `tr`, `sed`, `git` all run before it — `cat` feeds `jq` the
+#   payload, `tr` and `sed` normalise the command. `sed` was the one missing, so the normaliser
+#   produced an empty string, no delivery was detected, and the gate exited long before the guard.
+#
+#   DEFEAT MUTATION MASKING: `mktemp` runs AFTER the guard, so it is irrelevant while the guard is
+#   there. It is listed because without it the guard-deleted mutant exits open again for an
+#   unrelated reason (`mktemp: command not found`), and a mutation that cannot fail is not a check.
+#
+# `head` and `cut` also run after the guard and are needed for neither job — measured by removing
+# them in both directions — so they are gone rather than left as a claim that would rot. Measured
+# with the list as it stands: the guard deleted DENIES (the hash is empty and matches nothing),
+# the guard present allows.
 nosha=$(mktemp -d)
-for b in jq git cat tr head cut; do ln -s "$(command -v "$b")" "$nosha/$b"; done
+for b in jq git sed mktemp cat tr; do ln -s "$(command -v "$b")" "$nosha/$b"; done
 out=$(cd "$repo" && jq -nc '{tool_input:{command:"git push"}}' | PATH="$nosha" "$sh_bin" "$gate") || true
 [ -n "$(PATH="$nosha" command -v jq)" ] && [ -z "$(PATH="$nosha" command -v sha256sum)" ] \
   && echo "ok   the no-sha256sum fixture is the state it claims" \

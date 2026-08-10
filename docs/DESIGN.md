@@ -817,8 +817,18 @@ Widening is not symmetric, which is why `git config ecomono.reviewBase` exists. 
 resolves but is *wrong* — a stale local `master` in a repo whose real base is `develop` —
 produces a hash nobody signed and denies a delivery holding a perfectly good receipt, and
 re-running the review does not help, because the skill keeps writing the receipt under the
-base it correctly resolved. Configured, that branch is used alone. It was found by a judge
-who reproduced the lockout rather than reasoning about it.
+base it correctly resolved. It was found by a judge who reproduced the lockout rather than
+reasoning about it.
+
+Configuring `ecomono.reviewBase` still makes the gate use that branch alone for the CANDIDATE
+list, but it is no longer the only base the gate ever consults. The recorded-base loop below
+reads a receipt's own `base:` line regardless of what `ecomono.reviewBase` says or whether it
+resolves at all, so a receipt recording the real base is honoured even when the setting names a
+branch that does not resolve, and even when a stale local `master` would otherwise shadow the
+real base. That is not the weakening it sounds like: the recorded-base path cannot admit
+unreviewed bytes, because the diff still has to hash to the NAME of an APPROVED receipt, so all
+it removes is a FALSE REFUSAL — the exact failure `ecomono.reviewBase` was introduced to fix. A
+judge reproduced both shapes by hand.
 
 Two states that look alike are kept apart. No base resolves at all — a repo on `develop`
 before its first `push -u`, which is ordinary — means the gate cannot tell what is being
@@ -826,6 +836,85 @@ delivered, so it asks and names the config that fixes it. A base that resolves w
 diff means there is nothing under review, so it allows. Collapsing those two into one silent
 allow would make "the gate could not run" indistinguishable from "the review passed", which
 is the failure this whole mechanism exists to prevent.
+
+A base that *moves* is a different question from a base that is wrong, and upstream shipped a
+fix for it — "pre-PR review binds to the merge base and tolerates a compatible base advance",
+v2.4.0-rc.3. It reads as a hole here too, and this repo's own history looks like evidence for
+one: a review round's freeze stopped reproducing mid-round when `origin/master` advanced while
+not a byte moved. Measured before building anything, the framing was wrong in two of its three
+shapes:
+
+| The base gains | Subject hash | Gate today |
+|---|---|---|
+| unrelated commits | unchanged | already immune |
+| all of the reviewed work | the empty-diff constant | already skipped as nothing under review |
+| **part** of the reviewed work | moves | refuses a receipt nobody invalidated |
+
+The immunity is not a precaution anyone took, it is what `git merge-base` means: it answers the
+fork point, and a commit that is not an ancestor of `HEAD` does not move it. So the shape that
+cost this repo a review round — the base absorbing *everything* — lands in the branch that
+allows, and the shape upstream describes for unrelated advances never moved the hash to begin
+with. Both are now pinned in `test-review-receipt-gate.sh`, because a property the gate depends
+on silently is one a later change to the formula can take away: swap the gate's
+`git diff "$mb"` for `git diff "$ref"` and the assertion flips.
+
+What is real is partial absorption, and reaching it takes a partial delivery — pushing
+`work~1:master`, or an upstream merge of some of the commits. That one is closed. The receipt now
+records `base:`, the full 40-hex merge-base the hash was computed against, and when no candidate
+base produces an APPROVED receipt the gate asks the RECEIPTS which base they were written against
+and re-derives the hash from that.
+
+The property that keeps this from being a second, weaker door is that the recorded base is a
+**hint, never an authority**. It is consumed exactly as a candidate ref is: diff, hash, then look
+the receipt up BY NAME and check its verdict. A receipt cannot approve bytes by naming a
+convenient base, because the diff still has to hash to the name of an APPROVED receipt, and any
+byte that moved since the review changes it. Reading a base out of the body did move a contract
+into the one part of the file that previously carried none, which is why every way it could become
+an allow is a fixture rather than an argument, and why each fixture was mutation-checked:
+
+| Guard | Mutation | What flips |
+|---|---|---|
+| Look the receipt up by name, check its verdict | drop both | wrong-name, moved-bytes and escalated cases all pass |
+| `APPROVED` on the re-derived receipt | drop it | an ESCALATED receipt starts delivering |
+| Skip `EMPTY_DIFF_HASH` | drop it | a receipt named `e3b0c44298fc` recording `HEAD` re-derives to its own name on any clean tree in any repo — the skeleton key in its purest form |
+| Base is exactly 40 lowercase hex | accept anything | `base: work~2` is honoured, and a rev expression names a different commit after one more commit lands |
+
+The 40-hex rule needed a fixture built for it. Feeding it `HEAD`, `master`, `--upstream`,
+`$(touch /dev/null)` and forty zeros proves only that nothing crashes: none of them reproduce a
+receipt name, so the case passes with the validation deleted. What makes it load-bearing is a
+value that resolves to *exactly the reviewed commit* and is still refused — `work~2` — because
+that is the one shape where being forgiving would work today and be wrong tomorrow.
+
+One guard was written and then deleted on the same evidence. A `git rev-parse --verify` on the
+recorded base flipped nothing when removed — but not because a bad value always fails `git diff`.
+A 40-hex string can name a TREE object, and `git diff <tree-id>` succeeds (git's own empty-tree
+id, `4b825dc642cb6eb9a060e54bf8d69288fbee4904`, is valid in every repository without being
+stored, and diffs every file as newly added); only a 40-hex BLOB id fails `git diff` with a usage
+error. The guard is redundant because `git rev-parse --verify` accepts tree objects too, so it
+would not have caught the case `git diff` also lets through. Not exploitable either way:
+reaching `exit 0` still needs an APPROVED receipt named after the hash of that tree's diff, the
+same receipts-directory write access that already lets anyone forge the exact target receipt
+directly — a pre-existing boundary this change does not move. Redundant, measured, gone — one
+fewer subprocess per base.
+
+The cost is one `git diff` per DISTINCT recorded base, paid whenever the candidate loop did not
+already exit approved — a delivery it refused, and also the case where no candidate base resolved
+at all, where there was nothing to refuse. The happy path never reaches it. The narrower claim,
+"only on a delivery the candidate loop already refused", stood in this paragraph for one round
+after being corrected in the hook's own comment, and both judges caught the two files disagreeing:
+a prose fix applied to one description of a mechanism is not applied to its duplicate by
+construction. It is deliberately not capped: a cap would
+silently drop the receipt that matches and refuse a reviewed delivery, which is the asymmetry the
+base handling avoids everywhere else. And the refusal text still lists only the candidate hashes,
+not the re-derived ones — an operator who lands there sees the bases the gate guessed and not the
+ones its receipts named. Left that way to keep the refusal's single claim true rather than to make
+it complete; appending them is the upgrade path if it ever confuses anyone.
+
+Recorded so the next scan starts from here: upstream at v2.4.0-rc.3 was compared against this
+port, and base advance was the only applicable item in two minor releases. Everything else since
+v2.2.4 is the negotiated Go-CLI contract this port deliberately does not have — STATUS forecasts,
+reset/rescope exits, provider-defect handoff, abandon authorization versioning, authority-graph
+repair — plus Codex and Windows support, neither of which is a runtime here.
 
 The hook is registered with a bare `Bash` matcher and no `if:` clause, unlike
 `check-diff-size.sh`. Measured against a live `claude -p --settings`: an `if:` clause splits

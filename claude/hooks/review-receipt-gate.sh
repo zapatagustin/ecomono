@@ -315,6 +315,76 @@ done
 
 [ -n "$approved" ] && exit 0
 
+# No candidate base produced an APPROVED receipt. Before refusing, try the reverse direction:
+# ask the RECEIPTS which base they were written against, and re-derive the hash from that.
+#
+# The case this exists for is the base branch absorbing part of the reviewed work — a partial
+# delivery (`git push origin work~1:master`), or an upstream merge of some of the commits. The
+# merge-base then advances into the branch, the diff narrows to the remainder, and the hash stops
+# matching a receipt covering bytes nobody touched. Measured, because two neighbouring shapes are
+# NOT this and needed no fix: a base gaining unrelated commits does not move the hash at all
+# (`git merge-base` answers the fork point, and a commit that is not an ancestor of HEAD does not
+# move it), and a base absorbing ALL of the work empties the diff, which the skip above already
+# treats as nothing under review.
+#
+# The recorded base is a HINT about which commit to diff against, never an authority. It is used
+# exactly as a candidate ref is: diff, hash, then look the receipt up BY NAME and check its
+# verdict. So a receipt cannot approve bytes by naming a convenient base — the diff still has to
+# hash to the name of an APPROVED receipt, and any byte that moved since the review changes it.
+# That is the property that keeps this from being a second, weaker door.
+#
+# The base is read as exactly 40 lowercase hex and nothing else. The receipt body is
+# operator-editable text and every earlier line of it carried no contract, so `HEAD`, a refspec
+# or a git option arriving here is input at a trust boundary rather than a typo to be forgiving
+# about. A revision EXPRESSION is refused even when it resolves to the right commit, which is the
+# case worth naming: `work~2` names a different commit tomorrow, and a receipt is a claim about
+# immutable bytes. Only a full object id can carry that claim. There is deliberately no
+# `git rev-parse --verify` on the value — redundant, but not for the reason "a bad value fails
+# `git diff`": a 40-hex string can name a TREE object, and `git diff <tree-id>` SUCCEEDS (git's
+# own empty-tree id, 4b825dc642cb6eb9a060e54bf8d69288fbee4904, is valid in every repository
+# without being stored, and diffs every file as newly added); only a 40-hex BLOB id fails `git
+# diff` with a usage error. The guard is redundant because `git rev-parse --verify` accepts tree
+# objects too, so it would not have caught the one case `git diff` also lets through. Not
+# exploitable either way: reaching `exit 0` here still needs an APPROVED receipt NAMED after the
+# hash of that tree's diff — the same receipts-directory write access that already lets anyone
+# forge the exact target receipt directly, a pre-existing boundary this does not move.
+# EMPTY_DIFF_HASH is skipped for the same reason as above and it matters MORE here: a
+# receipt named e3b0c44298fc recording HEAD as its base re-derives to its own name on any clean
+# tree in any repository, which is the skeleton key in its purest form.
+#
+# ecomono: THE 40-HEX PATTERN IS SHA-1 SPECIFIC. In a repository created with
+# `--object-format=sha256`, a merge-base id is 64 hex characters, no `base:` line this pattern
+# accepts is ever produced, and the tolerance below silently never activates for such a repo —
+# failing CLOSED, back to the pre-tolerance behaviour, not open. Upgrade path if this ever
+# matters: read the repository's object-format and match the right length.
+#
+# ecomono: the cost is one `git diff` per distinct recorded base, paid whenever the candidate
+# loop did not already exit approved — that includes a delivery it refused AND the case where no
+# candidate base resolved at all, where there was nothing to refuse. The happy path — some
+# candidate base yielding an APPROVED receipt — never reaches here. Bases are deduped, so a
+# repository with many receipts from many rounds pays per base, not per file. Not capped: a cap
+# would silently drop the receipt that matches and refuse a reviewed delivery, which is the
+# asymmetry this gate's base handling already avoids elsewhere.
+#
+# ecomono: the refusal text below does NOT list the re-derived hashes, only the candidate ones.
+# An operator hitting this path sees the bases the gate guessed and not the ones its receipts
+# named. Upgrade path if it ever confuses anyone: append them to `candidates`. Left out to keep
+# the refusal's one claim — "these are the hashes for the candidate bases" — true.
+seen_base=""
+for f in "$receipts"/*; do
+  [ -f "$f" ] || continue
+  rb=$(sed -n 's/^base: \([0-9a-f]\{40\}\)$/\1/p' "$f" | head -n1)
+  [ -n "$rb" ] || continue
+  case " $seen_base " in *" $rb "*) continue ;; esac
+  seen_base="$seen_base $rb"
+  git diff "$rb" > "$difftmp" 2>/dev/null || continue
+  h=$(sha256sum < "$difftmp" | cut -c1-12)
+  [ "$h" = "$EMPTY_DIFF_HASH" ] && continue
+  [ -f "$receipts/$h" ] || continue
+  [ "$(head -n1 "$receipts/$h" | tr -d '[:space:]')" = "APPROVED" ] || continue
+  exit 0
+done
+
 if [ -z "$candidates" ]; then
   # A diff that could not be computed is not an empty diff, and must never reach the exit
   # below. Checked first for that reason: a repo can have one base whose diff failed and
@@ -359,6 +429,12 @@ EOF
   # A configured base that does not resolve does NOT fall back to the candidate list. Falling
   # back would answer a typo by guessing, which is the exact failure the config exists to
   # prevent — a base that resolves but is wrong denies a delivery whose review passed.
+  #
+  # That is not "nothing else was tried": the recorded-base loop above already ran, against
+  # every receipt's own `base:` line, regardless of `configured`. What is refused here is
+  # falling back to GUESSING a base — the candidate list — not falling back to a base a receipt
+  # actually claims, because that path cannot admit unreviewed bytes either: the re-derived hash
+  # still has to match that receipt's own name.
   if [ -n "$configured" ]; then
     why="\`ecomono.reviewBase\` is set to \`$configured\`, which does not resolve in this
 repository. The candidate list was not tried: naming a base is a claim about which one is

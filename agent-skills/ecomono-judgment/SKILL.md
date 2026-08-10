@@ -2,7 +2,7 @@
 name: ecomono-judgment
 description: "Trigger: judgment day, dual review, adversarial review, juzgar. Two blind judges review in parallel, confirmed issues get fixed, then re-judged."
 metadata:
-  version: "1.12"
+  version: "1.13"
 ---
 
 Two independent reviewers, neither of which saw the work being written, agreeing on a
@@ -140,12 +140,27 @@ needs in order to check the claim instead of trusting it.
 
 ```bash
 d="$(git rev-parse --git-common-dir)/ecomono/receipts" && mkdir -p "$d" && printf '%s\n' \
-  '{APPROVED|ESCALATED}' 'hash: {subject-hash}' 'target: {target}' 'rounds: {n}' > "$d/{subject-hash}"
+  '{APPROVED|ESCALATED}' 'hash: {subject-hash}' "base: $(git merge-base HEAD {base})" \
+  'target: {target}' 'rounds: {n}' > "$d/{subject-hash}"
 ```
 
 The first line is the verdict token alone, so a gate reads one line and refuses on anything
-but `APPROVED` — an `ESCALATED` receipt blocks rather than passes. Every later line is for a
-human opening the file and carries no contract.
+but `APPROVED` — an `ESCALATED` receipt blocks rather than passes.
+
+Two lines carry a contract and the rest are for a human opening the file. The first is the
+verdict. The second is `base:`, which must be the **full 40-hex merge-base commit** the subject
+hash was computed against — the same `$(git merge-base HEAD <base>)` the formula uses, not the
+branch name and not a revision expression like `HEAD~2`. It is what lets the gate honour this
+receipt after the base branch has absorbed part of the reviewed work: the merge-base advances,
+the diff narrows, the hash stops matching, and re-deriving from the recorded commit shows the
+bytes never moved. A branch name or a rev expression names a different commit tomorrow, so the
+gate refuses those spellings rather than resolving them.
+
+Getting it wrong is not fatal, and neither is omitting it. A value the gate will not accept fails
+its pattern exactly the way an absent line does, so the receipt still matches any delivery whose
+base has not moved. What a malformed or missing `base:` forfeits is the tolerance, nothing else —
+a judge reproduced both spellings and found them behaviourally identical, against an earlier
+version of this paragraph that called the malformed one ruinous.
 
 The token is **bare**. `JUDGMENT: APPROVED` is the terminal state this skill reports in
 conversation; the receipt's first line is `APPROVED` with nothing before it. The gate
