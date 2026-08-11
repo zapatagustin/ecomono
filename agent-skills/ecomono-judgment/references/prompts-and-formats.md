@@ -19,8 +19,9 @@ design-record sections bearing on the diff. The SAME block goes to the judges an
 agent: that symmetry is the requirement, not the source of the paths. This text deliberately
 names no real path — an earlier version named two, and a judge pointed out that an unfilled
 placeholder then reads as content rather than as an omission, so a sub-agent could report
-paths-injected for having received a template. A launch whose block still starts with a brace is
-refused by claude/hooks/judge-standards-gate.sh.}
+paths-injected for having received a template. A launch whose prompt lacks this heading entirely
+is refused by claude/hooks/judge-standards-gate.sh — presence of the heading is ALL it checks, so
+what sits under it is on you and on the sub-agent's report.}
 
 ## Criteria
 - Correctness — logic errors, behaviour that does not match the stated intent
@@ -70,8 +71,9 @@ design-record sections bearing on the diff. The SAME block goes to the judges an
 agent: that symmetry is the requirement, not the source of the paths. This text deliberately
 names no real path — an earlier version named two, and a judge pointed out that an unfilled
 placeholder then reads as content rather than as an omission, so a sub-agent could report
-paths-injected for having received a template. A launch whose block still starts with a brace is
-refused by claude/hooks/judge-standards-gate.sh.}
+paths-injected for having received a template. A launch whose prompt lacks this heading entirely
+is refused by claude/hooks/judge-standards-gate.sh — presence of the heading is ALL it checks, so
+what sits under it is on you and on the sub-agent's report.}
 
 ## Instructions
 - Fix only what is listed. A confirmed issue is the scope, not the starting point.

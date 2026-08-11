@@ -268,7 +268,7 @@ under an invented key is worse than no receipt.
 `## Judgment Day — {target}` with the subject hash, the candidate's changed-line count, the
 round number, the verdict table with
 `Skill Resolution` beside it rather than trailing after the receipts — an omission that
-reads as a footnote gets skimmed past, and this one was, eight rounds running —
+reads as a footnote gets skimmed past, and this one was, ten launches running —
 counts for confirmed / suspect / contradiction, fixes applied, the re-judgment result,
 both receipt locations — the file path and the memory key
 `review/{subject-hash}`, or why neither was written —

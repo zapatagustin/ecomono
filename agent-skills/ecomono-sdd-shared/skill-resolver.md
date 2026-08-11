@@ -15,7 +15,11 @@ Stop at the first source that answers:
 2. `mem_search(query: "skill-registry", project: "{project}")` →
    `mem_get_observation(id)`.
 3. `.atl/skill-registry.md` at the project root.
-4. Nothing → launch without project skills and say so. It regenerates with
+4. Nothing → launch without project SKILLS and say so, but never with an empty standards
+   block: name the project's own rules instead and report `fallback-path`. A judge found
+   this step and `ecomono-judgment`'s gates table prescribing opposite actions for one
+   trigger, which matters now that `claude/hooks/judge-standards-gate.sh` refuses a launch
+   carrying no block at all. It regenerates with
    `node ~/.claude/hooks/ecomono-skill-registry.js --cwd <repo>`, and also runs on
    every user prompt, so an empty registry usually means malformed frontmatter
    rather than a generator that never ran.

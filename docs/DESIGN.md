@@ -1461,7 +1461,8 @@ delegator reading its own omission can keep going. Which is what happened, eight
 argued that the constrained artifact is a prompt string assembled in a model turn, never touching
 disk, so no `check-*.sh` could ever see it — a real boundary rather than a backlog item, leaving
 the rule self-evidencing through its report. A judge went looking instead of reasoning and found
-the mechanism already shipped, one section above the claim: `claude/hooks/agent-model-gate.sh` is a
+the mechanism already shipped in this same repository and registered on the same matcher:
+`claude/hooks/agent-model-gate.sh` is a
 `PreToolUse` hook on this very `Agent` matcher that reads `.tool_input.model` and denies, and its
 own test passes `"prompt":"find X"` inside `tool_input`. The prompt is in the payload. It is
 inspectable **before** the sub-agent runs.
@@ -1472,19 +1473,51 @@ in the section arguing that exact mistake. The narrow claim was true — a stati
 off-session sees nothing — and it was used to carry a broader one it did not support.
 
 So `claude/hooks/judge-standards-gate.sh` now denies the launch of `ecomono-judge-a`, `-b` or
-`-fix` when the prompt carries no populated standards block. Denying beats reporting for one
-reason: a report arrives after the round is paid for and can be read past, and this one was, eight
-times. A denial cannot be forgotten.
+`-fix` when the prompt carries no `## Skills to load before work` heading. Denying beats reporting
+for one reason: a report arrives after the round is paid for and can be read past, and this one
+was, eight times. A denial cannot be forgotten — **on Claude Code.** opencode defines the same
+three judge agents and launches them through its `task` tool, and no gate of this shape has been
+ported there, exactly as `agent-model-gate.sh` was never ported. Both judges named it in the same
+round, and the first version of this sentence claimed the property without the qualifier. What
+holds on one harness and not the other is an asymmetry, not an enforcement.
 
-It asks three byte-level questions and no others — is the heading there, does the section hold a
-non-blank line before the next `## ` heading, and is that line still the unfilled template. The
-third exists because the placeholder used to name two REAL repository paths, so an unfilled block
-did not read as empty to a sub-agent; it read as content, and could have produced a false
-`paths-injected` where the old bug produced an honest `none`. A judge caught that shape before it
-shipped, and the fix was both the gate branch and a placeholder that names no real path.
+**The gate asks one question — is the heading present — and arriving at one took three designs in
+three review rounds.** The arc is worth the space, because it is this document's recurring lesson
+compressed into a week. Design one judged the section under the FIRST occurrence of the heading:
+two judges broke it from opposite directions in one round, a filled decoy above a real empty
+section ALLOWED and a quoted example above a real filled block REFUSED. Design two judged EVERY
+occurrence and required all populated: the next round produced two more false allows without
+contrivance — a `###` sub-heading with no paths under it reads as a non-blank line, and the sole
+occurrence sitting inside a fenced example reads as a real block. Neither shape was exotic; one is
+the grouping pattern `skill-resolver.md` itself suggests, the other is that file's own worked
+example pasted as context. Four escapes in two rounds, each found in the fix for the previous one,
+is the curve this repo buried the key-learnings check and the unrelated-work guard on — both of
+which died in WORKING TREES under review and never reached git history, which a judge proved by
+searching it; the post-mortems are the only place a reader can verify them, and they live in two
+files — the key-learnings sections above in this document, and the `ecomono:` freeze ceiling in
+`agent-skills/ecomono-judgment/SKILL.md` that replaced the guard. An earlier version of this
+sentence claimed both lived "in this document", citing one that does not; a judge checked. The root
+is one sentence: "does this prompt carry real standards" is a question about MEANING, and both
+parsers were answers to it wearing syntactic clothes.
 
-What the gate cannot see is stated in it: whether the paths are right, which is a claim about
-content, and whether two sub-agents in one round got the SAME block, since the hook sees one launch
+So the parser was deleted rather than fixed a third time, which is what this repo did with the
+review-receipt gate's delivery detection (the "Delivery detection went the other way" section
+above): keep the part that is genuinely syntactic, write the ceiling. Presence
+of the heading is that part, and it is not a consolation prize — the failure that motivated the
+gate was launches whose prompts carried ad-hoc standards sections under other names, or none —
+never this heading — and presence catches that entire shape. What presence deliberately does NOT
+catch is a raw template pasted verbatim, heading present and placeholder unfilled; that lands on
+the sub-agent's `none` report, and a judge was right to point out the two mechanisms split the
+work rather than one covering everything.
+Everything under the heading is the sub-agent's own `Skill Resolution` report to cover, and it
+can, for a reason that was itself a round-1 fix: the placeholder no longer names real repository
+paths, so an unfilled block under a real heading yields an honest `none` — named beside the
+verdict per the gates table — instead of a false `paths-injected`. Every shape that killed the two
+parsers is pinned in the gate's fixtures as an ALLOW, so the boundary is measured rather than
+remembered, and the day someone reaches past it again the graveyard flips loudly.
+
+What the gate cannot see is stated in it: everything below the heading line, whether the paths are
+right, and whether two sub-agents in one round got the SAME block, since the hook sees one launch
 at a time and holds no state. The static half of symmetry is `check-judge-twins.sh`; the per-round
 half stays reported rather than enforced. That one IS a boundary — and this section has earned some
 distrust of the word, so the upgrade path is named rather than implied: a PostToolUse audit that
@@ -1494,7 +1527,10 @@ The gates table had a row for "no skill registry" and none for "registry present
 skipped it" — it excused the environment and tolerated the omission. That asymmetry is fixed: a
 sub-agent reporting it received no standards block is now a defect of the round's SETUP, named
 beside the verdict rather than after the receipts, and explicitly NOT grounds to discard the
-round. Eight rounds of good findings would be absurd to throw away over a missing block.
+round. Ten launches of good findings would be absurd to throw away over a missing block — and
+"ten launches" here survived two cleanup passes as "eight rounds", conflating the unit and the
+count at once, until both round-5 judges converged on the one stale line. The units this section
+uses are two ROUNDS of review containing ten LAUNCHES; any other figure in it is rot.
 
 **The deeper correction is what the rule now requires.** Ten consecutive skips by a delegator who
 was, in the same breath, hand-writing a RICHER standards block than the registry would have
@@ -1520,11 +1556,13 @@ Its one design decision is worth recording because the naive version passes the 
 to catch. Each file is normalised with ITS OWN letter, never with both. Collapsing `a` and `b`
 everywhere maps a copy-paste error — judge-b's own text calling itself judge A — onto the same
 string on both sides, and it passes. Mutation-proven: swapping in the both-letter version flips
-exactly the two fixtures written for that error. Two more guard the opposite axis — that the
-normalisation is not too WIDE, since a standalone `A`/`B` enumerating options has to survive as a
-difference — and the rest are ordinary diff sanity. An earlier version of this sentence claimed
-most of them guarded the width axis; a judge counted and refuted it, so the counting is left to
-the reader, as everywhere else here that tried to keep a tally.
+exactly the two fixtures written for that error. The opposite axis — that the normalisation is
+not too WIDE — is guarded too: a standalone `A`/`B` enumerating options has to survive as a
+difference, and mutation shows which fixture owns that, since over-widening `norm()` flips exactly
+one. The rest are ordinary diff sanity. This sentence has now carried a wrong count TWICE — "most
+of them" refuted by one judge, then "two more" refuted by another's mutation — so it carries none:
+the mutation is the census, and prose counting fixtures is the same rot as every other tally this
+document has buried.
 
 One of those fixtures was claiming credit it had not earned, which is the `t pass` problem in a
 different costume. The case for a missing agent file passes whether or not the `[ -r ]` guard

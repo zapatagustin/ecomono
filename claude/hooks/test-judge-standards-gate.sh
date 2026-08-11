@@ -7,8 +7,10 @@
 # and this file reuses that shape rather than inventing a second one. `tool_input.prompt` being
 # present in it is the whole premise of this gate.
 #
-# The allows carry as much weight as the denies. A gate that blocks a correctly-built launch stops
-# the review that would fix the gate, so every shape of a legitimate block below is a case.
+# The gate asks ONE question: is the heading present. Most cases below therefore assert ALLOW,
+# and each of those is a CEILING pinned on purpose, not a behaviour anyone is proud of — two
+# parsers that reached further died of four bypasses in two review rounds, and every shape that
+# broke them is kept here as an allow so the boundary is measured rather than remembered.
 
 set -uo pipefail
 gate="$(dirname "$0")/judge-standards-gate.sh"
@@ -49,80 +51,152 @@ the diff
 ## Criteria
 find problems'
 
-UNFILLED='## Target
-the diff
-
-## Skills to load before work
-{exact file paths, never summaries. Registry-resolved SKILL.md paths when the target is
-SDD-shaped work; otherwise the project standards}
-
-## Criteria
-find problems'
-
 MISSING='## Target
 the diff
 
 ## Criteria
 find problems'
 
-EMPTY='## Target
-the diff
-
-## Skills to load before work
-
-## Criteria
-find problems'
-
-echo "-- the three judgment sub-agents are gated"
+echo "-- the one question: the heading is present, or it is not"
 for a in ecomono-judge-a ecomono-judge-b ecomono-judge-fix; do
-  check "$a with a filled block launches"   "$(p "$a" "$FILLED")"   '^allow$'
-  check "$a with no block is refused"       "$(p "$a" "$MISSING")"  '^deny:.*no .*heading'
-  check "$a with an empty section refused"  "$(p "$a" "$EMPTY")"    '^deny:.*empty'
+  check "$a with the heading launches"      "$(p "$a" "$FILLED")"  '^allow$'
+  check "$a without the heading is refused" "$(p "$a" "$MISSING")" '^deny:.*no .*heading'
 done
-
-echo
-echo "-- the unfilled template is the case that matters most"
-# The placeholder NAMES REAL PATHS, so an unfilled block does not read as empty to a sub-agent —
-# it reads as content, and the sub-agent would report `paths-injected` for having received a
-# template. Delete the `^[[:space:]]*\{` branch in the gate and this is the case that flips, while
-# the empty-section case above keeps passing and hides it.
-check "an unfilled placeholder is refused" "$(p ecomono-judge-a "$UNFILLED")" '^deny:.*unfilled'
-check "and the refusal says how to build it" "$(p ecomono-judge-a "$UNFILLED")" 'Registry-resolved'
+check "the refusal says how to build the block" "$(p ecomono-judge-a "$MISSING")" 'Registry-resolved'
+check "and says presence is all it checked"     "$(p ecomono-judge-a "$MISSING")" 'heading EXISTS and nothing more'
 
 echo
 echo "-- everything else launches untouched"
 # The gate exists for three named sub-agents. Anything else is out of scope by construction, and
 # a gate that reached wider would block ordinary delegation for a rule that does not apply to it.
-check "another agent type with no block"   "$(p ecomono-explore "$MISSING")"   '^allow$'
-check "a built-in agent with no block"     "$(p Explore "$MISSING")"           '^allow$'
+check "another agent type with no block"   "$(p ecomono-explore "$MISSING")"     '^allow$'
+check "a built-in agent with no block"     "$(p Explore "$MISSING")"             '^allow$'
 check "the fix agent's own sibling name"   "$(p ecomono-judge-fixer "$MISSING")" '^allow$'
 
 echo
-echo "-- a block that is populated in a shape nobody predicted still launches"
-# The gate asks whether the section holds a non-blank line that is not the template, and nothing
-# more. Prose instead of a bullet list, one path, a trailing comment: all legitimate.
-check "a single path, no list marker" \
-  "$(p ecomono-judge-b '## Skills to load before work
-/abs/path/CLAUDE.md')" '^allow$'
-check "prose naming the files" \
-  "$(p ecomono-judge-b '## Skills to load before work
-Read CLAUDE.md and DESIGN.md before starting.')" '^allow$'
-# A brace that is not at the START of the line is not the template.
-check "a path containing a brace" \
-  "$(p ecomono-judge-b '## Skills to load before work
-- /abs/path/{a,b}/CLAUDE.md')" '^allow$'
-
-echo
-echo "-- the section ends at the next heading, not at EOF"
-# Without the `f && /^## / { exit }` bound the section would swallow the rest of the prompt, and a
-# prompt whose LATER sections are non-blank would pass with its own block empty. Delete that bound
-# and this case flips.
-check "an empty block followed by prose is still empty" \
+echo "-- the ceiling, pinned: everything under the heading is out of reach, by decision"
+# Every case below ALLOWS, and every one of them defeated a parser that tried to refuse it. They
+# are asserted so the boundary flips loudly the day someone reaches past it again — and so the
+# next reader inherits the measured graveyard instead of re-walking it. What covers these is the
+# sub-agent's own `Skill Resolution` report: an empty or placeholder block under a real heading
+# yields an honest `none`, which the skill's gates table treats as a setup defect.
+check "an empty section under the heading" \
   "$(p ecomono-judge-a '## Skills to load before work
 
 ## Criteria
-- correctness
-- edge cases')" '^deny:.*empty'
+- x')" '^allow$'
+check "the unfilled template under the heading" \
+  "$(p ecomono-judge-a '## Skills to load before work
+{exact file paths, never summaries}
+
+## Criteria
+- x')" '^allow$'
+# Killed parser 1 (first-occurrence-wins): the decoy was judged and the real empty section never
+# looked at. Under presence-only there is nothing to choose between.
+check "a filled decoy above an empty real section" \
+  "$(p ecomono-judge-a 'Prior round used:
+
+## Skills to load before work
+- /abs/path/CLAUDE.md
+
+This round:
+
+## Skills to load before work
+
+## Criteria
+- x')" '^allow$'
+# Killed parser 2 (all-occurrences): a ### sub-heading is a non-blank line that reads as content,
+# so a block holding zero paths passed as populated.
+check "a ### sub-heading and no paths at all" \
+  "$(p ecomono-judge-a '## Skills to load before work
+### Registry-resolved
+
+### Project standards
+
+## Criteria
+- x')" '^allow$'
+# Killed parser 2 as well: the sole occurrence sits inside a fenced example, and no line-based
+# scan sees fences.
+check "the sole heading inside a fenced example" \
+  "$(p ecomono-judge-a 'Example format:
+```
+## Skills to load before work
+- /abs/path/CLAUDE.md
+```
+Proceed with the review.')" '^allow$'
+# The inverse direction parser 1 also broke: a quoted placeholder above a real filled block was
+# REFUSED — a false deny that blocks the review that would fix it. Presence-only launches it.
+check "a quoted placeholder above a real filled block" \
+  "$(p ecomono-judge-a 'For reference the template looks like:
+
+## Skills to load before work
+{exact file paths, never summaries}
+
+Real block:
+
+## Skills to load before work
+- /abs/path/CLAUDE.md
+
+## Criteria
+- x')" '^allow$'
+
+echo
+echo "-- a large prompt must not change the answer"
+# Both judges independently found the previous form — `printf "$prompt" | grep -q` under
+# `pipefail` — denying a COMPLIANT prompt once the bytes after the match overflowed the pipe
+# buffer (~128KB measured): grep -q exits at the match, printf takes SIGPIPE writing the rest,
+# and pipefail surfaces the 141 over grep's success. A fix agent's prompt with a findings table
+# plus context crosses that size routinely, so the gate refused exactly the rounds it matters
+# most for. The here-string has no writer process to kill. Restore the pipeline form and the
+# compliant case below is the one that flips.
+#
+# These payloads are built THROUGH FILES, never as arguments, and the first version of this block
+# is why the rule is written down: Linux caps a single argv string at 128KB (MAX_ARG_STRLEN), so
+# `jq --arg` with a 200KB prompt died with "argument list too long", the helper emitted nothing,
+# the gate read an empty payload and failed open — and the compliant case printed `ok` with the
+# gate never having seen a large prompt at all. A fixture that cannot fail, discovered because its
+# sibling deny case failed. The length assertion below is the guard against that shape returning.
+bigtmp=$(mktemp -d)
+trap 'rm -rf "$bigtmp"' EXIT   # an interrupted run must not leak the 200KB fixtures
+big_case() { # big_case <label> <prompt-file> <expected-regex>
+  local payload="$bigtmp/payload.json" out got plen
+  jq -nc --arg a ecomono-judge-a --rawfile t "$2" \
+    '{tool_name:"Agent",tool_input:{subagent_type:$a,prompt:$t}}' > "$payload"
+  plen=$(jq -r '.tool_input.prompt | length' "$payload" 2>/dev/null || echo 0)
+  if [ "${plen:-0}" -lt 150000 ]; then
+    echo "FAIL $1 — fixture broke: prompt reached the gate at ${plen:-0} bytes, not 200KB"
+    fail=1; return
+  fi
+  out=$("$gate" < "$payload")
+  [ -z "$out" ] && got=allow || got=$(printf '%s' "$out" | jq -r '.hookSpecificOutput.permissionDecision')
+  if printf '%s' "$got" | grep -Eq "$3"; then
+    echo "ok   $1"
+  else
+    echo "FAIL $1 — got: $got"
+    fail=1
+  fi
+}
+head -c 200000 /dev/zero | tr '\0' 'x' > "$bigtmp/tail"
+{ printf '## Skills to load before work\n- /abs/path/CLAUDE.md\n\n## Criteria\n'; cat "$bigtmp/tail"; } > "$bigtmp/with-heading"
+{ printf '## Criteria\n'; cat "$bigtmp/tail"; } > "$bigtmp/without-heading"
+big_case "the heading followed by 200KB still launches"  "$bigtmp/with-heading"    '^allow$'
+big_case "no heading followed by 200KB is still refused" "$bigtmp/without-heading" '^deny$'
+rm -rf "$bigtmp"
+
+echo
+echo "-- the heading match itself is exact"
+# Presence of the HEADING LINE, not of the words. A heading at another level or with trailing
+# text is not the templates' heading, and treating it as one would reopen the door to reading
+# structure. These deny, which is the strict-but-consistent direction.
+check "a ### version of the heading does not count" \
+  "$(p ecomono-judge-a '### Skills to load before work
+- /abs/path/CLAUDE.md')" '^deny:'
+check "trailing text on the heading line does not count" \
+  "$(p ecomono-judge-a '## Skills to load before work (SDD)
+- /abs/path/CLAUDE.md')" '^deny:'
+check "trailing whitespace on the heading line is fine" \
+  "$(p ecomono-judge-a '## Skills to load before work
+- /abs/path/CLAUDE.md')" '^allow$'
 
 echo
 echo "-- fails open"

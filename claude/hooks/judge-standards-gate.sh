@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # PreToolUse gate on the Agent tool: refuse to launch an `ecomono-judgment` sub-agent whose
-# prompt carries no populated standards block.
+# prompt carries no `## Skills to load before work` heading.
 #
 # `ecomono-judgment`'s hard rule is that judges and the fix agent review against the SAME
 # standards, named as exact file paths. Over two judgments in one session — eight judge runs and
@@ -21,26 +21,27 @@
 # Denying beats self-reporting for one reason: a report arrives after the work is paid for, and it
 # can be read past. A denial cannot be forgotten.
 #
-# WHAT IT CHECKS is three byte-level questions, deliberately, never a judgment about content:
-#   1. Is there a `## Skills to load before work` heading in the prompt?
-#   2. Does the section under it hold a non-blank line before the next `## ` heading?
-#   3. Is that line still the unfilled template — a line whose first character is `{`?
-# Any of those failing is a refusal. The third exists because the template's placeholder text
-# NAMES REAL REPOSITORY PATHS as examples, so an unfilled block reaching a sub-agent does not read
-# as empty: it reads as content, and a sub-agent could report `paths-injected` for having received
-# a placeholder. That would turn a correct `none` into a false confirmation — worse than the bug
-# this gate exists for. A judge caught the shape before it shipped.
+# WHAT IT CHECKS is one byte-level question, deliberately, and it is the survivor of three
+# designs: is the line `## Skills to load before work` present in the prompt? Absent → deny.
+# Present → allow, whatever sits under it.
 #
-# ecomono: THREE THINGS THIS CANNOT SEE, and they are boundaries rather than a backlog.
-#   - Whether the paths are real, or say anything about the code. That is a claim about content.
-#   - Whether the judges and the fix agent received the SAME block. The hook sees one `Agent` call
-#     at a time and holds no state across them, so symmetry is out of reach here. What covers the
-#     static half of symmetry is `check-judge-twins.sh`; the per-round half remains the
-#     coordinator's job, reported rather than enforced.
-#   - Any launch that is not one of the three named sub-agents. A judgment run through some other
-#     agent type is ungated, by construction.
-# Upgrade path for the second one, and the only one that changes it: a PostToolUse audit that
-# records each launch's block and compares them within a round.
+# ecomono: WHAT THIS CANNOT SEE is everything except that heading, and the list is a boundary
+# rather than a backlog — two parsers that reached further died here in two review rounds:
+#   - Whether the section under the heading is FILLED. A first-occurrence parser allowed a decoy
+#     above an empty real section; an all-occurrences parser allowed a `###` sub-heading with no
+#     paths and a sole occurrence inside a fenced code block. Four escapes, each found in the fix
+#     for the previous one — the curve this repo buried two other checks on. "Does this prompt
+#     carry real standards" is a question about meaning. What covers content is the sub-agent's
+#     own `Skill Resolution` report, which works precisely because the templates no longer put
+#     real-looking paths in the unfilled placeholder: an empty or placeholder block under a real
+#     heading yields an honest `none`, named beside the verdict per the skill's gates table.
+#   - Whether the paths are real, or say anything about the code. Content again.
+#   - Whether the judges and the fix agent received the SAME block. The hook sees one `Agent`
+#     call at a time and holds no state; the static half of symmetry is `check-judge-twins.sh`,
+#     the per-round half stays the coordinator's job. Upgrade path, and the only one that changes
+#     it: a PostToolUse audit that records each launch's block and compares within a round.
+#   - Any launch that is not one of the three named sub-agents, on any harness but Claude Code.
+#     opencode launches the same agents through `task` with no ported gate.
 #
 # ecomono: fails OPEN on a missing `jq`, an unparseable payload, or a payload with no
 # `subagent_type` — same convention as its sibling gates and for the same reason. A gate that
@@ -56,6 +57,9 @@ set -uo pipefail
 command -v jq >/dev/null 2>&1 || exit 0
 
 payload=$(cat) || exit 0
+# Mutation-measured redundant, same as the `jq` guard above: an empty payload makes the first `jq`
+# call fail and `|| exit 0` already opens the gate. Kept for the same reason, and labelled because
+# a judge pointed out that one redundant guard carried its note and the other did not.
 [ -n "$payload" ] || exit 0
 
 agent=$(printf '%s' "$payload" | jq -r '.tool_input.subagent_type // empty' 2>/dev/null) || exit 0
@@ -67,27 +71,39 @@ esac
 prompt=$(printf '%s' "$payload" | jq -r '.tool_input.prompt // empty' 2>/dev/null) || exit 0
 [ -n "$prompt" ] || exit 0
 
-# The section under the heading, up to the next `## ` heading. Line-based on purpose: awk sees
-# the same bytes the sub-agent will read, and no rule here depends on what any line means.
-block=$(printf '%s\n' "$prompt" | awk '
-  /^## Skills to load before work[[:space:]]*$/ { f=1; next }
-  f && /^## / { exit }
-  f
-')
-
-why=""
-if ! printf '%s\n' "$prompt" | grep -qE '^## Skills to load before work[[:space:]]*$'; then
-  why="the prompt has no \`## Skills to load before work\` heading at all"
-elif [ -z "$(printf '%s' "$block" | tr -d '[:space:]')" ]; then
-  why="the \`## Skills to load before work\` section is empty"
-elif printf '%s\n' "$block" | grep -qE '^[[:space:]]*\{'; then
-  why="the \`## Skills to load before work\` section still holds the unfilled template — a line beginning with \`{\`"
-fi
-
-[ -n "$why" ] || exit 0
+# ONE question, and it is the only one these bytes can answer: does the prompt contain the
+# heading line. Nothing about what sits under it.
+#
+# This is the third shape of this check in three review rounds, and the arc is the argument.
+# The first version took the FIRST occurrence of the heading and judged the section under it;
+# two judges broke it from opposite directions in one round (a filled decoy above a real empty
+# section was ALLOWED; a quoted example above a real filled block was REFUSED). The second
+# version judged EVERY occurrence and required all of them populated; the next round produced
+# two more false allows without contrivance — a `###` sub-heading with no paths under it reads
+# as content, and the sole occurrence sitting inside a fenced code block reads as a real block.
+# Four escapes in two rounds, each found in the fix for the previous one, is the exact curve on
+# which this repo buried its key-learnings check and the judgment skill's unrelated-work guard —
+# both died in working trees under review and never reached git history, so the post-mortems in
+# docs/DESIGN.md are where to verify them, not `git log`. The root is that
+# "does this prompt carry real standards" is a question about MEANING, and every parser here was
+# an answer to it wearing syntactic clothes.
+#
+# So the parser is deleted, not fixed a third time. What remains is the one check that cannot be
+# wrong about structure because it reads none: the heading is present, or it is not. That catches
+# exactly the failure that happened ten times — a delegator who never built a block at all — and
+# claims nothing else.
+#
+# A here-string, NOT a pipe, and the difference is a confirmed false deny. Under `pipefail`,
+# `printf "$prompt" | grep -q` fails on any compliant prompt whose bytes after the match overflow
+# the pipe buffer: grep -q exits at the match, printf takes SIGPIPE writing the rest, and pipefail
+# reports the pipeline as 141 even though grep succeeded. Both judges reproduced it independently
+# at ~128KB — and a fix agent's prompt carrying a findings table plus context crosses that
+# routinely, so the gate was refusing exactly the large rounds it matters most for. A here-string
+# has no writer process to kill. The large-prompt fixture pins it.
+grep -qE '^## Skills to load before work[[:space:]]*$' <<<"$prompt" && exit 0
 
 read -r -d '' reason <<EOF || true
-Refusing to launch \`$agent\`: $why.
+Refusing to launch \`$agent\`: the prompt has no \`## Skills to load before work\` heading.
 
 \`ecomono-judgment\`'s rule is that the judges and the fix agent review against the SAME
 standards, named as exact file paths and never as summaries — a judge applying a different bar
@@ -105,9 +121,11 @@ Registry-resolved \`SKILL.md\` paths when the target is SDD-shaped work — a ph
 the contract being reviewed there. Otherwise the project's own rules, plus whichever design-record
 sections bear on this diff. See agent-skills/ecomono-sdd-shared/skill-resolver.md.
 
-This gate reads bytes, not meaning: it cannot tell whether the paths you name are the right ones,
-and it cannot tell whether two sub-agents in the same round received the same block. Those stay
-yours.
+This gate checks that the heading EXISTS and nothing more. It does not read what sits under it —
+whether the section is filled, whether the paths are real, whether two sub-agents got the same
+block. Two parsers that tried died of four bypasses in two review rounds; the sub-agent's own
+\`Skill Resolution\` report is what covers the content, and it can, because the templates no
+longer put real-looking paths in an unfilled placeholder.
 EOF
 
 jq -nc --arg r "$reason" --arg m "⛔ Judge launch blocked — no standards block in the prompt for $agent." '{
