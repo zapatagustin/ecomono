@@ -28,13 +28,50 @@ fixture=$(mktemp -d) || exit 1
 trap 'rm -rf "$fixture"' EXIT
 live="$fixture/settings.json"
 
+# A hooks root the suite owns, so the existence half of the check never asks about the machine
+# running the tests. Seeded with a stub for every script the template names: the cases below are
+# about registration drift, and a missing script would make all of them fail for a second,
+# unrelated reason. The two cases that ARE about a missing script empty it deliberately.
+hookhome="$fixture/home"
+seed_hooks() {
+  rm -rf "$hookhome"; mkdir -p "$hookhome/.claude/hooks"
+  python3 - "$repo/claude/settings.template.json" "$hookhome" <<'SEED'
+import json, os, sys
+tmpl, home = sys.argv[1], sys.argv[2]
+doc = json.load(open(tmpl))
+for groups in (doc.get("hooks") or {}).values():
+    for group in groups:
+        for hook in group.get("hooks") or []:
+            cmd = hook.get("command")
+            if hook.get("type") != "command" or not isinstance(cmd, str):
+                continue
+            p = cmd.strip().replace("${HOME}", "~").replace("$HOME", "~")
+            if len(p.split()) != 1 or not p.startswith("~/"):
+                continue
+            dest = os.path.join(home, p[2:])
+            os.makedirs(os.path.dirname(dest), exist_ok=True)
+            open(dest, "w").write("#!/usr/bin/env bash\n")
+            # Executable, because the check requires X_OK, not mere presence. This line and that
+            # requirement encode "what counts as an installed hook" in two places, and a judge
+            # named the coupling before it bit: fix one side alone and every baseline case flips.
+            #
+            # The stub is a shebang-only no-op, which is DELIBERATELY at the check's named
+            # content ceiling — a judge flagged the shape. Content is irrelevant to what these
+            # fixtures test (registration comparison and file properties); a stub with a real
+            # body would claim coverage the check does not have.
+            os.chmod(dest, 0o755)
+SEED
+}
+seed_hooks
+
 fail=0
 cases=0
 last_out=""
 t() { # t <expected pass|fail> <description> — runs the check, sets $last_out
   local rc got
   cases=$((cases + 1))
-  last_out=$(ECOMONO_LIVE_SETTINGS="$live" bash "$repo/check-hook-install-drift.sh" 2>&1); rc=$?
+  last_out=$(ECOMONO_LIVE_SETTINGS="$live" ECOMONO_HOOKS_HOME="$hookhome" \
+    bash "$repo/check-hook-install-drift.sh" 2>&1); rc=$?
   got=$([ $rc -eq 0 ] && echo pass || echo fail)
   if [ "$got" = "$1" ]; then
     echo "ok   $2"
@@ -316,7 +353,86 @@ printf '{ not json' > "$live"
 t fail "malformed JSON — non-zero with a clear message"
 grep_out "error: cannot read"
 
-# 12 — back to the baseline, proving no case leaked state into the fixture.
+# A registration is not a running gate, and this check compared registrations only until it
+# reported `ok` for a hook that did not exist. Reproduced for real while adding one: the
+# registration was added to the live file first, the script could not be placed because
+# ~/.claude/hooks is a read-only Nix store symlink, and every registration was "present".
+build ""
+rm -f "$hookhome/.claude/hooks/review-receipt-gate.sh"
+t fail "a registered hook whose script is not on disk"
+grep_out "whose script is not on disk"
+# The per-entry line, not only the header — an operator acts on WHICH hook resolved WHERE, and a
+# judge proved by mutation that deleting the detail print left every case green.
+grep_out "review-receipt-gate.sh"
+grep_out "resolves to"
+grep_out "Deliver the script first"
+seed_hooks
+
+# Present is not runnable. A script that lost its execute bit — a copy, a backup restore, an
+# interrupted deploy — cannot fire, and `os.path.exists` called it installed; both judges
+# reproduced that false green independently. This repo invokes its .sh hooks directly, so X_OK is
+# load-bearing for every entry the existence half checks.
+build ""
+chmod -x "$hookhome/.claude/hooks/review-receipt-gate.sh"
+t fail "a registered hook present on disk but not executable"
+grep_out "not executable"
+seed_hooks
+
+# Present, executable, and EMPTY. It executes — but under this repo's hook semantics exit 0 with
+# no output means ALLOW, so an empty gate is a permanent allow: the declared gate functionally
+# absent. One judge called this harmless because it runs; the other traced what "runs" means for
+# a gate, and the hook contract sides with the second. The shape is ordinary drift — a
+# truncate-then-write deploy interrupted between the two steps, on a path already 755. Drop the
+# getsize clause from the check and this is the case that flips.
+build ""
+: > "$hookhome/.claude/hooks/review-receipt-gate.sh"
+t fail "a registered hook that is an empty file"
+grep_out "or empty"
+seed_hooks
+
+# The report must survive a live file that omits `matcher` — hand-edited settings do, and the
+# check's own refusal advice is to hand-edit. With a bare `group.get("matcher")` the None landed
+# in sorted() beside a string and raised TypeError: the DRIFT header printed, the per-entry lines
+# never did, and the operator got a traceback where the block's whole output belongs. Both judges
+# reproduced it. The assertion below is the per-entry line, which the crash never reaches —
+# restore the bare get and this is the case that flips.
+build ""
+python3 - "$live" <<'PY'
+import json, sys
+doc = json.load(open(sys.argv[1]))
+groups = doc["hooks"]["PreToolUse"]
+first = dict(groups[0]); first.pop("matcher", None)
+first["hooks"] = [{"type": "command", "command": "$HOME/.claude/hooks/gone-one.sh"}]
+groups.insert(0, first)
+json.dump(doc, open(sys.argv[1], "w"), indent=2)
+PY
+rm -f "$hookhome/.claude/hooks/review-receipt-gate.sh"
+t fail "two unreachable hooks, one group without a matcher key"
+grep_out "resolves to"
+grep_out "gone-one.sh"
+seed_hooks
+
+# ...and the ceiling beside it: a command that splits into more than one word is not
+# existence-checked, because
+# deciding which token is the script is shell grammar and this file already deleted one tokenizer
+# for exactly that. The note has to be printed rather than left implicit, or the pass reads as
+# "every registration was verified".
+build ""
+python3 - "$live" <<'PY'
+import json, sys
+p = sys.argv[1]
+doc = json.load(open(p))
+for groups in doc["hooks"].values():
+    for group in groups:
+        for hook in group.get("hooks") or []:
+            if hook.get("type") == "command" and isinstance(hook.get("command"), str):
+                hook["command"] = hook["command"] + " --with-an-argument"
+json.dump(doc, open(p, "w"), indent=2)
+PY
+t fail "arguments change the entry, so registration drift still fires"
+grep_out "existence-checked"
+seed_hooks
+
 build ""
 t pass "baseline again after every mutation"
 

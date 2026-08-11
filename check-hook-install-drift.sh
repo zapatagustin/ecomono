@@ -215,6 +215,87 @@ if missing:
     print("       Add it by hand, or the gate it implements is not running on this machine.")
     fail = True
 
+# A registration is not a running gate. This check compared registrations only, so following its
+# own advice — "add it by hand" — BEFORE the script reaches the machine turned a truthful failure
+# into `ok`, with the hook nonexistent. Reproduced while adding a hook: the registration went in,
+# the script was absent because ~/.claude/hooks is a read-only Nix store symlink, and this check
+# reported all registrations present. A false green in the check written against false greens.
+#
+# The existence test is deliberately NOT a tokenizer. "Which token is the script" is a question
+# about shell grammar, and this file already deleted one tokenizer for exactly that reason. So a
+# command containing whitespace after $HOME expansion is skipped and SAID to be skipped; a command
+# that is a single token IS the path, which covers every entry this repo ships.
+HOOK_HOME = os.environ.get("ECOMONO_HOOKS_HOME") or HOME or os.path.expanduser("~")
+unreachable = []
+skipped_multiword = 0
+for event, groups in (live_doc.get("hooks") or {}).items():
+    if not isinstance(groups, list):
+        continue
+    for group in groups:
+        if not isinstance(group, dict):
+            continue
+        for hook in group.get("hooks") or []:
+            if not isinstance(hook, dict) or hook.get("type") != "command":
+                continue
+            cmd = hook.get("command")
+            if not isinstance(cmd, str) or not cmd.strip():
+                continue
+            # Resolve through the same spellings normalize_home() already knows, against a
+            # root that the fixture suite can point elsewhere. Without that seam this block
+            # would couple a hermetic suite to whatever is installed on the machine running
+            # it — measured: it broke four existing cases, because the template names a hook
+            # this machine has not been given yet, which is exactly the state the suite must
+            # be able to describe without being in it.
+            path = normalize_home(cmd.strip()).replace("~", HOOK_HOME, 1)
+            if len(path.split()) != 1:
+                skipped_multiword += 1
+                continue
+            # Runnable, not merely present, and each clause bought a measured false green back.
+            # `os.path.exists` is true for a directory and for a file that lost its execute bit —
+            # both judge-reproduced; a partial copy or an interrupted deploy is ordinary drift,
+            # not an attack. The size clause is the third: a zero-byte file with +x EXECUTES, but
+            # under this repo's hook semantics exit 0 with no output means ALLOW, so an empty
+            # gate is a permanent allow — the declared gate functionally absent. Every entry that
+            # reaches this line is invoked DIRECTLY (the multiword skip above already removed the
+            # interpreter-wrapped ones), so X_OK is load-bearing for exactly this set: this repo
+            # tracks its directly-invoked hooks as 100755.
+            #
+            # ecomono: the ceiling is CONTENT, and it is wider than it first read. The size
+            # clause closes the zero-byte slice and nothing more: a non-empty no-op — a
+            # shebang-only file, a comment-only file, a script whose body is `true` — passes all
+            # three clauses and is the same permanent allow, one interrupted write further along.
+            # Two judges converged on that in the round after the size clause landed, which is
+            # the burial curve this repo has now measured three times, so the class is named
+            # rather than chased: stripping comments to find "real" content is deciding what a
+            # script DOES, and that is meaning. Mode and size are properties of the FILE; what
+            # the bytes do when run is not. The shebang case sits in the same ceiling — an
+            # interpreter that does not exist is a property of the MACHINE — and that one at
+            # least fails loud at invocation (bad interpreter, rc 126 under bash/sh, which is how
+            # these hooks are invoked), where the no-op fails silently. Upgrade path, the only
+            # real one: invoke each hook with a probe payload and compare observed behaviour,
+            # which is a different check with a different cost, not a fourth clause here.
+            #
+            # `get("matcher", "")`, never a bare get: the rest of this file defaults the missing
+            # key to "" and a None here made sorted() raise TypeError instead of printing the
+            # report the block exists for.
+            if not (os.path.isfile(path) and os.access(path, os.X_OK)
+                    and os.path.getsize(path) > 0):
+                unreachable.append((event, group.get("matcher", ""), cmd, path))
+
+if unreachable:
+    print(f"DRIFT — {live_path} registers {len(unreachable)} hook(s) whose script is not on disk, not executable, or empty:")
+    for event, matcher, cmd, path in sorted(unreachable):
+        print(f"       event={event} matcher={matcher!r} command={cmd!r} resolves to {path}")
+    print("       A registration is not a gate. The harness will find nothing to run, and every")
+    print("       registration-only check — including this one before this block existed — reports")
+    print("       the hook as installed. Deliver the script first, then register it.")
+    fail = True
+
+if skipped_multiword:
+    print(f"note: {skipped_multiword} registration(s) split into more than one word, so their script was not")
+    print("      existence-checked — deciding which token is the script is shell grammar, which")
+    print("      this check does not do.")
+
 if not declared:
     # An empty declared set makes `declared - installed` empty too, so every check below
     # passes vacuously. Reachable by pointing either env seam at a file with no hooks —

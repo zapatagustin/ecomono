@@ -1574,3 +1574,64 @@ from the wrong directory. Measured, then covered.
 No exception mechanism, deliberately. No legitimate asymmetry exists, so an ignore list would be
 scaffolding for a case nobody has; if one appears the check fails loudly and whoever needs it adds
 it visibly. And the check covers only the two judges — `ecomono-judge-fix` is a twin of nothing.
+
+### A registration is not a gate, and the check that said otherwise
+
+`check-hook-install-drift.sh` compares the hook REGISTRATIONS the template declares against the
+ones the live `settings.json` holds. It was written after a review gate shipped armed while its
+hook was never in the live file, and it survived four rounds of judges. It still had a false green
+in it, and the way it was found is the point: by following its own advice.
+
+Its refusal says "Add it by hand, or the gate it implements is not running on this machine." Doing
+exactly that — adding the registration for a hook added in the same change — turned the truthful
+failure into `ok`. The script was not on disk, because `~/.claude/hooks` is a symlink into the Nix
+store and read-only; only a `home-manager` build from the flake input can put a file there. So the
+live file registered a command that did not exist, and a check whose entire subject is "is the
+declared gate actually running" reported all registrations present.
+
+Reproduced deliberately afterwards, through the `ECOMONO_LIVE_SETTINGS` seam, to be sure it was
+the check and not the machine: registration present, script absent, `ok all 9 template hook
+registrations are present live`, exit 0.
+
+So the check now also asks whether each registered command is RUNNABLE — a regular file with its
+execute bit, not merely a path that exists. The distinction was a judge round's finding, both
+judges independently: `os.path.exists` is true for a directory and for a script that lost `+x` in
+a copy or an interrupted deploy, and this repo invokes its `.sh` hooks directly, so the bit is
+load-bearing for exactly the entries the check reaches (the interpreter-wrapped ones are already
+skipped as multiword). The fixture stubs had to gain `chmod +x` in the same movement — the check
+and its suite encode "what counts as an installed hook" in two places, and a judge named the
+coupling before it bit.
+
+RUNNABLE stops at bytes, and the next round measured exactly where. A zero-byte file with `+x`
+is refused: it executes, but under this repo's own hook semantics exit 0 with no output means
+ALLOW, so an empty gate is a permanent allow — the declared gate functionally absent. One judge
+called the empty file harmless because it runs; the other traced what "runs" means for a GATE,
+and the second reading is the one the hook contract supports, verified against the gates
+themselves. But the size clause closes only that slice, and the round after it landed both
+judges converged on the remainder: a non-empty no-op — shebang-only, comment-only, a body of
+`true` — passes all three clauses and is the same silent allow. The suite's own seed stub is
+that exact shape, which is fine for what those fixtures test (registration comparison, where
+content is irrelevant) and is said there so nobody re-finds it. The class is NAMED rather than
+chased: stripping comments to find "real" content is deciding what a script does, which is
+meaning — the curve this repo has now buried three checks on in one week. The shebang case
+(interpreter missing, loud rc 126 under bash/sh) sits in the same ceiling. What would actually
+close the class is behavioural: invoke each hook with a probe payload and compare what it does —
+a different check with a different cost, named as the upgrade path and not built.
+
+Two design rules shape the how, both learned the hard way in this file already. It is NOT a
+tokenizer — "which token is the script" is shell grammar, and this file deleted one tokenizer for
+exactly that reason, so any command that splits into more than one word is skipped and the skip is
+PRINTED rather than left implicit. Saying "a command with arguments" here would overclaim, since a
+quoted single path containing a space splits too — the check's own note was corrected for exactly
+that, and the first version of this paragraph reintroduced the overclaim in the description of the
+correction. And the resolution goes
+through an `ECOMONO_HOOKS_HOME` seam, because the first version coupled a hermetic fixture suite to
+whatever the machine running it happened to have installed: four existing cases broke instantly,
+since the template names a hook this machine has not been given yet — which is precisely the state
+the suite has to be able to describe from outside.
+
+The ordering this exposes is worth stating plainly, because it is counter-intuitive and the check's
+own message does not say it: **deliver the script first, register it second.** `settings.json` is
+seeded once and Nix declines to manage it, while `~/.claude/hooks` is Nix-managed and nothing else
+may write it. The two halves of installing a hook therefore arrive by different routes, and doing
+them in the wrong order produces a green check over a gate that cannot run.
