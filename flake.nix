@@ -132,6 +132,11 @@
             # rather than reimplementing: the previous inline copies diverged from the
             # helper in the same commit that added it — one compared Command and Args,
             # the other only Args — and neither had a test.
+            # Home Manager's activation PATH carries gnused/gnugrep/jq but not
+            # gawk, so mcp.sh's awk reconcilability check died with 127 under
+            # the systemd unit. Pin it here rather than in mcp.sh, which is
+            # also sourced by install.sh outside Nix.
+            PATH="${pkgs.gawk}/bin:$PATH"
             # shellcheck source=lib/mcp.sh
             . ${./lib/mcp.sh}
             claude="$(command -v claude || true)"
