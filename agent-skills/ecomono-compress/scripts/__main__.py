@@ -49,7 +49,7 @@ def main():
           f"({result['percent']}% saved)")
 
     # --- Validation + retry loop ---
-    original_text = backup.read_text(errors="ignore")  # keep original for retries
+    original_text = backup.read_text(encoding="utf-8", errors="ignore")  # keep original for retries
     print(f"\n🔍 Validating...")
 
     for attempt in range(3):  # initial + up to 2 retries (retries only help --api)
@@ -86,7 +86,7 @@ def main():
         atomic_write_text(fp, compressed)  # re-validated at the top of the next iteration
 
     # Done
-    compressed_tokens = len(fp.read_text(errors="ignore").split())
+    compressed_tokens = len(fp.read_text(encoding="utf-8", errors="ignore").split())
     orig_tokens = len(original_text.split())
     saved = orig_tokens - compressed_tokens
     pct = round(saved / orig_tokens * 100, 1) if orig_tokens > 0 else 0

@@ -368,6 +368,12 @@ const OVERHEAD_PATTERNS = [
   /\[XML compressed: [^\]]*\]/g, // compressXml summary line
   /\[\d+ total <\w+> elements\]/g, // compressXml repeated-sibling collapse
   /\.\.\. \(repeated <\w+> elements\)/g, // compressXml repeated-sibling collapse
+  /\[Array\(\d+\)\]/g, // compressValue depth-limit stub (array)
+  /\{Object\(\d+ keys\)\}/g, // compressValue depth-limit stub (object)
+  /\.\.\. \d+ more items \(\d+ total\)/g, // compressValue array truncation
+  /\d+ keys omitted: [^"\n]*/g, // compressValue key-hint omission list
+  /\d+ more keys omitted/g, // compressValue key-count truncation
+  /\.\.\. \(\d+ chars\)/g, // compressValue string truncation suffix
 ]
 
 function measureOverheadChars(text: string): number {
@@ -388,10 +394,20 @@ function measureOverheadChars(text: string): number {
 //
 // gross = before - after (the naive reduction, which silently counts the
 // hook's own markers as "saved" chars since they're baked into `after`).
-// overhead = chars measureOverheadChars found in `after`. net = gross -
-// overhead: the honest number, negative when the markers added cost more than
-// the truncation saved. Logged on every change now, not just size decreases,
-// so net-negative runs show up instead of being silently dropped. Summarize:
+// overhead = measureOverheadChars(after) - measureOverheadChars(before),
+// floored at 0: a marker-shaped run already present in the input appears on
+// both sides and cancels, so only NET-NEW marker text counts as overhead — the
+// naive measureOverheadChars(after) alone double-counts a pre-existing
+// look-alike as overhead the hook added. net = gross - overhead: the honest
+// number, negative when the markers added cost more than the truncation
+// saved. Logged on every change now, not just size decreases, so net-negative
+// runs show up instead of being silently dropped.
+// ecomono: this still under-counts one case — a pre-existing look-alike that
+// the truncation ITSELF removes (so it's absent from `after` but present in
+// `before`) skews the subtraction negative and gets floored away, hiding real
+// overhead elsewhere in the same string. Only provenance-tracking from the
+// compression functions themselves (mark spans as they're inserted) closes
+// that gap; not worth it for a best-effort metrics file. Summarize:
 //   node -e 'let g=0,n=0;require("fs").readFileSync(process.env.HOME+"/.cache/ecomono-compress/stats.jsonl","utf8").trim().split("\n").forEach(l=>{let r=JSON.parse(l);g+=r.gross;n+=r.net});console.log(`gross ${g} chars, net ${n} chars (overhead ${g-n})`)'
 const STATS_FILE = process.env.ECOMONO_COMPRESS_STATS === "off"
   ? null
@@ -403,7 +419,7 @@ async function logStats(tool: string, beforeText: string, afterText: string): Pr
   try {
     const before = beforeText.length
     const after = afterText.length
-    const overhead = measureOverheadChars(afterText)
+    const overhead = Math.max(0, measureOverheadChars(afterText) - measureOverheadChars(beforeText))
     const gross = before - after
     const net = gross - overhead
     if (!statsDirReady) {

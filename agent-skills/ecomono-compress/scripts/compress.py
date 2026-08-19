@@ -13,9 +13,11 @@ Phase 2: optional semantic pass via cheap API (fast, ~2s, cents)
 
 import re
 import os
+import stat
 import json
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 
 
@@ -27,10 +29,37 @@ def atomic_write_text(path: Path, content: str) -> None:
     those two steps leaves the original file untouched instead of truncated —
     a plain `path.write_text()` truncates the target before writing, so a
     mid-write crash loses the file.
+
+    `path` is resolved to its real path first: os.replace onto a symlink
+    swaps the link itself rather than updating what it points to, silently
+    leaving the real target untouched. Writing through the resolved path
+    updates the target and keeps the link intact.
+
+    The temp file is created via `tempfile.mkstemp` (mode 0600, O_EXCL,
+    unpredictable name) instead of write-then-chmod: mkstemp's mode is never
+    looser than 0600 at any point between creation and the final chmod, so a
+    restrictive target's content is never exposed at umask-default perms
+    during the write, and there's no race window for another process to
+    open, follow, or collide with the temp path. If the target already
+    exists, the temp file's permission bits are copied onto it (the rwx
+    classes, via `stat.S_IMODE` masked with 0o777) before the swap — a fresh
+    temp file would otherwise get umask defaults, resetting permissions
+    (e.g. 0600 -> 0644) on every compress. The special bits (setuid/setgid/
+    sticky) are deliberately stripped rather than copied: `stat.S_IMODE`
+    alone keeps them (it masks 0o7777), so the `& 0o777` is what drops them.
     """
-    tmp = path.with_name(f".{path.name}.tmp{os.getpid()}")
-    tmp.write_text(content, encoding="utf-8")
-    os.replace(tmp, path)
+    real = path.resolve()
+    fd, tmp_name = tempfile.mkstemp(dir=real.parent, prefix=f".{real.name}.tmp")
+    tmp = Path(tmp_name)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            f.write(content)
+        if real.exists():
+            os.chmod(tmp, stat.S_IMODE(real.stat().st_mode) & 0o777)
+        os.replace(tmp, real)
+    except Exception:
+        tmp.unlink(missing_ok=True)
+        raise
 
 
 # ---------------------------------------------------------------------------
@@ -666,7 +695,7 @@ def compress_file(filepath: Path, use_api: bool = False, model: str = DEFAULT_MO
     if is_sensitive(filepath) and use_api:
         return {"status": "error", "reason": f"Sensitive filename: {filepath.name}. Refusing API send."}
 
-    original = filepath.read_text(errors="ignore")
+    original = filepath.read_text(encoding="utf-8", errors="ignore")
     if not original.strip():
         return {"status": "error", "reason": "Empty file"}
 
@@ -700,9 +729,9 @@ def compress_file(filepath: Path, use_api: bool = False, model: str = DEFAULT_MO
         return {"status": "skip", "reason": "Output identical to input (already compressed)"}
 
     # Write backup
-    backup.write_text(original)
+    backup.write_text(original, encoding="utf-8")
     # Verify backup
-    if backup.read_text(errors="ignore") != original:
+    if backup.read_text(encoding="utf-8", errors="ignore") != original:
         backup.unlink(missing_ok=True)
         return {"status": "error", "reason": "Backup write verification failed"}
 

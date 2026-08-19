@@ -290,6 +290,12 @@ const OVERHEAD_PATTERNS = [
   /\[XML compressed: [^\]]*\]/g, // compressXml summary line
   /\[\d+ total <\w+> elements\]/g, // compressXml repeated-sibling collapse
   /\.\.\. \(repeated <\w+> elements\)/g, // compressXml repeated-sibling collapse
+  /\[Array\(\d+\)\]/g, // compressValue depth-limit stub (array)
+  /\{Object\(\d+ keys\)\}/g, // compressValue depth-limit stub (object)
+  /\.\.\. \d+ more items \(\d+ total\)/g, // compressValue array truncation
+  /\d+ keys omitted: [^"\n]*/g, // compressValue key-hint omission list
+  /\d+ more keys omitted/g, // compressValue key-count truncation
+  /\.\.\. \(\d+ chars\)/g, // compressValue string truncation suffix
 ];
 
 /** Sum the char length of every overhead marker found in the final text. */
@@ -310,11 +316,21 @@ function measureOverheadChars(text) {
 //
 // gross = before - after (the naive reduction the old version reported, which
 // silently counts the hook's own markers as "saved" chars since they're baked
-// into `after`). overhead = chars measureOverheadChars found in `after`. net =
-// gross - overhead: the honest number, which goes negative on a workload where
-// the markers the hook adds cost more than the truncation it does. Logged on
-// EVERY change now (not just size decreases), so net-negative runs show up
-// instead of being silently dropped. Read with:
+// into `after`). overhead = measureOverheadChars(after) - measureOverheadChars(before),
+// floored at 0: a marker-shaped run already present in the input appears on
+// both sides and cancels, so only NET-NEW marker text counts as overhead — the
+// naive measureOverheadChars(after) alone double-counts a pre-existing
+// look-alike as overhead the hook added. net = gross - overhead: the honest
+// number, which goes negative on a workload where the markers the hook adds
+// cost more than the truncation it does. Logged on EVERY change now (not just
+// size decreases), so net-negative runs show up instead of being silently
+// dropped.
+// ecomono: this still under-counts one case — a pre-existing look-alike that
+// the truncation ITSELF removes (so it's absent from `after` but present in
+// `before`) skews the subtraction negative and gets floored away, hiding real
+// overhead elsewhere in the same string. Only provenance-tracking from the
+// compression functions themselves (mark spans as they're inserted) closes
+// that gap; not worth it for a best-effort metrics file. Read with:
 //   node -e 'let g=0,n=0;require("fs").readFileSync(process.env.HOME+"/.cache/ecomono-compress/stats.jsonl","utf8").trim().split("\n").forEach(l=>{let r=JSON.parse(l);g+=r.gross;n+=r.net});console.log(`gross ${g} chars, net ${n} chars (overhead ${g-n})`)'
 const fs = require("fs");
 
@@ -323,7 +339,7 @@ function logStats(tool, beforeText, afterText) {
   try {
     const before = beforeText.length;
     const after = afterText.length;
-    const overhead = measureOverheadChars(afterText);
+    const overhead = Math.max(0, measureOverheadChars(afterText) - measureOverheadChars(beforeText));
     const gross = before - after;
     const net = gross - overhead;
     const base = process.env.XDG_CACHE_HOME || `${process.env.HOME}/.cache`;
@@ -419,6 +435,27 @@ function selftest() {
   const jsonMarker = "[JSON compressed: 3 of 10 lines. Top-level keys retained]";
   assert.strictEqual(measureOverheadChars(jsonMarker), jsonMarker.length);
 
+  // compressJson splices its own stub text (e.g. an array-truncation marker)
+  // in addition to its trailing summary line — both are overhead the hook
+  // added, and measureOverheadChars must count the stub too, not just the
+  // summary marker checked above.
+  const jsonInput = JSON.stringify(
+    { items: Array.from({ length: 20 }, (_, i) => ({ id: i, name: `item-${i}-${"x".repeat(20)}` })) },
+    null,
+    2,
+  );
+  const jsonCompressed = compressJson(jsonInput, undefined);
+  assert.notStrictEqual(jsonCompressed, jsonInput, "sanity: compressJson must actually compress this input");
+  const itemsStubMatch = jsonCompressed.match(/\.\.\. \d+ more items \(\d+ total\)/);
+  assert.ok(itemsStubMatch, "expected compressJson to splice an array-truncation stub");
+  const summaryMatch = jsonCompressed.match(/\[JSON compressed: [^\]]*\]/);
+  assert.ok(summaryMatch, "expected compressJson to splice its summary marker");
+  assert.strictEqual(
+    measureOverheadChars(jsonCompressed),
+    itemsStubMatch[0].length + summaryMatch[0].length,
+    "measureOverheadChars must count compressJson's own stub splices, not just its summary line",
+  );
+
   const xmlSummary = "[XML compressed: 5 of 20 lines]";
   const xmlRepeat = "... (repeated <item> elements)";
   const xmlTotal = "[12 total <item> elements]";
@@ -426,6 +463,13 @@ function selftest() {
     measureOverheadChars(`${xmlSummary}\n    ${xmlRepeat}\n    ${xmlTotal}`),
     xmlSummary.length + xmlRepeat.length + xmlTotal.length,
   );
+
+  // compressValue's key-omission stub is embedded inside a JSON string value
+  // (quoted), so the regex intentionally stops at the closing quote rather
+  // than matching past it — this locks in that current, deliberate behavior.
+  const keysOmittedJson = `{"...":"3 keys omitted: foo, bar, baz"}`;
+  const keysOmittedMarker = "3 keys omitted: foo, bar, baz";
+  assert.strictEqual(measureOverheadChars(keysOmittedJson), keysOmittedMarker.length);
 
   // End-to-end: truncating 200 lines through the real bash budget must insert
   // exactly the marker measureOverheadChars detects — proving the measurement
@@ -449,7 +493,68 @@ function selftest() {
   const netNoMarker = grossNoMarker - measureOverheadChars(afterNoMarker);
   assert.strictEqual(netNoMarker, grossNoMarker, "net must equal gross when the hook adds nothing");
 
+  // A marker-shaped run already present in the INPUT (e.g. re-compressing
+  // output that was already compressed once) must not be double-counted as
+  // overhead the hook added: it appears on both sides of the subtraction and
+  // cancels. Naive measureOverheadChars(after) alone would wrongly count it.
+  const alreadyMarked = `${jsonMarker}\n${"a".repeat(50)}`;
+  const passedThrough = compressBash(alreadyMarked, undefined);
+  assert.strictEqual(
+    passedThrough,
+    alreadyMarked,
+    "sanity: this small input must pass through the pipeline unchanged",
+  );
+  assert.strictEqual(
+    measureOverheadChars(passedThrough),
+    jsonMarker.length,
+    "sanity: the naive measurement counts the pre-existing marker",
+  );
+  const netNewOverhead = Math.max(
+    0,
+    measureOverheadChars(passedThrough) - measureOverheadChars(alreadyMarked),
+  );
+  assert.strictEqual(netNewOverhead, 0, "net-new overhead must be 0 when the marker was already in the input");
+
+  // Parity guard: the JS hook and the TS opencode plugin carry independent
+  // copies of OVERHEAD_PATTERNS with no shared source. A future edit to one
+  // that forgets the other silently desyncs overhead accounting between the
+  // two harnesses. Skip (don't fail) when the sibling file isn't found — the
+  // installed hook lives outside the repo and has no sibling to compare.
+  const path = require("path");
+  const tsPath = path.join(__dirname, "..", "..", "opencode", "plugins", "cave-compress.ts");
+  if (fs.existsSync(tsPath)) {
+    const tsBlock = extractOverheadPatternsBlock(fs.readFileSync(tsPath, "utf8"));
+    const jsBlock = extractOverheadPatternsBlock(fs.readFileSync(__filename, "utf8"));
+    assert.ok(tsBlock, "could not locate OVERHEAD_PATTERNS in cave-compress.ts");
+    assert.ok(jsBlock, "could not locate OVERHEAD_PATTERNS in this file");
+    assert.strictEqual(
+      tsBlock,
+      jsBlock,
+      "OVERHEAD_PATTERNS has drifted between claude/hooks/ecomono-compress.js and opencode/plugins/cave-compress.ts — update both",
+    );
+  } else {
+    console.log(
+      "ecomono-compress selftest: skipping OVERHEAD_PATTERNS parity check (cave-compress.ts not found next to this repo checkout)",
+    );
+  }
+
   console.log("ecomono-compress selftest: all assertions passed");
+}
+
+// Extract the OVERHEAD_PATTERNS array body (one regex literal + comment per
+// line) as whitespace-normalized text, so two independent copies of the array
+// can be compared for drift regardless of incidental formatting differences.
+function extractOverheadPatternsBlock(source) {
+  const lines = source.split("\n");
+  const startIdx = lines.findIndex((l) => l.includes("const OVERHEAD_PATTERNS = ["));
+  if (startIdx === -1) return null;
+  const body = [];
+  for (let i = startIdx + 1; i < lines.length; i++) {
+    const trimmed = lines[i].trim();
+    if (trimmed === "]" || trimmed === "];") return body.join("\n");
+    body.push(trimmed.replace(/\s+/g, " "));
+  }
+  return null; // never closed — malformed, treat as not found
 }
 
 if (require.main === module) {

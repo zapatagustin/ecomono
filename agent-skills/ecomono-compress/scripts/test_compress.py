@@ -453,8 +453,37 @@ try:
 finally:
     C.os.replace = _real_replace
 check("pipeline", "atomic write: crash before replace leaves original intact", atomic.read_text(), "original content\n")
-for leftover in TMP.glob(".atomic.md.tmp*"):
-    leftover.unlink()
+# The failed write must not leak its temp file — assert none remains rather
+# than clean one up ourselves, which would hide a leak instead of catching it.
+check("pipeline", "atomic write: crash leaves no temp file", list(TMP.glob(".atomic.md.tmp*")), [])
+
+# atomic_write_text through a symlink: os.replace onto the link itself would
+# swap the link, leaving the real target untouched and the tool none the
+# wiser. Writing through the resolved path must update the target and the
+# path must remain a symlink afterward.
+target = write("real_target.md", "original content\n")
+link = TMP / "link.md"
+link.symlink_to(target)
+C.atomic_write_text(link, "new content\n")
+check("pipeline", "atomic write through symlink updates target", target.read_text(), "new content\n")
+truthy("pipeline", "atomic write keeps the path a symlink", link.is_symlink())
+
+# atomic_write_text must preserve the target's existing permissions rather
+# than resetting them to the temp file's umask defaults.
+import stat as _stat  # noqa: E402
+perm = write("perm.md", "original content\n")
+perm.chmod(0o600)
+C.atomic_write_text(perm, "new content\n")
+check("pipeline", "atomic write preserves 0600 permissions",
+      _stat.S_IMODE(perm.stat().st_mode), 0o600)
+
+# atomic_write_text must strip special bits (setuid/setgid/sticky) rather
+# than propagate them — S_IMODE alone masks 0o7777 and would keep them.
+special = write("special.md", "original content\n")
+special.chmod(0o2644)  # setgid + rw-r--r--
+C.atomic_write_text(special, "new content\n")
+check("pipeline", "atomic write strips setgid bit",
+      _stat.S_IMODE(special.stat().st_mode), 0o644)
 
 shutil.rmtree(TMP, ignore_errors=True)
 
