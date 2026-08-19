@@ -20,13 +20,15 @@
 # `claude -p --settings`: PreToolUse fires on tool_name "Agent" and tool_input
 # carries `model` when passed and omits the key when not.
 #
-# ecomono: the gated list is manual and enumerates built-in types, because
-# "has no frontmatter" is not a property the payload exposes. It excludes `fork`
-# on purpose — forks always inherit the parent model and ignore the parameter, so
-# demanding one there is unsatisfiable. Unknown types pass, which keeps a new
-# plugin agent from being blocked by a list that has not heard of it. Upgrade
-# path if this grows: resolve the type against ~/.claude/agents and gate on a
-# missing `model:` line instead of on a name.
+# The type is resolved against the project and user agents directories first:
+# a definition carrying `model:` passes, a definition missing it is gated the
+# same as a built-in. The manual list below only decides types with no file.
+#
+# ecomono: `fork` is excluded on purpose — forks always inherit the parent model
+# and ignore the parameter, so demanding one there is unsatisfiable. A type with
+# no definition on disk and not in the list passes, which keeps a plugin agent
+# (whose file lives inside its plugin, unresolvable from here) from being
+# blocked. Upgrade path: also resolve installed plugin agent directories.
 
 set -uo pipefail
 
@@ -41,13 +43,29 @@ model=$(printf '%s' "$payload" | jq -r '.tool_input.model // empty' 2>/dev/null)
 # An absent subagent_type means general-purpose, which is itself a built-in.
 agent=$(printf '%s' "$payload" | jq -r '.tool_input.subagent_type // "general-purpose"' 2>/dev/null) || exit 0
 
-case "$agent" in
-  Explore|Plan|general-purpose|claude|claude-code-guide|statusline-setup) ;;
-  *) exit 0 ;;
-esac
+# A definition on disk is authoritative: its frontmatter model wins when present,
+# and a definition without one inherits exactly like a built-in does.
+defined=""
+for dir in "${CLAUDE_PROJECT_DIR:-$PWD}/.claude/agents" "$HOME/.claude/agents"; do
+  f="$dir/$agent.md"
+  [ -f "$f" ] || continue
+  grep -q '^model:' "$f" 2>/dev/null && exit 0
+  defined=$f
+  break
+done
+
+if [ -z "$defined" ]; then
+  case "$agent" in
+    Explore|Plan|general-purpose|claude|claude-code-guide|statusline-setup) ;;
+    *) exit 0 ;;
+  esac
+  origin="a built-in agent type with no frontmatter"
+else
+  origin="defined at $defined without a \`model:\` line"
+fi
 
 read -r -d '' reason <<EOF || true
-This delegates to '$agent', a built-in agent type with no frontmatter, so omitting \`model\`
+This delegates to '$agent', $origin, so omitting \`model\`
 makes it inherit the main loop's — running search and file reading at the main loop's tier.
 
 Retry the same call with \`model\` set. Pick by what the subagent has to do, not by what it

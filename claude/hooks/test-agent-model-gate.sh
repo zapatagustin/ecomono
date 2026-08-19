@@ -46,6 +46,20 @@ check "fork is never gated — it cannot take a model" \
 check "an unknown plugin agent passes" \
   "$(p '{"subagent_type":"some-plugin-agent","prompt":"x"}')" '^allow$'
 
+# A definition on disk without `model:` is gated like a built-in; with it, passes.
+# CLAUDE_PROJECT_DIR points the gate's project lookup at a fixture tree.
+fixtures=$(mktemp -d)
+mkdir -p "$fixtures/.claude/agents"
+printf -- '---\ndescription: no model here\n---\n' > "$fixtures/.claude/agents/bare-agent.md"
+printf -- '---\ndescription: has one\nmodel: haiku\n---\n' > "$fixtures/.claude/agents/tiered-agent.md"
+export CLAUDE_PROJECT_DIR="$fixtures"
+check "an on-disk definition missing model: is denied" \
+  "$(p '{"subagent_type":"bare-agent","prompt":"x"}')" '^deny:.*model'
+check "an on-disk definition with model: passes" \
+  "$(p '{"subagent_type":"tiered-agent","prompt":"x"}')" '^allow$'
+unset CLAUDE_PROJECT_DIR
+rm -rf "$fixtures"
+
 # Fail open: an unparseable payload must not block the session.
 out=$(printf 'not json' | "$gate") || true
 [ -z "$out" ] && echo "ok   malformed payload fails open" || { echo "FAIL malformed payload blocked"; fail=1; }
