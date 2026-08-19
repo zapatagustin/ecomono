@@ -39,6 +39,8 @@ check "built-in with model passes" \
   "$(p '{"subagent_type":"Explore","model":"sonnet","prompt":"find X"}')" '^allow$'
 check "absent subagent_type defaults to general-purpose and is gated" \
   "$(p '{"prompt":"find X"}')" '^deny:'
+check "empty subagent_type defaults to general-purpose and is gated" \
+  "$(p '{"subagent_type":"","prompt":"find X"}')" '^deny:'
 check "a project agent carrying frontmatter is not gated" \
   "$(p '{"subagent_type":"ecomono-sdd-apply","prompt":"implement"}')" '^allow$'
 check "fork is never gated — it cannot take a model" \
@@ -57,8 +59,36 @@ check "an on-disk definition missing model: is denied" \
   "$(p '{"subagent_type":"bare-agent","prompt":"x"}')" '^deny:.*model'
 check "an on-disk definition with model: passes" \
   "$(p '{"subagent_type":"tiered-agent","prompt":"x"}')" '^allow$'
+
+printf -- '---\r\ndescription: crlf frontmatter\r\nmodel: haiku\r\n---\r\n' \
+  > "$fixtures/.claude/agents/crlf-agent.md"
+check "a CRLF frontmatter with model: passes" \
+  "$(p '{"subagent_type":"crlf-agent","prompt":"x"}')" '^allow$'
+
+# A model: line inside the body (past the closing ---) must not count.
+printf -- '---\ndescription: no model in frontmatter\n---\nExample: set model: haiku in your call.\n' \
+  > "$fixtures/.claude/agents/body-only-model.md"
+check "a body-only model: line does not count as frontmatter" \
+  "$(p '{"subagent_type":"body-only-model","prompt":"x"}')" '^deny:.*model'
+
+# A file with only an opening `---` (truncated write) has no frontmatter at
+# all — a body-ish `model:` line after it must not false-pass.
+printf -- '---\ndescription: truncated, no closing delimiter\nmodel: haiku\n' \
+  > "$fixtures/.claude/agents/truncated-frontmatter.md"
+check "a file with only an opening --- and a body-ish model: line is denied" \
+  "$(p '{"subagent_type":"truncated-frontmatter","prompt":"x"}')" '^deny:.*model'
+
+# fork.md on disk with no model: must still pass — the exclusion is unconditional.
+printf -- '---\ndescription: fork, no model\n---\n' > "$fixtures/.claude/agents/fork.md"
+check "fork passes even with a model-less fork.md fixture on disk" \
+  "$(p '{"subagent_type":"fork","prompt":"continue"}')" '^allow$'
 unset CLAUDE_PROJECT_DIR
 rm -rf "$fixtures"
+
+# A path-shaped subagent_type must not traverse out of the agents directory —
+# it falls through to the manual list and passes like any unknown type.
+check "a path-traversal subagent_type falls through to allow" \
+  "$(p '{"subagent_type":"../../../etc/passwd","prompt":"x"}')" '^allow$'
 
 # Fail open: an unparseable payload must not block the session.
 out=$(printf 'not json' | "$gate") || true

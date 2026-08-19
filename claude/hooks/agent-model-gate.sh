@@ -42,17 +42,42 @@ model=$(printf '%s' "$payload" | jq -r '.tool_input.model // empty' 2>/dev/null)
 
 # An absent subagent_type means general-purpose, which is itself a built-in.
 agent=$(printf '%s' "$payload" | jq -r '.tool_input.subagent_type // "general-purpose"' 2>/dev/null) || exit 0
+# jq's `//` only fires on null/absent, not on an empty string — an explicit
+# subagent_type:"" must default the same way an absent one does.
+[ -z "$agent" ] && agent=general-purpose
+
+# fork always inherits the parent model and ignores the parameter, so it is
+# excluded before on-disk resolution — a model-less fork.md must not deny it.
+[ "$agent" = fork ] && exit 0
 
 # A definition on disk is authoritative: its frontmatter model wins when present,
 # and a definition without one inherits exactly like a built-in does.
+# ecomono: subagent_type is untrusted input interpolated into a path below; skip
+# disk resolution for anything shaped like a path (contains / or starts with .)
+# so it cannot traverse out of the agents directory. It falls through to the
+# manual list, which won't recognize it either, so it passes like any unknown type.
 defined=""
-for dir in "${CLAUDE_PROJECT_DIR:-$PWD}/.claude/agents" "$HOME/.claude/agents"; do
-  f="$dir/$agent.md"
-  [ -f "$f" ] || continue
-  grep -q '^model:' "$f" 2>/dev/null && exit 0
-  defined=$f
-  break
-done
+case "$agent" in
+  */*|.*) ;;
+  *)
+    for dir in "${CLAUDE_PROJECT_DIR:-$PWD}/.claude/agents" "$HOME/.claude/agents"; do
+      f="$dir/$agent.md"
+      [ -f "$f" ] || continue
+      # Frontmatter only — the region between the first two `---` lines — so a
+      # body example line starting "model:" can't false-pass the check. A file
+      # with only an opening `---` (e.g. a truncated write) has no closing
+      # delimiter, so n never reaches 2 and END withholds buf — no frontmatter
+      # is extracted, and a body "model:" line can't false-pass either.
+      # Strip CR first — a CRLF file has "---\r" lines that never match
+      # /^---$/, which would false-deny every CRLF frontmatter.
+      if tr -d '\r' < "$f" | awk '/^---$/{n++; next} n==1{buf=buf $0 "\n"} END{if(n>=2) printf "%s", buf}' | grep -q '^model:'; then
+        exit 0
+      fi
+      defined=$f
+      break
+    done
+    ;;
+esac
 
 if [ -z "$defined" ]; then
   case "$agent" in

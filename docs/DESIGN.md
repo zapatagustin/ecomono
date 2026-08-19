@@ -199,7 +199,9 @@ working delegations; only the six built-in types have no file to carry the field
 boundaries: an absent `subagent_type` means `general-purpose`, so it is gated; `fork` is excluded
 because a fork always inherits the parent model and ignores the parameter, making the demand
 unsatisfiable; and unknown types pass, so a new plugin agent is not blocked by a list that has not
-heard of it.
+heard of it. The type is also resolved against `.claude/agents/` and `~/.claude/agents/` before
+falling back to the manual list: an on-disk definition missing `model:` is gated identically to a
+built-in, not just the six named types above.
 
 End-to-end on a headless run, same method as the skill gate — the model-less call was denied, the
 reason reached the model, and it retried on its own:
@@ -211,6 +213,79 @@ call 2   subagent_type Explore   model "haiku"  -> ran
 
 `claude/hooks/test-agent-model-gate.sh` covers the deny, the tier mapping in the reason, each of
 the three boundaries above, and both fail-open paths.
+
+### The Workflow tool leaks the same tier, at fan-out
+
+`agent-model-gate.sh` gates the `Agent` tool, but the `Workflow` tool spawns its own `agent()`
+calls from inside a script, and the `PreToolUse` `Agent` matcher never sees them — they run
+internal to the `Workflow` invocation. A script whose `agent()` calls never name a model runs
+every one of them at the main loop's tier, and this is the fan-out case: a 15-agent sweep
+inheriting the top tier costs more than the whole session around it.
+
+Enforcement is `claude/hooks/workflow-model-gate.sh`, a `PreToolUse` gate on the `Workflow` tool.
+It reads the script instead of the call, because the model choice is inside the script body, not
+a top-level parameter. Three payload shapes carry the script:
+
+```
+tool_input.script       inline script source
+tool_input.scriptPath   path to a script file on disk
+tool_input.name         a named workflow, resolved outside the payload
+```
+
+Unlike `agent-model-gate.sh`, this payload was **not** captured live — there is no recorded
+`Workflow` invocation to register a capture hook against. The evidence is weaker and named as
+such: the field names come from strings in the installed claude-code binary itself (`"Must
+provide script, name, or scriptPath"`) plus the harness's own tool schema, not an observed
+request. `name` resolves to `${CLAUDE_PROJECT_DIR:-$PWD}/.claude/workflows/<name>.js` for
+project-defined workflows, same source. Upgrade path: register a capture hook the first time a
+live `Workflow` call is available, the same way `agent-model-gate.sh`'s payload was confirmed at
+claude-code 2.1.220.
+
+The check itself: scan the raw script text for a `// model: inherit` comment on its own line —
+the explicit opt-in for main-loop tier, anchored to a whole line so it can't be smuggled inside a
+string literal or prose. Absent that, flatten the script (newlines/tabs to spaces, so a multi-line
+option object and an `agent\n(` split across lines both read as one line) and scan for `agent(`
+— with a non-identifier boundary before `agent` so `subagent(`/`delegateAgent(` don't
+false-trigger — and, if present, for `model` in OPTION-KEY POSITION: preceded by `{` or `,` and
+followed by `:`, `,`, or `}`, matching `{model: 'haiku'}`, multi-line option objects,
+`phases: [{title: 'X', model: 'opus'}]`, and the ES2015 shorthand `{model}`.
+
+The first version checked for the bare token `model` anywhere in the script, which false-passed
+on any mention of the word with zero actual model options — prompt text like
+`agent("review the pricing model")` denies nothing under a substring check. A second version
+required `model` followed by an optional quote and colon (`{model: 'haiku'}`-shaped), which
+narrowed but did not close the gap: it still matched a `model:`-shaped token inside plain prose,
+e.g. `"review the business model: freemium tier"` in a prompt string, because nothing anchored
+the match to an option object. The option-key-position check (`model` preceded by `{` or `,`)
+closes that — prose has a word or space before `model`, never `{` or `,` — while still matching
+the option-shape cases above. It does **not** close every gap: see the ceilings below.
+
+Ceilings, same shape as the agent gate's:
+
+- **Per-script, not per-call.** Parsing JS argument objects with grep lies, so a script that sets
+  `model` on one `agent()` call and omits it on another passes. Upgrade path: a real per-call scan
+  of `agent(` option objects, or a linter run on the persisted script file.
+- **Built-in named workflows are unscanned.** `name` resolves to a project file only when one
+  exists at `.claude/workflows/<name>.js`; a built-in workflow shipped by the harness has no such
+  file, so the gate has nothing to read and fails open. There is no manifest here to tell "no file
+  because built-in" apart from "not found", so both fail open identically.
+- **`name` is untrusted input.** It is interpolated into a filesystem path, so anything shaped
+  like a path (`/` anywhere, or a leading `.`) skips resolution rather than being joined into the
+  workflows directory — the same traversal boundary `agent-model-gate.sh` applies to
+  `subagent_type`.
+- **A `{`/`,`-preceded `model:` inside a string literal still false-passes.** This is a text scan,
+  not a parser, so it can't distinguish an embedded JSON example (`{"model": ...}` quoted inside a
+  prompt string) from a real option object. The ES2015-shorthand match widens this slightly — a
+  string containing "…, model, …" can also false-pass. Upgrade path is the same one as the
+  per-call gap above: a real parse of the script instead of a grep over its text.
+- **Prose containing `agent(` still false-denies.** A comment or string like "notify the
+  agent(s) when done" trips the trigger with no real spawn behind it. Safe direction — a false
+  deny is recoverable by retrying with `model` set, unlike a false pass — so left as a ceiling
+  rather than chased further.
+
+`claude/hooks/test-workflow-model-gate.sh` covers the substring-bypass regression, the `script`,
+`scriptPath`, and `name` resolution paths, the `// model: inherit` escape hatch, and both
+fail-open paths.
 
 ### Decision: the main loop stays on Opus
 
