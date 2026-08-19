@@ -76,7 +76,11 @@ export function search(opts: {
     sql += " AND o.scope = ?"
     params.push(opts.scope)
   }
-  sql += " ORDER BY o.created_at DESC LIMIT ?"
+  // Weighted relevance instead of plain recency. Weights are positional and must
+  // match observations_fts's declared column order (title, content) exactly — it
+  // does not index topic_key, so that column can't be weighted here without a
+  // schema change. bm25() is lower-is-better, so no DESC.
+  sql += " ORDER BY bm25(observations_fts, 5.0, 1.0) LIMIT ?"
   params.push(limit)
 
   return db.query(sql).all(...params) as any[]

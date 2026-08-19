@@ -41,6 +41,17 @@ assert((call("mem_timeline", { project: "ecomono" }) as any).observations.length
 assert((call("mem_stats", { project: "ecomono" }) as any).observations === 1, "mem_stats")
 assert((call("mem_suggest_topic_key", { title: "Auth Model!" }) as any).topic_key === "auth-model", "mem_suggest_topic_key")
 
+// --- mem_search: auto-fallback only when match_mode is left implicit ---
+call("mem_save", { title: "alpha token", content: "first doc", project: "modeproj" })
+call("mem_save", { title: "beta token", content: "second doc", project: "modeproj" })
+
+const implicitFallback = call("mem_search", { query: "alpha beta", project: "modeproj" }) as any
+assert(!Array.isArray(implicitFallback) && implicitFallback.match_mode === "any (fallback)" && implicitFallback.results.length === 2,
+  "implicit match_mode auto-falls back to any on zero AND results")
+
+const explicitAll = call("mem_search", { query: "alpha beta", match_mode: "all", project: "modeproj" }) as any
+assert(Array.isArray(explicitAll) && explicitAll.length === 0, "explicit match_mode 'all' never falls back")
+
 const doc = call("mem_doctor") as any
 assert(doc.ok && doc.db_path.endsWith("memory.db") && doc.observations >= 1, "mem_doctor")
 assert(doc.integrity === "ok", `mem_doctor probes integrity (got ${doc.integrity})`)

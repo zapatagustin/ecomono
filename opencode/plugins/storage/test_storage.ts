@@ -30,6 +30,22 @@ assert(hitQuery.length === 1 && hitQuery[0].id === b.id, "FTS5 AND-matches conte
 assert(Obs.search({ query: "zustand redux", match_mode: "any", project: "proj1" }).length >= 1, "match_mode any works")
 assert(Obs.search({ query: "nonexistentxyz", project: "proj1" }).length === 0, "no false positives")
 
+// --- bm25 weighting: title match outranks content-only match ---
+const titleHit = Obs.save({ title: "widget rollout plan", content: "unrelated body", project: "rankproj" })!
+const contentHit = Obs.save({ title: "unrelated title", content: "mentions widget only in the body", project: "rankproj" })!
+const ranked = Obs.search({ query: "widget", project: "rankproj" })
+assert(ranked.length === 2 && ranked[0].id === titleHit.id && ranked[1].id === contentHit.id, "title match ranks above content-only match")
+
+// --- match_mode: 'any' finds rows split across docs that 'all' cannot ---
+Obs.save({ title: "alpha token", content: "first doc", project: "modeproj" })
+Obs.save({ title: "beta token", content: "second doc", project: "modeproj" })
+assert(Obs.search({ query: "alpha beta", project: "modeproj" }).length === 0, "match_mode all finds nothing when terms split across docs")
+assert(Obs.search({ query: "alpha beta", match_mode: "any", project: "modeproj" }).length === 2, "match_mode any finds both")
+
+// --- FTS5 metacharacters stay safely quoted in both modes ---
+assert.doesNotThrow(() => Obs.search({ query: 'foo* OR "bar', project: "proj1" }), "match_mode all: metacharacters stay quoted, no syntax error")
+assert.doesNotThrow(() => Obs.search({ query: 'foo* OR "bar', match_mode: "any", project: "proj1" }), "match_mode any: same quoting holds")
+
 // --- project scoping ---
 Obs.save({ title: "other project note", content: "isolated", project: "proj2" })
 assert(Obs.search({ query: "note", project: "proj1" }).length === 0, "search is project-scoped")
