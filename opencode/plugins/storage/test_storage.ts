@@ -92,5 +92,41 @@ assert(Prompts.getPrompts("sess-1").length === 1, "prompt saved and fetched")
 // --- topic key helper ---
 assert(Obs.suggestTopicKey("Auth Model v2!") === "auth-model-v2", "topic key slugifies")
 
+// --- review_after decay (engram #481): stamped per type at save time ---
+const decisionObs = Obs.save({ title: "Chose event bus", content: "why", type: "decision", project: "reviewproj" })!
+const archObs = Obs.save({ title: "Chose layered arch", content: "why", type: "architecture", project: "reviewproj" })!
+const configObs = Obs.save({ title: "Set retry timeout", content: "why", type: "config", project: "reviewproj" })!
+const patternObs = Obs.save({ title: "Established naming pattern", content: "why", type: "pattern", project: "reviewproj" })!
+const bugfixObs = Obs.save({ title: "Fixed off-by-one", content: "why", type: "bugfix", project: "reviewproj" })!
+const untypedObs = Obs.save({ title: "Untyped note", content: "why", project: "reviewproj" })!
+
+assert(Obs.getObservation(decisionObs.id)!.review_after !== null, "decision gets review_after")
+assert(Obs.getObservation(archObs.id)!.review_after !== null, "architecture gets review_after")
+assert(Obs.getObservation(configObs.id)!.review_after !== null, "config gets review_after")
+assert(Obs.getObservation(patternObs.id)!.review_after !== null, "pattern gets review_after")
+assert(Obs.getObservation(bugfixObs.id)!.review_after === null, "bugfix has no review_after")
+assert(Obs.getObservation(untypedObs.id)!.review_after === null, "untyped (manual) has no review_after")
+
+// --- needs_review is virtual (computed at query time): a past review_after surfaces in mem_review's list ---
+db.run("UPDATE observations SET review_after = datetime('now', '-1 day') WHERE id = ?", [decisionObs.id])
+const due = Obs.review("list", undefined, undefined, "reviewproj") as any[]
+assert(due.some((r: any) => r.id === decisionObs.id), "past-due observation appears in needs_review list")
+assert(!due.some((r: any) => r.id === archObs.id), "not-yet-due observation absent from needs_review list")
+
+// --- marking reviewed resets review_after from today using the same per-type TTL ---
+Obs.review("mark_reviewed", decisionObs.id)
+const afterReview = Obs.getObservation(decisionObs.id)!
+assert(afterReview.review_after !== null, "mark_reviewed re-stamps review_after, does not clear it")
+assert(new Date(afterReview.review_after!.replace(" ", "T") + "Z").getTime() > Date.now(), "re-stamped review_after lands in the future")
+assert(!(Obs.review("list", undefined, undefined, "reviewproj") as any[]).some((r: any) => r.id === decisionObs.id), "reviewed observation drops off the needs_review list")
+
+// mark_reviewed on a no-TTL type has nothing to reset to — stays null
+Obs.review("mark_reviewed", bugfixObs.id)
+assert(Obs.getObservation(bugfixObs.id)!.review_after === null, "mark_reviewed on a no-TTL type stays null")
+
+// --- mem_stats cheaply surfaces the needs_review count ---
+db.run("UPDATE observations SET review_after = datetime('now', '-1 day') WHERE id = ?", [archObs.id])
+assert(Obs.stats("reviewproj").needs_review === 1, "stats counts past-due observations as needs_review")
+
 closeDb()
 console.log("✓ storage: all assertions passed")

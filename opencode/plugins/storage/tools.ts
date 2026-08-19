@@ -23,7 +23,65 @@ export interface MemTool {
 // Resolve an explicit project or fall back to the cwd's git project.
 const proj = (p?: string) => p || Obs.currentProject().project
 
-export const registry: MemTool[] = [
+// --- session inactivity nudge (engram #178) ---------------------------------
+// Catches "agent forgot to mem_save": if mem_search/mem_context get called a
+// lot without a save in between, nudge once. All in-memory — this server
+// lives only as long as the session, so nothing here needs to survive a
+// restart. `clock` is a seam so tests can simulate elapsed time without real
+// sleeps; production always uses Date.now().
+let clock: () => number = () => Date.now()
+export function __setClock(fn: () => number) { clock = fn }
+// Test-only: put the counters back to a fresh-process state so nudge tests
+// don't inherit call counts run up by earlier assertions in the same file.
+export function __resetNudgeStateForTest() {
+  totalCalls = 0; totalSaves = 0; callsAtLastSave = 0; lastNudgeAt = 0; lastSaveAt = clock()
+}
+
+let totalCalls = 0
+let totalSaves = 0
+let lastSaveAt = clock()
+let callsAtLastSave = 0
+let lastNudgeAt = 0
+
+const NUDGE_IDLE_MS = 10 * 60 * 1000
+const NUDGE_MIN_CALLS = 10
+const NUDGE_COOLDOWN_MS = 5 * 60 * 1000
+
+function maybeNudge(): string | undefined {
+  const now = clock()
+  const callsSinceSave = totalCalls - callsAtLastSave
+  if (callsSinceSave < NUDGE_MIN_CALLS || now - lastSaveAt < NUDGE_IDLE_MS) return undefined
+  if (now - lastNudgeAt < NUDGE_COOLDOWN_MS) return undefined
+  lastNudgeAt = now
+  const minutes = Math.floor((now - lastSaveAt) / 60000)
+  return `${callsSinceSave} tool calls and ${minutes}m since last mem_save — save discoveries before they die with the context`
+}
+
+// Ratio for mem_session_summary — how much work happened per save this process.
+function callsVsSaves(): string { return `${totalSaves}/${totalCalls}` }
+
+// Wraps every registered handler to track the counters above, uniformly for
+// both adapters (opencode plugin, MCP server) and for tests that call
+// registryByName[...].handler directly.
+function instrument(name: string, handler: (args: any) => unknown): (args: any) => unknown {
+  return (args: any) => {
+    totalCalls++
+    const result = handler(args)
+    if (name === "mem_save") {
+      totalSaves++
+      lastSaveAt = clock()
+      callsAtLastSave = totalCalls
+    } else if (name === "mem_search" || name === "mem_context") {
+      const nudge = maybeNudge()
+      if (nudge && result && typeof result === "object" && !Array.isArray(result)) {
+        return { ...result, nudge }
+      }
+    }
+    return result
+  }
+}
+
+const rawRegistry: MemTool[] = [
   {
     name: "mem_save",
     description: "Save an important observation to persistent memory. Call PROACTIVELY after decisions, bug fixes, discoveries, conventions. May return judgment_required + candidates — then call mem_judge per candidate.",
@@ -138,7 +196,7 @@ export const registry: MemTool[] = [
       limit: z.number().optional(),
       project: z.string().optional(),
     },
-    handler: (a) => Obs.review(a.action, a.id, a.limit, a.project),
+    handler: (a) => Obs.review(a.action, a.id, a.limit, proj(a.project)),
   },
   {
     name: "mem_current_project",
@@ -150,7 +208,10 @@ export const registry: MemTool[] = [
     name: "mem_session_summary",
     description: "Store an end-of-session summary for a session id.",
     args: { session_id: z.string(), content: z.string() },
-    handler: (a) => { Sess.sessionSummary(a.session_id, a.content); return { ok: true } },
+    handler: (a) => {
+      Sess.sessionSummary(a.session_id, `${a.content}\n\ncalls_vs_saves: ${callsVsSaves()}`)
+      return { ok: true }
+    },
   },
   {
     name: "mem_save_prompt",
@@ -198,5 +259,7 @@ export const registry: MemTool[] = [
     handler: (a) => Conflicts.mergeProjects(a.from, a.into),
   },
 ]
+
+export const registry: MemTool[] = rawRegistry.map((t) => ({ ...t, handler: instrument(t.name, t.handler) }))
 
 export const registryByName: Record<string, MemTool> = Object.fromEntries(registry.map((t) => [t.name, t]))

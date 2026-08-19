@@ -27450,6 +27450,15 @@ function normalizedHash(title, content) {
 ${content}`.toLowerCase().replace(/\s+/g, " ").trim();
   return createHash("sha256").update(norm).digest("hex");
 }
+var REVIEW_TTL = {
+  decision: "+6 months",
+  architecture: "+6 months",
+  config: "+3 months",
+  pattern: "+12 months"
+};
+function reviewAfterModifier(type) {
+  return REVIEW_TTL[type] ?? null;
+}
 function save(opts) {
   const db2 = getDb();
   const project = opts.project || detectProject();
@@ -27459,7 +27468,8 @@ function save(opts) {
   const content = opts.content || "";
   db2.run("INSERT OR IGNORE INTO projects (id, name) VALUES (?, ?)", [project, project]);
   const hash2 = normalizedHash(title, content);
-  const result = db2.run("INSERT INTO observations (project_id, title, type, scope, content, topic_key, normalized_hash) VALUES (?, ?, ?, ?, ?, ?, ?)", [project, title, type, scope, content, opts.topic_key || null, hash2]);
+  const reviewMod = reviewAfterModifier(type);
+  const result = db2.run("INSERT INTO observations (project_id, title, type, scope, content, topic_key, normalized_hash, review_after)" + " VALUES (?, ?, ?, ?, ?, ?, ?, CASE WHEN ? IS NULL THEN NULL ELSE datetime('now', ?) END)", [project, title, type, scope, content, opts.topic_key || null, hash2, reviewMod, reviewMod]);
   return { id: Number(result.lastInsertRowid), sync_id: "obs-" + result.lastInsertRowid };
 }
 function splitTerms(query) {
@@ -27533,7 +27543,8 @@ function stats(project) {
   const db2 = getDb();
   const obs = project ? db2.query("SELECT COUNT(*) as c FROM observations WHERE project_id = ?").get(project).c : db2.query("SELECT COUNT(*) as c FROM observations").get().c;
   const sess = project ? db2.query("SELECT COUNT(*) as c FROM sessions WHERE project_id = ?").get(project).c : db2.query("SELECT COUNT(*) as c FROM sessions").get().c;
-  return { observations: obs, sessions: sess };
+  const needsReview = project ? db2.query("SELECT COUNT(*) as c FROM observations WHERE project_id = ? AND review_after IS NOT NULL AND review_after <= datetime('now')").get(project).c : db2.query("SELECT COUNT(*) as c FROM observations WHERE review_after IS NOT NULL AND review_after <= datetime('now')").get().c;
+  return { observations: obs, sessions: sess, needs_review: needsReview };
 }
 function pin(id) {
   const db2 = getDb();
@@ -27555,7 +27566,9 @@ function review(action, id, limit, project) {
     return db2.query("SELECT * FROM observations WHERE review_after IS NOT NULL AND review_after <= datetime('now') ORDER BY review_after ASC LIMIT ?").all(lim);
   }
   if (action === "mark_reviewed" && id) {
-    db2.run("UPDATE observations SET review_after = NULL WHERE id = ?", [id]);
+    const row = db2.query("SELECT type FROM observations WHERE id = ?").get(id);
+    const mod = row ? reviewAfterModifier(row.type) : null;
+    db2.run("UPDATE observations SET review_after = CASE WHEN ? IS NULL THEN NULL ELSE datetime('now', ?) END WHERE id = ?", [mod, mod, id]);
     return { success: true };
   }
   return [];
@@ -27737,7 +27750,47 @@ function mergeProjects(from, into) {
 
 // tools.ts
 var proj = (p) => p || currentProject().project;
-var registry2 = [
+var clock = () => Date.now();
+var totalCalls = 0;
+var totalSaves = 0;
+var lastSaveAt = clock();
+var callsAtLastSave = 0;
+var lastNudgeAt = 0;
+var NUDGE_IDLE_MS = 10 * 60 * 1000;
+var NUDGE_MIN_CALLS = 10;
+var NUDGE_COOLDOWN_MS = 5 * 60 * 1000;
+function maybeNudge() {
+  const now = clock();
+  const callsSinceSave = totalCalls - callsAtLastSave;
+  if (callsSinceSave < NUDGE_MIN_CALLS || now - lastSaveAt < NUDGE_IDLE_MS)
+    return;
+  if (now - lastNudgeAt < NUDGE_COOLDOWN_MS)
+    return;
+  lastNudgeAt = now;
+  const minutes = Math.floor((now - lastSaveAt) / 60000);
+  return `${callsSinceSave} tool calls and ${minutes}m since last mem_save \u2014 save discoveries before they die with the context`;
+}
+function callsVsSaves() {
+  return `${totalSaves}/${totalCalls}`;
+}
+function instrument(name, handler) {
+  return (args) => {
+    totalCalls++;
+    const result = handler(args);
+    if (name === "mem_save") {
+      totalSaves++;
+      lastSaveAt = clock();
+      callsAtLastSave = totalCalls;
+    } else if (name === "mem_search" || name === "mem_context") {
+      const nudge = maybeNudge();
+      if (nudge && result && typeof result === "object" && !Array.isArray(result)) {
+        return { ...result, nudge };
+      }
+    }
+    return result;
+  };
+}
+var rawRegistry = [
   {
     name: "mem_save",
     description: "Save an important observation to persistent memory. Call PROACTIVELY after decisions, bug fixes, discoveries, conventions. May return judgment_required + candidates \u2014 then call mem_judge per candidate.",
@@ -27849,7 +27902,7 @@ var registry2 = [
       limit: exports_external.number().optional(),
       project: exports_external.string().optional()
     },
-    handler: (a) => review(a.action, a.id, a.limit, a.project)
+    handler: (a) => review(a.action, a.id, a.limit, proj(a.project))
   },
   {
     name: "mem_current_project",
@@ -27862,7 +27915,9 @@ var registry2 = [
     description: "Store an end-of-session summary for a session id.",
     args: { session_id: exports_external.string(), content: exports_external.string() },
     handler: (a) => {
-      sessionSummary(a.session_id, a.content);
+      sessionSummary(a.session_id, `${a.content}
+
+calls_vs_saves: ${callsVsSaves()}`);
       return { ok: true };
     }
   },
@@ -27912,6 +27967,7 @@ var registry2 = [
     handler: (a) => mergeProjects(a.from, a.into)
   }
 ];
+var registry2 = rawRegistry.map((t) => ({ ...t, handler: instrument(t.name, t.handler) }));
 var registryByName = Object.fromEntries(registry2.map((t) => [t.name, t]));
 
 // protocol.ts

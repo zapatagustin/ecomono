@@ -22,6 +22,23 @@ interface Observation {
   updated_at?: string
 }
 
+// Per-type staleness TTL (engram #481): a scheduling hint stamped at insert
+// time, never auto-deletion. Types not listed here (bugfix, discovery,
+// learning, manual) get no review_after — they don't go stale the way a
+// decision or a config value does. Expressed as SQLite datetime() modifiers so
+// the DB does the date math and the stored value stays in the exact format
+// datetime('now') already produces (comparable with plain <= in review()).
+const REVIEW_TTL: Record<string, string> = {
+  decision: "+6 months",
+  architecture: "+6 months",
+  config: "+3 months",
+  pattern: "+12 months",
+}
+
+function reviewAfterModifier(type: string): string | null {
+  return REVIEW_TTL[type] ?? null
+}
+
 export function save(opts: {
   title: string
   type?: string
@@ -39,9 +56,11 @@ export function save(opts: {
 
   db.run("INSERT OR IGNORE INTO projects (id, name) VALUES (?, ?)", [project, project])
   const hash = normalizedHash(title, content)
+  const reviewMod = reviewAfterModifier(type)
   const result = db.run(
-    "INSERT INTO observations (project_id, title, type, scope, content, topic_key, normalized_hash) VALUES (?, ?, ?, ?, ?, ?, ?)",
-    [project, title, type, scope, content, opts.topic_key || null, hash]
+    "INSERT INTO observations (project_id, title, type, scope, content, topic_key, normalized_hash, review_after)" +
+    " VALUES (?, ?, ?, ?, ?, ?, ?, CASE WHEN ? IS NULL THEN NULL ELSE datetime('now', ?) END)",
+    [project, title, type, scope, content, opts.topic_key || null, hash, reviewMod, reviewMod]
   )
   return { id: Number(result.lastInsertRowid), sync_id: "obs-" + result.lastInsertRowid }
 }
@@ -146,7 +165,7 @@ export function suggestTopicKey(title: string): string {
   return title.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "") || "untitled"
 }
 
-export function stats(project?: string): { observations: number; sessions: number } {
+export function stats(project?: string): { observations: number; sessions: number; needs_review: number } {
   const db = getDb()
   const obs = project
     ? (db.query("SELECT COUNT(*) as c FROM observations WHERE project_id = ?").get(project) as any).c
@@ -154,7 +173,10 @@ export function stats(project?: string): { observations: number; sessions: numbe
   const sess = project
     ? (db.query("SELECT COUNT(*) as c FROM sessions WHERE project_id = ?").get(project) as any).c
     : (db.query("SELECT COUNT(*) as c FROM sessions").get() as any).c
-  return { observations: obs, sessions: sess }
+  const needsReview = project
+    ? (db.query("SELECT COUNT(*) as c FROM observations WHERE project_id = ? AND review_after IS NOT NULL AND review_after <= datetime('now')").get(project) as any).c
+    : (db.query("SELECT COUNT(*) as c FROM observations WHERE review_after IS NOT NULL AND review_after <= datetime('now')").get() as any).c
+  return { observations: obs, sessions: sess, needs_review: needsReview }
 }
 
 export function pin(id: number): boolean {
@@ -179,7 +201,14 @@ export function review(action: string, id?: number, limit?: number, project?: st
     return db.query("SELECT * FROM observations WHERE review_after IS NOT NULL AND review_after <= datetime('now') ORDER BY review_after ASC LIMIT ?").all(lim)
   }
   if (action === "mark_reviewed" && id) {
-    db.run("UPDATE observations SET review_after = NULL WHERE id = ?", [id])
+    // Reset from today using the same per-type TTL, not just clear to NULL —
+    // otherwise a reviewed decision would never come up for review again.
+    const row = db.query("SELECT type FROM observations WHERE id = ?").get(id) as any
+    const mod = row ? reviewAfterModifier(row.type) : null
+    db.run(
+      "UPDATE observations SET review_after = CASE WHEN ? IS NULL THEN NULL ELSE datetime('now', ?) END WHERE id = ?",
+      [mod, mod, id]
+    )
     return { success: true }
   }
   return []

@@ -62,4 +62,37 @@ assert(doc.integrity === "ok", `mem_doctor probes integrity (got ${doc.integrity
 assert((call("mem_delete", { id: saved.id }) as any).deleted, "mem_delete")
 assert(call("mem_get_observation", { id: saved.id }) === null, "deleted gone")
 
+// --- session inactivity nudge (engram #178): simulated clock, no real sleeps ---
+const { __setClock, __resetNudgeStateForTest } = await import("./tools")
+let fakeNow = Date.now()
+__setClock(() => fakeNow)
+__resetNudgeStateForTest()
+
+assert(!(call("mem_search", { query: "nonexistentxyz" }) as any).nudge, "no nudge right after reset")
+
+for (let i = 0; i < 12; i++) call("mem_search", { query: "nonexistentxyz" })
+assert(!(call("mem_context", {}) as any).nudge, "no nudge before 10 minutes elapse, even with 10+ calls")
+
+fakeNow += 11 * 60 * 1000
+const nudged = call("mem_search", { query: "nonexistentxyz" }) as any
+assert(typeof nudged.nudge === "string" && nudged.nudge.includes("since last mem_save"), "nudge appears past 10min + 10 calls of inactivity")
+assert(nudged.results && nudged.match_mode, "nudge is additive: existing envelope fields still present")
+
+const notNudgedAgain = call("mem_context", {}) as any
+assert(!notNudgedAgain.nudge, "no nudge twice within the 5-minute cooldown")
+
+fakeNow += 6 * 60 * 1000
+assert(typeof (call("mem_search", { query: "nonexistentxyz" }) as any).nudge === "string", "nudge repeats once the cooldown passes while still stale")
+
+call("mem_save", { title: "reset nudge state", project: "nudgeproj" })
+assert(!(call("mem_search", { query: "nonexistentxyz" }) as any).nudge, "mem_save resets the nudge counter and timer")
+
+// --- mem_session_summary records the calls-vs-saves ratio ---
+const Sess = await import("./sessions")
+Sess.sessionStart("sess-tools", "nudgeproj")
+call("mem_session_summary", { session_id: "sess-tools", content: "Goal: test\nAccomplished: stuff" })
+const summary = Sess.getSession("sess-tools").summary as string
+assert(/calls_vs_saves: \d+\/\d+/.test(summary), "session summary records the calls-vs-saves ratio")
+assert(summary.includes("Accomplished: stuff"), "session summary keeps the agent-authored content")
+
 console.log(`✓ tools: ${registry.length} tools, all assertions passed`)
