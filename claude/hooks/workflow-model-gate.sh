@@ -6,11 +6,13 @@
 # around it. The PreToolUse "Agent" matcher never sees these spawns: they are
 # internal to the Workflow run, so this gate reads the script instead.
 #
-# Payload fields (script, scriptPath, name) are NOT confirmed by a captured live
-# call — unlike agent-model-gate.sh's, there is no recorded Workflow invocation
-# to register a capture hook against. The evidence is strings in the installed
-# claude-code binary ("Must provide script, name, or scriptPath") plus the
-# harness's tool schema. See docs/DESIGN.md for detail and the upgrade path.
+# Payload evidence is two-tier. Live-verified at claude-code 2.1.234, via a dump
+# hook on a real `claude -p` run: PreToolUse fires with tool_name "Workflow" and
+# tool_input carrying `script` for an inline invocation (tool_input had exactly
+# one key: "script"). The scriptPath and name field shapes were NOT captured live
+# — for those the evidence remains strings in the installed claude-code binary
+# ("Must provide script, name, or scriptPath") plus the harness's tool schema.
+# See docs/DESIGN.md for detail and the upgrade path.
 #
 # ecomono: the check requires `model` in OPTION-KEY POSITION — preceded by `{`
 # or `,` (matches `{model: 'haiku'}`, multi-line option objects,

@@ -159,7 +159,7 @@ ecomono cut that by ~46% on average. Same instructions. Same accuracy. Less wast
 
 This skill is part of the [ecomono](https://github.com/zapatagustin/ecomono) toolkit — making AI use fewer tokens without losing accuracy.
 
-The compression functions it wraps were ported from `@juliusbrussee/ecomono-code`, MIT licensed; the terms of that attribution are in [NOTICE.md](../../NOTICE.md). Both that package and the GitHub repository it lived in are gone as of 2026-08-10, which is why the link above points here instead. The attribution stands either way — it is an obligation, not a courtesy, and it does not lapse when a source goes offline.
+The compression functions it wraps were ported from `@juliusbrussee/caveman-code`, MIT licensed; the terms of that attribution are in [NOTICE.md](../../NOTICE.md). The `caveman-code` repository was frozen 2026-08-14, with development moved to `JuliusBrussee/caveman` — the npm package name stands regardless. The attribution stands either way — it is an obligation, not a courtesy, and it does not lapse when a source goes offline.
 
 - **ecomono** — make AI *speak* like ecomono (cuts response tokens ~65%)
 - **ecomono-compress** — make AI *read* less (cuts context tokens ~46%)

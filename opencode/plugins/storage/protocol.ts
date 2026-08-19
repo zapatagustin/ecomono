@@ -34,6 +34,8 @@ When the user asks to recall something — "remember", "recall", "what did we do
 2. If not found, call \`mem_search\` with relevant keywords (FTS5 full-text search)
 3. If you find a match, use \`mem_get_observation\` for full untruncated content
 
+\`mem_search\`'s return is a \`{ results, match_mode }\` envelope — \`match_mode\` is \`"all"\`, \`"any"\`, or \`"any (fallback)"\` when a multi-term search auto-widened.
+
 Also search PROACTIVELY when starting work that might have been done before, or when the user's first message references the project.
 
 ### SESSION CLOSE PROTOCOL (mandatory)

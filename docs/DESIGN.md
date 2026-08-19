@@ -232,14 +232,16 @@ tool_input.scriptPath   path to a script file on disk
 tool_input.name         a named workflow, resolved outside the payload
 ```
 
-Unlike `agent-model-gate.sh`, this payload was **not** captured live — there is no recorded
-`Workflow` invocation to register a capture hook against. The evidence is weaker and named as
-such: the field names come from strings in the installed claude-code binary itself (`"Must
-provide script, name, or scriptPath"`) plus the harness's own tool schema, not an observed
-request. `name` resolves to `${CLAUDE_PROJECT_DIR:-$PWD}/.claude/workflows/<name>.js` for
-project-defined workflows, same source. Upgrade path: register a capture hook the first time a
-live `Workflow` call is available, the same way `agent-model-gate.sh`'s payload was confirmed at
-claude-code 2.1.220.
+Unlike `agent-model-gate.sh`'s payload, this one's evidence is two-tier. `script` (the inline
+invocation) is now captured live — a dump hook on a real `claude -p` run at claude-code 2.1.234
+recorded `PreToolUse` firing with `tool_name: "Workflow"` and `tool_input` carrying `script` as
+its sole key. `scriptPath` and `name` remain unconfirmed by any recorded call: their field names
+come from strings in the installed claude-code binary itself (`"Must provide script, name, or
+scriptPath"`) plus the harness's own tool schema, not an observed request. `name` resolves to
+`${CLAUDE_PROJECT_DIR:-$PWD}/.claude/workflows/<name>.js` for project-defined workflows, same
+source. Upgrade path: register a capture hook against a live call that passes `scriptPath` or
+`name`, the same way `script` was just confirmed and `agent-model-gate.sh`'s payload was
+confirmed at claude-code 2.1.220.
 
 The check itself: scan the raw script text for a `// model: inherit` comment on its own line —
 the explicit opt-in for main-loop tier, anchored to a whole line so it can't be smuggled inside a
@@ -282,6 +284,20 @@ Ceilings, same shape as the agent gate's:
   agent(s) when done" trips the trigger with no real spawn behind it. Safe direction — a false
   deny is recoverable by retrying with `model` set, unlike a false pass — so left as a ceiling
   rather than chased further.
+- **The option-key match runs over the whole script, not scoped to `agent()` calls.** The
+  per-script wording above reads as if a matched `model` option has to sit on some `agent()`
+  call, but the grep has no such scope: any `{`/`,`-preceded `model:` anywhere in the file
+  satisfies it, including an unrelated object literal in plain code — `const carModel = {model:
+  "civic"}` false-passes the entire gate, with zero agents actually receiving a model. Upgrade
+  path is the same per-call parse named above; a real parse can scope the match to an `agent(`
+  call's own argument object instead of the whole file.
+- **Content past the 262144-byte read cap is never scanned.** The cap exists for the hang
+  rationale stated inline (an unbounded read on a huge script or file would hang the hook), but
+  it doubles as a scan-coverage boundary: an `agent()` call sitting after byte 262144 in a large
+  script is simply never read, so it fails open exactly like a script with no `agent(` calls at
+  all — the scan never sees the call, so the model check never runs. Upgrade path: stream the
+  read instead of truncating it, or deny outright when the source
+  is larger than the cap rather than silently scanning only its head.
 
 `claude/hooks/test-workflow-model-gate.sh` covers the substring-bypass regression, the `script`,
 `scriptPath`, and `name` resolution paths, the `// model: inherit` escape hatch, and both

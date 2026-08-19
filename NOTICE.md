@@ -47,7 +47,7 @@ lineage of the idea is worth naming.
 ## Attribution owed: cave-compress
 
 `opencode/plugins/cave-compress.ts` and `claude/hooks/ecomono-compress.js` **do** carry
-ported code: the pure compression functions from `@juliusbrussee/ecomono-code`, MIT
+ported code: the pure compression functions from `@juliusbrussee/caveman-code`, MIT
 licensed, © Julius Brussee. Those functions were kept substantially as written, so the
 attribution stays, in each file's header and here.
 

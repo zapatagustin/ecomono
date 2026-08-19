@@ -1,11 +1,11 @@
 /**
  * cave-compress — tool-output token compression for opencode.
  *
- * Replicates ecomono-code's tool-output compression layer inside opencode via
+ * Replicates caveman-code's tool-output compression layer inside opencode via
  * the `tool.execute.after` hook: opencode runs this hook AFTER a tool executes
  * and BEFORE the result is returned to the model, mutating `output.output` in
  * place. Every large tool result (bash/read/grep/…) is trimmed before it ever
- * costs context tokens — the single highest-impact layer of ecomono-code's
+ * costs context tokens — the single highest-impact layer of caveman-code's
  * ~50% savings, brought to opencode without leaving your host runtime.
  *
  * Layers implemented here:
@@ -24,10 +24,10 @@
  * per-turn re-transform would cost latency for marginal gain.
  *
  * The pure compression functions below are ported from
- * @juliusbrussee/ecomono-code (dist/core/cave-tool-compression.js and
+ * @juliusbrussee/caveman-code (dist/core/cave-tool-compression.js and
  * cave-structured-compression.js), MIT licensed, © Julius Brussee. They are
  * self-contained (zero dependencies), so this plugin does NOT require
- * ecomono-code to be installed. One deliberate ordering change from upstream:
+ * caveman-code to be installed. One deliberate ordering change from upstream:
  * structured compression runs BEFORE budget truncation (upstream runs it
  * after), because head+tail truncation makes JSON unparseable and would
  * reduce the structured pass to a no-op on exactly the large outputs where
@@ -36,7 +36,7 @@
 import type { Plugin } from "@opencode-ai/plugin"
 import { appendFile, mkdir } from "node:fs/promises"
 
-// ── Compression logic (ported from ecomono-code, MIT) ───────────────────────
+// ── Compression logic (ported from caveman-code, MIT) ───────────────────────
 
 interface ToolBudget {
   maxLines: number
@@ -62,7 +62,7 @@ const TAIL_CHARS = 4000
 
 /**
  * Per-tool line budgets. Keys are opencode tool ids (lowercased). A tool with
- * no entry uses FALLBACK_BUDGET. Values mirror ecomono-code's defaults, with
+ * no entry uses FALLBACK_BUDGET. Values mirror caveman-code's defaults, with
  * opencode's `glob`/`list` mapped onto the old `find`/`ls` budgets.
  */
 const DEFAULT_TOOL_BUDGETS: Record<string, ToolBudget> = {
@@ -132,7 +132,7 @@ function compressCaveToolOutput(text: string): string {
   return truncateByChars(truncateLongOutput(collapseBlankLines(stripAnsi(text))))
 }
 
-// ── Structured (JSON/XML) compression (ported from ecomono-code, MIT) ───────
+// ── Structured (JSON/XML) compression (ported from caveman-code, MIT) ───────
 
 type OutputFormat = "json" | "xml" | "text"
 
@@ -324,7 +324,7 @@ function compressStructuredOutput(text: string, toolName: string, commandHint?: 
   }
 }
 
-// ── Read deduplication (ported from ecomono-code, MIT) ───────────────────────
+// ── Read deduplication (ported from caveman-code, MIT) ───────────────────────
 
 /**
  * Lightweight content fingerprint: length + first 256 chars. Fast, and enough
