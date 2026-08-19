@@ -13,7 +13,7 @@ Flow: rule-compress → (optional semantic api) → validate → retry (up to 2x
 import json
 import sys
 from pathlib import Path
-from .compress import compress_file, rule_compress, call_semantic_api, DEFAULT_MODEL
+from .compress import compress_file, rule_compress, call_semantic_api, atomic_write_text, DEFAULT_MODEL
 from .validate import validate
 
 
@@ -68,12 +68,12 @@ def main():
             if use_api:
                 # Semantic output never validated — fall back to the rule-based
                 # result (Phase 1) rather than discarding all compression.
-                fp.write_text(rule_compress(original_text))
+                atomic_write_text(fp, rule_compress(original_text))
                 if validate(backup, fp).is_valid:
                     print("   ⚠️  Semantic pass failed validation — kept rule-based result")
                     break
             print("   ❌ Validation failed. Restoring original.")
-            fp.write_text(original_text)
+            atomic_write_text(fp, original_text)
             backup.unlink(missing_ok=True)
             sys.exit(1)
 
@@ -83,7 +83,7 @@ def main():
             compressed = call_semantic_api(compressed, model=model)
         except RuntimeError as e:
             print(f"   ⚠️  Semantic pass skipped: {e}")
-        fp.write_text(compressed)  # re-validated at the top of the next iteration
+        atomic_write_text(fp, compressed)  # re-validated at the top of the next iteration
 
     # Done
     compressed_tokens = len(fp.read_text(errors="ignore").split())

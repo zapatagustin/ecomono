@@ -32,6 +32,7 @@ run "inline skill drift"           bash check-inline-skill-drift.sh
 run "hook install drift"           bash check-hook-install-drift.sh
 run "hook-install-drift fixtures"  bash test-hook-install-drift.sh
 run "skill registry"               node claude/hooks/ecomono-skill-registry.js --selftest
+run "compress hook overhead"       node claude/hooks/ecomono-compress.js --selftest
 run "compress secret guard"        python3 agent-skills/ecomono-compress/scripts/test_secrets.py
 run "compress pipeline"            python3 agent-skills/ecomono-compress/scripts/test_compress.py
 run "shell syntax"                 bash -n install.sh lib/common.sh lib/mcp.sh lib/test-common.sh check-persona-drift.sh check-gate-drift.sh test-gate-drift.sh check-judge-twins.sh test-judge-twins.sh check-inline-skill-drift.sh check-hook-install-drift.sh test-hook-install-drift.sh

@@ -356,26 +356,64 @@ function argPath(args: unknown): string | undefined {
 
 // ── Savings metrics (on by default, opt-out) ────────────────────────────────
 
+// Every marker/summary this file splices into compressed output. All of them
+// are bracketed annotations with a fixed shape, so scanning the final text for
+// these exact patterns measures — rather than guesses — how many of the chars
+// in `after` are overhead the mechanism itself added back, as opposed to real
+// content that survived compression. Mirrors claude/hooks/ecomono-compress.js.
+const OVERHEAD_PATTERNS = [
+  /\[\.\.\. \d+ lines omitted \([^)]*\) \.\.\.\]/g, // truncateWithToolBudget / truncateLongOutput
+  /\[\.\.\. \d+ chars omitted \(cave mode char cap\) \.\.\.\]/g, // truncateByChars
+  /\[JSON compressed: [^\]]*\]/g, // compressJson
+  /\[XML compressed: [^\]]*\]/g, // compressXml summary line
+  /\[\d+ total <\w+> elements\]/g, // compressXml repeated-sibling collapse
+  /\.\.\. \(repeated <\w+> elements\)/g, // compressXml repeated-sibling collapse
+]
+
+function measureOverheadChars(text: string): number {
+  let total = 0
+  for (const re of OVERHEAD_PATTERNS) {
+    const matches = text.match(re)
+    if (matches) for (const m of matches) total += m.length
+  }
+  return total
+}
+
 // On by default; set ECOMONO_COMPRESS_STATS=off to disable — same convention
 // as the Claude-side hook (claude/hooks/ecomono-compress.js). Appends one JSONL
 // record per compressed tool result to ~/.cache/ecomono-compress/stats.jsonl —
 // the same file the Claude-side hook writes, so savings across both harnesses
 // accumulate in one place. Local file only — never enters the model context,
-// so it costs zero tokens. Summarize:
-//   node -e 'let i=0,o=0;require("fs").readFileSync(process.env.HOME+"/.cache/ecomono-compress/stats.jsonl","utf8").trim().split("\n").forEach(l=>{let r=JSON.parse(l);i+=r.in;o+=r.out});console.log(`saved ${Math.round(100-100*o/i)}% (${i}->${o} chars over ${i&&""}records)`)'
+// so it costs zero tokens.
+//
+// gross = before - after (the naive reduction, which silently counts the
+// hook's own markers as "saved" chars since they're baked into `after`).
+// overhead = chars measureOverheadChars found in `after`. net = gross -
+// overhead: the honest number, negative when the markers added cost more than
+// the truncation saved. Logged on every change now, not just size decreases,
+// so net-negative runs show up instead of being silently dropped. Summarize:
+//   node -e 'let g=0,n=0;require("fs").readFileSync(process.env.HOME+"/.cache/ecomono-compress/stats.jsonl","utf8").trim().split("\n").forEach(l=>{let r=JSON.parse(l);g+=r.gross;n+=r.net});console.log(`gross ${g} chars, net ${n} chars (overhead ${g-n})`)'
 const STATS_FILE = process.env.ECOMONO_COMPRESS_STATS === "off"
   ? null
   : `${process.env.XDG_CACHE_HOME ?? `${process.env.HOME}/.cache`}/ecomono-compress/stats.jsonl`
 let statsDirReady: Promise<unknown> | null = null
 
-async function logStats(tool: string, before: number, after: number): Promise<void> {
-  if (!STATS_FILE || after >= before) return
+async function logStats(tool: string, beforeText: string, afterText: string): Promise<void> {
+  if (!STATS_FILE) return
   try {
+    const before = beforeText.length
+    const after = afterText.length
+    const overhead = measureOverheadChars(afterText)
+    const gross = before - after
+    const net = gross - overhead
     if (!statsDirReady) {
       statsDirReady = mkdir(STATS_FILE.slice(0, STATS_FILE.lastIndexOf("/")), { recursive: true })
     }
     await statsDirReady
-    await appendFile(STATS_FILE, `${JSON.stringify({ t: Date.now(), tool, in: before, out: after })}\n`)
+    await appendFile(
+      STATS_FILE,
+      `${JSON.stringify({ t: Date.now(), tool, in: before, out: after, gross, overhead, net })}\n`,
+    )
   } catch {
     // Metrics are best-effort — never let a logging failure break the tool.
   }
@@ -406,7 +444,7 @@ export const CaveCompress: Plugin = async () => ({
 
     const tool = input.tool.toLowerCase()
     const path = argPath(input.args)
-    const originalLen = output.output.length
+    const originalText = output.output
 
     // Editing/writing a file invalidates its cached read.
     if (WRITE_TOOLS.has(tool) && path) {
@@ -421,7 +459,7 @@ export const CaveCompress: Plugin = async () => ({
       const prev = readCache.get(key)
       if (prev && prev.fingerprint === fp) {
         output.output = `[File unchanged since read #${prev.readIndex}. Content identical to a prior read this session — reference that context.]`
-        await logStats(tool, originalLen, output.output.length)
+        await logStats(tool, originalText, output.output)
         return
       }
       readCount++
@@ -444,7 +482,7 @@ export const CaveCompress: Plugin = async () => ({
     const compressed = compressCaveToolOutput(truncateWithToolBudget(structured, tool))
     if (compressed !== output.output) {
       output.output = compressed
-      await logStats(tool, originalLen, output.output.length)
+      await logStats(tool, originalText, output.output)
     }
   },
 })

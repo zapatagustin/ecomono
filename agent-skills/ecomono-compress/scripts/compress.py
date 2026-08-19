@@ -18,6 +18,21 @@ import subprocess
 import sys
 from pathlib import Path
 
+
+def atomic_write_text(path: Path, content: str) -> None:
+    """Write `content` to `path` atomically.
+
+    Writes to a temp file in the same directory (so os.replace stays on one
+    filesystem), then swaps it onto the target. A crash or exception between
+    those two steps leaves the original file untouched instead of truncated —
+    a plain `path.write_text()` truncates the target before writing, so a
+    mid-write crash loses the file.
+    """
+    tmp = path.with_name(f".{path.name}.tmp{os.getpid()}")
+    tmp.write_text(content, encoding="utf-8")
+    os.replace(tmp, path)
+
+
 # ---------------------------------------------------------------------------
 # Phase 1: Rule-based mechanical compression
 # ---------------------------------------------------------------------------
@@ -691,8 +706,8 @@ def compress_file(filepath: Path, use_api: bool = False, model: str = DEFAULT_MO
         backup.unlink(missing_ok=True)
         return {"status": "error", "reason": "Backup write verification failed"}
 
-    # Write compressed
-    filepath.write_text(compressed)
+    # Write compressed (atomic: crash mid-write can't truncate the target)
+    atomic_write_text(filepath, compressed)
 
     # Estimate savings
     orig_tokens = len(original.split())

@@ -278,21 +278,61 @@ function compressBash(text, commandHint) {
 
 // ── Stats ────────────────────────────────────────────────────────────────────
 
+// Every marker/summary this file splices into compressed output. All of them
+// are bracketed annotations with a fixed shape, so scanning the final text for
+// these exact patterns measures — rather than guesses — how many of the chars
+// in `after` are overhead the mechanism itself added back, as opposed to real
+// content that survived compression.
+const OVERHEAD_PATTERNS = [
+  /\[\.\.\. \d+ lines omitted \([^)]*\) \.\.\.\]/g, // truncateWithToolBudget / truncateLongOutput
+  /\[\.\.\. \d+ chars omitted \(cave mode char cap\) \.\.\.\]/g, // truncateByChars
+  /\[JSON compressed: [^\]]*\]/g, // compressJson
+  /\[XML compressed: [^\]]*\]/g, // compressXml summary line
+  /\[\d+ total <\w+> elements\]/g, // compressXml repeated-sibling collapse
+  /\.\.\. \(repeated <\w+> elements\)/g, // compressXml repeated-sibling collapse
+];
+
+/** Sum the char length of every overhead marker found in the final text. */
+function measureOverheadChars(text) {
+  let total = 0;
+  for (const re of OVERHEAD_PATTERNS) {
+    const matches = text.match(re);
+    if (matches) for (const m of matches) total += m.length;
+  }
+  return total;
+}
+
 // Best-effort savings log: one JSON line per compressed stream. Lets you measure
 // real impact and tune the per-tool budgets from data instead of guesswork.
 // Synchronous so the write flushes before the short-lived hook process exits.
 // Records char counts + tool + timestamp — never content. ECOMONO_COMPRESS_STATS=off
-// disables. Read with:
-//   node -e 'let i=0,o=0;require("fs").readFileSync(process.env.HOME+"/.cache/ecomono-compress/stats.jsonl","utf8").trim().split("\n").forEach(l=>{let r=JSON.parse(l);i+=r.in;o+=r.out});console.log(`saved ${Math.round(100-100*o/i)}% (${i}->${o} chars)`)'
+// disables.
+//
+// gross = before - after (the naive reduction the old version reported, which
+// silently counts the hook's own markers as "saved" chars since they're baked
+// into `after`). overhead = chars measureOverheadChars found in `after`. net =
+// gross - overhead: the honest number, which goes negative on a workload where
+// the markers the hook adds cost more than the truncation it does. Logged on
+// EVERY change now (not just size decreases), so net-negative runs show up
+// instead of being silently dropped. Read with:
+//   node -e 'let g=0,n=0;require("fs").readFileSync(process.env.HOME+"/.cache/ecomono-compress/stats.jsonl","utf8").trim().split("\n").forEach(l=>{let r=JSON.parse(l);g+=r.gross;n+=r.net});console.log(`gross ${g} chars, net ${n} chars (overhead ${g-n})`)'
 const fs = require("fs");
 
-function logStats(tool, before, after) {
-  if (process.env.ECOMONO_COMPRESS_STATS === "off" || after >= before) return;
+function logStats(tool, beforeText, afterText) {
+  if (process.env.ECOMONO_COMPRESS_STATS === "off") return;
   try {
+    const before = beforeText.length;
+    const after = afterText.length;
+    const overhead = measureOverheadChars(afterText);
+    const gross = before - after;
+    const net = gross - overhead;
     const base = process.env.XDG_CACHE_HOME || `${process.env.HOME}/.cache`;
     const dir = `${base}/ecomono-compress`;
     fs.mkdirSync(dir, { recursive: true });
-    fs.appendFileSync(`${dir}/stats.jsonl`, `${JSON.stringify({ t: Date.now(), tool, in: before, out: after })}\n`);
+    fs.appendFileSync(
+      `${dir}/stats.jsonl`,
+      `${JSON.stringify({ t: Date.now(), tool, in: before, out: after, gross, overhead, net })}\n`,
+    );
   } catch {
     // Metrics are best-effort — never let a logging failure break the tool.
   }
@@ -305,12 +345,13 @@ function passthrough() {
   process.exit(0);
 }
 
-let input = "";
-process.stdin.on("data", (chunk) => {
-  input += chunk;
-});
-process.stdin.on("end", () => {
-  try {
+function runHook() {
+  let input = "";
+  process.stdin.on("data", (chunk) => {
+    input += chunk;
+  });
+  process.stdin.on("end", () => {
+    try {
     if (process.env.ECOMONO_COMPRESS === "off") return passthrough();
 
     const data = JSON.parse(input);
@@ -337,8 +378,8 @@ process.stdin.on("end", () => {
     const errChanged = cErr !== stderr;
     if (!outChanged && !errChanged) return passthrough();
 
-    if (outChanged) logStats("Bash.stdout", stdout.length, cOut.length);
-    if (errChanged) logStats("Bash.stderr", stderr.length, cErr.length);
+    if (outChanged) logStats("Bash.stdout", stdout, cOut);
+    if (errChanged) logStats("Bash.stderr", stderr, cErr);
 
     // Mirror the original tool_response shape exactly; only replace what changed.
     const updated = { ...resp };
@@ -358,4 +399,60 @@ process.stdin.on("end", () => {
     // Never break a tool result — any failure is a silent passthrough.
     passthrough();
   }
-});
+  });
+}
+
+// ── runnable check ──────────────────────────────────────────────────────────
+function selftest() {
+  const assert = require("assert");
+
+  // No markers in plain text: overhead must be zero, so net collapses to gross.
+  assert.strictEqual(measureOverheadChars("plain output, nothing truncated"), 0);
+
+  // Each marker type this file can inject is measured for its exact length.
+  const budgetMarker = "[... 42 lines omitted (bash budget: 80) ...]";
+  assert.strictEqual(measureOverheadChars(`head\n\n${budgetMarker}\n\ntail`), budgetMarker.length);
+
+  const charsMarker = "[... 7 chars omitted (cave mode char cap) ...]";
+  assert.strictEqual(measureOverheadChars(charsMarker), charsMarker.length);
+
+  const jsonMarker = "[JSON compressed: 3 of 10 lines. Top-level keys retained]";
+  assert.strictEqual(measureOverheadChars(jsonMarker), jsonMarker.length);
+
+  const xmlSummary = "[XML compressed: 5 of 20 lines]";
+  const xmlRepeat = "... (repeated <item> elements)";
+  const xmlTotal = "[12 total <item> elements]";
+  assert.strictEqual(
+    measureOverheadChars(`${xmlSummary}\n    ${xmlRepeat}\n    ${xmlTotal}`),
+    xmlSummary.length + xmlRepeat.length + xmlTotal.length,
+  );
+
+  // End-to-end: truncating 200 lines through the real bash budget must insert
+  // exactly the marker measureOverheadChars detects — proving the measurement
+  // tracks the actual pipeline, not just the synthetic strings above.
+  const longOutput = Array.from({ length: 200 }, (_, i) => `line ${i}`).join("\n");
+  const truncated = truncateWithToolBudget(longOutput, "bash");
+  assert.ok(truncated.length < longOutput.length, "budget truncation must shrink output");
+  const found = truncated.match(/\[\.\.\. \d+ lines omitted \(bash budget: 80\) \.\.\.\]/);
+  assert.ok(found, "expected a budget-omission marker in truncated output");
+  assert.strictEqual(measureOverheadChars(truncated), found[0].length);
+
+  // gross/net honesty: net must equal gross minus the measured overhead, and
+  // (net == gross) exactly when the hook added no markers at all.
+  const before = "x".repeat(1000);
+  const grossWithMarker = before.length - truncated.length;
+  const netWithMarker = grossWithMarker - measureOverheadChars(truncated);
+  assert.ok(netWithMarker < grossWithMarker, "net must be strictly less than gross when overhead > 0");
+
+  const afterNoMarker = "y".repeat(50);
+  const grossNoMarker = before.length - afterNoMarker.length;
+  const netNoMarker = grossNoMarker - measureOverheadChars(afterNoMarker);
+  assert.strictEqual(netNoMarker, grossNoMarker, "net must equal gross when the hook adds nothing");
+
+  console.log("ecomono-compress selftest: all assertions passed");
+}
+
+if (require.main === module) {
+  if (process.argv.includes("--selftest")) selftest();
+  else runHook();
+}

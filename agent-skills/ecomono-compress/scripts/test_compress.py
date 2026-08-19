@@ -439,6 +439,23 @@ tok = write("plain_notes.md", "# T\n\nYou should utilize " + "ghp_" + "016C7869C
 check("pipeline", "secret in body blocks api", C.compress_file(tok, use_api=True)["status"], "error")
 check("pipeline", "secret in body still compresses locally", C.compress_file(tok)["status"], "ok")
 
+# atomic_write_text: a crash between the temp-file write and the os.replace
+# swap must never truncate the target — the exact data-loss mode a plain
+# write_text() has (it truncates the target before writing the new bytes).
+atomic = write("atomic.md", "original content\n")
+_real_replace = C.os.replace
+C.os.replace = lambda *a, **kw: (_ for _ in ()).throw(OSError("simulated crash"))
+try:
+    try:
+        C.atomic_write_text(atomic, "new content\n")
+    except OSError:
+        pass
+finally:
+    C.os.replace = _real_replace
+check("pipeline", "atomic write: crash before replace leaves original intact", atomic.read_text(), "original content\n")
+for leftover in TMP.glob(".atomic.md.tmp*"):
+    leftover.unlink()
+
 shutil.rmtree(TMP, ignore_errors=True)
 
 if failures:
