@@ -27462,11 +27462,14 @@ function save(opts) {
   const result = db2.run("INSERT INTO observations (project_id, title, type, scope, content, topic_key, normalized_hash) VALUES (?, ?, ?, ?, ?, ?, ?)", [project, title, type, scope, content, opts.topic_key || null, hash2]);
   return { id: Number(result.lastInsertRowid), sync_id: "obs-" + result.lastInsertRowid };
 }
+function splitTerms(query) {
+  return query.trim().split(/\s+/).filter(Boolean);
+}
 function search(opts) {
   const db2 = getDb();
   const limit = opts.limit || 10;
   const mode = opts.match_mode === "any" ? "OR" : "AND";
-  const terms = opts.query.split(/\s+/).filter(Boolean).map((t) => `"${t.replace(/"/g, '""')}"`).join(` ${mode} `);
+  const terms = splitTerms(opts.query).map((t) => `"${t.replace(/"/g, '""')}"`).join(` ${mode} `);
   if (!terms)
     return [];
   let sql = "SELECT o.id, o.title, o.content, o.type, o.created_at, o.project_id as project FROM observations o INNER JOIN observations_fts fts ON o.id = fts.rowid WHERE observations_fts MATCH ? AND o.state = 'active'";
@@ -27483,7 +27486,7 @@ function search(opts) {
     sql += " AND o.scope = ?";
     params.push(opts.scope);
   }
-  sql += " ORDER BY bm25(observations_fts, 5.0, 1.0) LIMIT ?";
+  sql += " ORDER BY bm25(observations_fts, 5.0, 1.0), o.created_at DESC, o.id DESC LIMIT ?";
   params.push(limit);
   return db2.query(sql).all(...params);
 }
@@ -27750,7 +27753,7 @@ var registry2 = [
   },
   {
     name: "mem_search",
-    description: `Full-text search (FTS5) over saved observations, ranked by weighted relevance (title beats body). match_mode defaults to 'all' (every term required); 'any' matches on any term. When match_mode is left unset and 'all' finds nothing for a multi-term query, automatically retries as 'any' \u2014 the response is then wrapped as { results, match_mode: "any (fallback)" } instead of a bare array.`,
+    description: `Full-text search (FTS5) over saved observations, ranked by weighted relevance (title beats body). Always returns { results, match_mode }. match_mode defaults to 'all' (every term required); 'any' matches on any term. When match_mode is left unset and 'all' finds nothing for a multi-term query, automatically retries as 'any' and reports match_mode: "any (fallback)".`,
     args: {
       query: exports_external.string().describe("Search terms"),
       project: exports_external.string().optional(),
@@ -27758,18 +27761,18 @@ var registry2 = [
       scope: exports_external.string().optional(),
       limit: exports_external.number().optional(),
       all_projects: exports_external.boolean().optional().describe("Search across every project"),
-      match_mode: exports_external.enum(["all", "any"]).optional().describe("'all' (default) ANDs terms, 'any' ORs them. Leave unset to get the zero-result auto-fallback to 'any'")
+      match_mode: exports_external.enum(["all", "any"]).optional().describe("For multi-term queries: 'all' (default) ANDs terms, 'any' ORs them. Leave unset to get the zero-result auto-fallback to 'any'")
     },
     handler: (a) => {
       const base = { query: a.query, project: a.all_projects ? undefined : proj(a.project), type: a.type, scope: a.scope, limit: a.limit, all_projects: a.all_projects };
       const results = search({ ...base, match_mode: a.match_mode });
-      const termCount = a.query.trim().split(/\s+/).filter(Boolean).length;
+      const termCount = splitTerms(a.query).length;
       if (a.match_mode === undefined && results.length === 0 && termCount > 1) {
         const retried = search({ ...base, match_mode: "any" });
         if (retried.length > 0)
           return { results: retried, match_mode: "any (fallback)" };
       }
-      return results;
+      return { results, match_mode: a.match_mode === "any" ? "any" : "all" };
     }
   },
   {

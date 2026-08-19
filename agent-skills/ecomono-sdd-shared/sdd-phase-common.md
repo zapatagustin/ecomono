@@ -34,6 +34,8 @@ mem_search(query: "sdd/{change-name}/{artifact-type}", project: "{project}") -> 
 mem_get_observation(id: {id})                                               -> full content
 ```
 
+(mem_search's actual return is { results, match_mode }; results holds the preview + id above)
+
 Issue all searches in one batch, then all retrievals in one batch. Sequential
 round-trips cost turns, and every turn re-reads the whole prefix.
 

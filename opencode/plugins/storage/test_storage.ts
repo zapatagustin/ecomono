@@ -12,11 +12,10 @@ process.env.ECOMONO_DATA_DIR = mkdtempSync(join(tmpdir(), "ecomono-test-"))
 process.env.ECOMONO_LEGACY_DB = join(tmpdir(), "ecomono-no-such-legacy.db") // skip migration
 
 const { getDb, closeDb } = await import("./db")
+const db = getDb()
 const Obs = await import("./observations")
 const Sess = await import("./sessions")
 const Prompts = await import("./prompts")
-
-getDb()
 
 // --- observations: save + FTS5 search ---
 const a = Obs.save({ title: "Chose Zustand over Redux", content: "state mgmt decision", type: "decision", project: "proj1" })!
@@ -35,6 +34,16 @@ const titleHit = Obs.save({ title: "widget rollout plan", content: "unrelated bo
 const contentHit = Obs.save({ title: "unrelated title", content: "mentions widget only in the body", project: "rankproj" })!
 const ranked = Obs.search({ query: "widget", project: "rankproj" })
 assert(ranked.length === 2 && ranked[0].id === titleHit.id && ranked[1].id === contentHit.id, "title match ranks above content-only match")
+
+// --- bm25 ties break by newest id when they also share a clock second ---
+const tieA = Obs.save({ title: "gizmo report", content: "gizmo report", project: "tieproj" })!
+const tieB = Obs.save({ title: "gizmo report", content: "gizmo report", project: "tieproj" })!
+// Identical title+content ties bm25 exactly; force the same created_at to
+// simulate two saves landing in the same clock second, so the assertion
+// exercises the o.id DESC tie-break rather than created_at.
+db.run("UPDATE observations SET created_at = '2024-01-01T00:00:00Z' WHERE id IN (?, ?)", [tieA.id, tieB.id])
+const tied = Obs.search({ query: "gizmo report", project: "tieproj" })
+assert(tied.length === 2 && tied[0].id === tieB.id && tied[1].id === tieA.id, "same-second bm25 ties break newest-id-first")
 
 // --- match_mode: 'any' finds rows split across docs that 'all' cannot ---
 Obs.save({ title: "alpha token", content: "first doc", project: "modeproj" })

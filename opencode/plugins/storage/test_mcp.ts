@@ -73,7 +73,7 @@ async function drive(entry: string) {
 
   const search = await rpc(4, "tools/call", { name: "mem_search", arguments: { query: "handshake stdio", project: "t" } })
   const hits = JSON.parse(search.result.content[0].text)
-  assert(hits.length === 1 && hits[0].id === savedObj.id, `${entry}: mem_search via MCP finds saved obs`)
+  assert(hits.match_mode === "all" && hits.results.length === 1 && hits.results[0].id === savedObj.id, `${entry}: mem_search via MCP finds saved obs`)
 
   proc.kill()
 }

@@ -46,6 +46,14 @@ export function save(opts: {
   return { id: Number(result.lastInsertRowid), sync_id: "obs-" + result.lastInsertRowid }
 }
 
+// Split a query into whitespace-separated terms — the single definition shared
+// by search() (which quotes each term for FTS5 MATCH) and tools.ts's mem_search
+// handler (which only needs the count, to decide whether the implicit-fallback
+// retry applies).
+export function splitTerms(query: string): string[] {
+  return query.trim().split(/\s+/).filter(Boolean)
+}
+
 export function search(opts: {
   query: string
   project?: string
@@ -58,7 +66,7 @@ export function search(opts: {
   const db = getDb()
   const limit = opts.limit || 10
   const mode = opts.match_mode === "any" ? "OR" : "AND"
-  const terms = opts.query.split(/\s+/).filter(Boolean).map(t => `"${t.replace(/"/g, '""')}"`).join(` ${mode} `)
+  const terms = splitTerms(opts.query).map(t => `"${t.replace(/"/g, '""')}"`).join(` ${mode} `)
   if (!terms) return []
 
   let sql = "SELECT o.id, o.title, o.content, o.type, o.created_at, o.project_id as project FROM observations o INNER JOIN observations_fts fts ON o.id = fts.rowid WHERE observations_fts MATCH ? AND o.state = 'active'"
@@ -79,8 +87,13 @@ export function search(opts: {
   // Weighted relevance instead of plain recency. Weights are positional and must
   // match observations_fts's declared column order (title, content) exactly — it
   // does not index topic_key, so that column can't be weighted here without a
-  // schema change. bm25() is lower-is-better, so no DESC.
-  sql += " ORDER BY bm25(observations_fts, 5.0, 1.0) LIMIT ?"
+  // schema change. bm25() is lower-is-better, so no DESC. bm25 ties routinely
+  // (identical or near-identical docs score identically), and without a
+  // tie-break the order under LIMIT becomes query-plan-dependent — so newest
+  // wins ties, matching the old (pre-bm25) recency-first expectation.
+  // created_at has only second granularity, so a final o.id DESC breaks ties
+  // that also share a clock second.
+  sql += " ORDER BY bm25(observations_fts, 5.0, 1.0), o.created_at DESC, o.id DESC LIMIT ?"
   params.push(limit)
 
   return db.query(sql).all(...params) as any[]

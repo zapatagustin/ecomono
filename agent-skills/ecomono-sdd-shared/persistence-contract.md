@@ -69,6 +69,8 @@ READ FIRST (search returns truncated previews — the preview is not the artifac
   mem_search(query: "sdd/{change-name}/{type}", project: "{project}")  -> id
   mem_get_observation(id: {id})                                        -> full content
 
+  (mem_search's actual return is { results, match_mode }; results holds the preview + id above)
+
 PERSIST BEFORE RETURNING (mandatory):
   mem_save(
     title:     "sdd/{change-name}/{artifact-type}",

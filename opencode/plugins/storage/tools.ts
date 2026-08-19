@@ -39,7 +39,7 @@ export const registry: MemTool[] = [
   },
   {
     name: "mem_search",
-    description: "Full-text search (FTS5) over saved observations, ranked by weighted relevance (title beats body). match_mode defaults to 'all' (every term required); 'any' matches on any term. When match_mode is left unset and 'all' finds nothing for a multi-term query, automatically retries as 'any' — the response is then wrapped as { results, match_mode: \"any (fallback)\" } instead of a bare array.",
+    description: "Full-text search (FTS5) over saved observations, ranked by weighted relevance (title beats body). Always returns { results, match_mode }. match_mode defaults to 'all' (every term required); 'any' matches on any term. When match_mode is left unset and 'all' finds nothing for a multi-term query, automatically retries as 'any' and reports match_mode: \"any (fallback)\".",
     args: {
       query: z.string().describe("Search terms"),
       project: z.string().optional(),
@@ -47,7 +47,7 @@ export const registry: MemTool[] = [
       scope: z.string().optional(),
       limit: z.number().optional(),
       all_projects: z.boolean().optional().describe("Search across every project"),
-      match_mode: z.enum(["all", "any"]).optional().describe("'all' (default) ANDs terms, 'any' ORs them. Leave unset to get the zero-result auto-fallback to 'any'"),
+      match_mode: z.enum(["all", "any"]).optional().describe("For multi-term queries: 'all' (default) ANDs terms, 'any' ORs them. Leave unset to get the zero-result auto-fallback to 'any'"),
     },
     handler: (a) => {
       const base = { query: a.query, project: a.all_projects ? undefined : proj(a.project), type: a.type, scope: a.scope, limit: a.limit, all_projects: a.all_projects }
@@ -55,12 +55,13 @@ export const registry: MemTool[] = [
       // Only an implicit (unset) match_mode falls back — an explicit 'all' means
       // the caller wants AND semantics even on zero rows. Single-term queries have
       // no AND/OR distinction, so there is nothing to retry differently.
-      const termCount = a.query.trim().split(/\s+/).filter(Boolean).length
+      const termCount = Obs.splitTerms(a.query).length
       if (a.match_mode === undefined && results.length === 0 && termCount > 1) {
         const retried = Obs.search({ ...base, match_mode: "any" })
         if (retried.length > 0) return { results: retried, match_mode: "any (fallback)" }
       }
-      return results
+      // Uniform envelope: bare-array vs wrapped was bimodal before this fix.
+      return { results, match_mode: a.match_mode === "any" ? "any" : "all" }
     },
   },
   {

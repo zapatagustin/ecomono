@@ -32,7 +32,7 @@ assert(saved.id > 0, "mem_save round-trips to storage")
 
 // mem_search finds it (project auto-injected from plugin's detected project)
 const hits = JSON.parse(await hooks.tool.mem_search.execute({ query: "adapter wired" }))
-assert(hits.length === 1 && hits[0].id === saved.id, "mem_search via execute finds saved obs")
+assert(hits.match_mode === "all" && hits.results.length === 1 && hits.results[0].id === saved.id, "mem_search via execute finds saved obs")
 
 // system prompt injection
 const out: any = { system: [] }
