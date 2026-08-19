@@ -17,7 +17,7 @@ interface Observation {
   topic_key?: string
   state?: string
   pinned?: number
-  review_after?: string
+  review_after?: string | null
   created_at?: string
   updated_at?: string
 }
@@ -140,6 +140,28 @@ export function update(id: number, fields: Partial<Observation>): boolean {
     params.push(v)
   }
   if (!sets.length) return false
+  // A real type change re-stamps review_after via the same per-type TTL as
+  // save()/mark_reviewed — otherwise promoting manual->decision would never
+  // gain a review_after, and demoting decision->bugfix would keep a stale
+  // one. Compared against the stored type (SELECTed fresh, same pattern as
+  // mark_reviewed), not just key presence — otherwise an ordinary edit that
+  // resends the unchanged type would re-stamp too, silently clearing
+  // legitimate review debt. Checked with 'in' on review_after (not
+  // truthiness) so an explicit review_after in the same call — including an
+  // explicit null clear — always wins over the type-derived recompute.
+  if ("type" in fields && !("review_after" in fields)) {
+    const row = db.query("SELECT type FROM observations WHERE id = ?").get(id) as any
+    const currentType = row?.type
+    if (fields.type !== currentType) {
+      const mod = reviewAfterModifier(fields.type as string)
+      if (mod === null) {
+        sets.push("review_after = NULL")
+      } else {
+        sets.push("review_after = datetime('now', ?)")
+        params.push(mod)
+      }
+    }
+  }
   sets.push("updated_at = datetime('now')")
   params.push(id)
   db.run(`UPDATE observations SET ${sets.join(", ")} WHERE id = ?`, params)

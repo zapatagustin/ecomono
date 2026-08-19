@@ -128,5 +128,43 @@ assert(Obs.getObservation(bugfixObs.id)!.review_after === null, "mark_reviewed o
 db.run("UPDATE observations SET review_after = datetime('now', '-1 day') WHERE id = ?", [archObs.id])
 assert(Obs.stats("reviewproj").needs_review === 1, "stats counts past-due observations as needs_review")
 
+// --- update() type change re-stamps review_after via the same per-type TTL ---
+const promoteObs = Obs.save({ title: "will be promoted", content: "why", type: "manual", project: "reviewproj" })!
+assert(Obs.getObservation(promoteObs.id)!.review_after === null, "manual starts with no review_after")
+Obs.update(promoteObs.id, { type: "decision" })
+assert(Obs.getObservation(promoteObs.id)!.review_after !== null, "type change manual->decision gains a review_after")
+
+const demoteObs = Obs.save({ title: "will be demoted", content: "why", type: "decision", project: "reviewproj" })!
+assert(Obs.getObservation(demoteObs.id)!.review_after !== null, "decision starts with a review_after")
+Obs.update(demoteObs.id, { type: "bugfix" })
+assert(Obs.getObservation(demoteObs.id)!.review_after === null, "type change decision->bugfix clears review_after")
+
+const explicitObs = Obs.save({ title: "explicit review_after wins", content: "why", type: "manual", project: "reviewproj" })!
+Obs.update(explicitObs.id, { type: "decision", review_after: "2099-01-01 00:00:00" })
+assert(Obs.getObservation(explicitObs.id)!.review_after === "2099-01-01 00:00:00", "explicit review_after in the same call wins over the type-derived recompute")
+
+// --- update() only re-stamps on a REAL type change, not on resending the same type ---
+const sameTypeObs = Obs.save({ title: "resend same type", content: "why", type: "decision", project: "reviewproj" })!
+db.run("UPDATE observations SET review_after = datetime('now', '-1 day') WHERE id = ?", [sameTypeObs.id])
+const pastDue = Obs.getObservation(sameTypeObs.id)!.review_after
+Obs.update(sameTypeObs.id, { type: "decision", content: "still why" })
+assert(Obs.getObservation(sameTypeObs.id)!.review_after === pastDue,
+  "resending the unchanged type does not move review_after — past-due stamp stays past-due")
+
+// real transition still re-stamps (redundant with promoteObs/demoteObs above, kept as a direct regression check)
+const realTransitionObs = Obs.save({ title: "real transition still re-stamps", content: "why", type: "decision", project: "reviewproj" })!
+db.run("UPDATE observations SET review_after = datetime('now', '-1 day') WHERE id = ?", [realTransitionObs.id])
+const stalePastDue = Obs.getObservation(realTransitionObs.id)!.review_after
+Obs.update(realTransitionObs.id, { type: "config" })
+const afterTransition = Obs.getObservation(realTransitionObs.id)!.review_after
+assert(afterTransition !== stalePastDue && new Date(afterTransition!.replace(" ", "T") + "Z").getTime() > Date.now(),
+  "a real type change still re-stamps review_after into the future")
+
+// --- update() threads an explicit null through as a real NULL clear ---
+const nullClearObs = Obs.save({ title: "explicit null clears review_after", content: "why", type: "decision", project: "reviewproj" })!
+assert(Obs.getObservation(nullClearObs.id)!.review_after !== null, "decision starts with a review_after")
+Obs.update(nullClearObs.id, { review_after: null })
+assert(Obs.getObservation(nullClearObs.id)!.review_after === null, "explicit null clears review_after")
+
 closeDb()
 console.log("✓ storage: all assertions passed")

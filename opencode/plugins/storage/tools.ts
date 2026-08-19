@@ -37,6 +37,13 @@ export function __resetNudgeStateForTest() {
   totalCalls = 0; totalSaves = 0; callsAtLastSave = 0; lastNudgeAt = 0; lastSaveAt = clock()
 }
 
+// ecomono: these counters are per-server-process, not per-session — handlers
+// here don't receive a session id per call, so there is nothing to key on.
+// On the MCP stdio path (Claude Code) one process is one session, so that's
+// equivalent to per-session. In opencode, concurrent sessions sharing one
+// server process share these counters too — an accepted ceiling. Upgrade
+// path: thread a session id through the adapters (memory.ts, mcp-server.ts)
+// down to instrument()/callsVsSaves() and key a counter map on it.
 let totalCalls = 0
 let totalSaves = 0
 let lastSaveAt = clock()
@@ -58,7 +65,10 @@ function maybeNudge(): string | undefined {
 }
 
 // Ratio for mem_session_summary — how much work happened per save this process.
-function callsVsSaves(): string { return `${totalSaves}/${totalCalls}` }
+// totalCalls was already incremented (by instrument(), below) for this very
+// mem_session_summary call before the handler runs, so it would otherwise
+// count the summarizing call against itself. Exclude it.
+function callsVsSaves(): string { return `${totalSaves}/${Math.max(totalCalls - 1, 0)}` }
 
 // Wraps every registered handler to track the counters above, uniformly for
 // both adapters (opencode plugin, MCP server) and for tests that call
@@ -135,12 +145,19 @@ const rawRegistry: MemTool[] = [
       id: z.number(),
       title: z.string().optional(),
       content: z.string().optional(),
-      type: z.string().optional(),
+      type: z.enum(["decision", "architecture", "bugfix", "pattern", "config", "discovery", "learning", "manual"]).optional(),
       topic_key: z.string().optional(),
-      review_after: z.string().optional(),
+      // nullable so a caller can express "clear the review debt" — Zod's plain
+      // z.string().optional() can only omit the key or send a string, never
+      // null, so the clear path was unreachable from this tool boundary.
+      review_after: z.string().nullable().optional().describe("null (or empty string) clears the review debt; a datetime string re-schedules it; omitted on a type change lets the new type's TTL re-stamp"),
     },
     handler: (a) => {
       const { id, ...fields } = a
+      // "" is a natural clear attempt too, but stored as-is it sorts before
+      // datetime('now') and reads as immediately past-due. Normalize to null
+      // (real clear) instead of storing the empty string.
+      if (fields.review_after === "") fields.review_after = null
       const clean = Object.fromEntries(Object.entries(fields).filter(([, v]) => v !== undefined))
       return { updated: Obs.update(id, clean) }
     },
@@ -159,9 +176,9 @@ const rawRegistry: MemTool[] = [
   },
   {
     name: "mem_stats",
-    description: "Counts of observations and sessions (optionally scoped to a project).",
+    description: "Counts of observations, sessions, and needs_review (past-due review_after) — defaults to the current project, pass project to scope elsewhere.",
     args: { project: z.string().optional() },
-    handler: (a) => Obs.stats(a.project),
+    handler: (a) => Obs.stats(proj(a.project)),
   },
   {
     name: "mem_context",
@@ -196,7 +213,9 @@ const rawRegistry: MemTool[] = [
       limit: z.number().optional(),
       project: z.string().optional(),
     },
-    handler: (a) => Obs.review(a.action, a.id, a.limit, proj(a.project)),
+    // Only "list" ever reads project — proj() spawns two synchronous git
+    // subprocesses, wasted work for mark_reviewed which never uses it.
+    handler: (a) => Obs.review(a.action, a.id, a.limit, a.action === "list" ? proj(a.project) : a.project),
   },
   {
     name: "mem_current_project",
@@ -221,7 +240,7 @@ const rawRegistry: MemTool[] = [
   },
   {
     name: "mem_doctor",
-    description: "Health check: SQLite integrity probe, DB path, and store counts.",
+    description: "Health check: SQLite integrity probe, DB path, and store counts (observations, sessions, needs_review) — always global across all projects, deliberately not scoped to one.",
     args: {},
     // A real probe, not a hardcoded ok. quick_check catches corruption, and the
     // catch turns an unreadable file or full disk into a reportable answer

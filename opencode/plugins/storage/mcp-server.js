@@ -27518,6 +27518,19 @@ function update(id, fields) {
   }
   if (!sets.length)
     return false;
+  if ("type" in fields && !("review_after" in fields)) {
+    const row = db2.query("SELECT type FROM observations WHERE id = ?").get(id);
+    const currentType = row?.type;
+    if (fields.type !== currentType) {
+      const mod = reviewAfterModifier(fields.type);
+      if (mod === null) {
+        sets.push("review_after = NULL");
+      } else {
+        sets.push("review_after = datetime('now', ?)");
+        params.push(mod);
+      }
+    }
+  }
   sets.push("updated_at = datetime('now')");
   params.push(id);
   db2.run(`UPDATE observations SET ${sets.join(", ")} WHERE id = ?`, params);
@@ -27771,7 +27784,7 @@ function maybeNudge() {
   return `${callsSinceSave} tool calls and ${minutes}m since last mem_save \u2014 save discoveries before they die with the context`;
 }
 function callsVsSaves() {
-  return `${totalSaves}/${totalCalls}`;
+  return `${totalSaves}/${Math.max(totalCalls - 1, 0)}`;
 }
 function instrument(name, handler) {
   return (args) => {
@@ -27841,12 +27854,14 @@ var rawRegistry = [
       id: exports_external.number(),
       title: exports_external.string().optional(),
       content: exports_external.string().optional(),
-      type: exports_external.string().optional(),
+      type: exports_external.enum(["decision", "architecture", "bugfix", "pattern", "config", "discovery", "learning", "manual"]).optional(),
       topic_key: exports_external.string().optional(),
-      review_after: exports_external.string().optional()
+      review_after: exports_external.string().nullable().optional().describe("null (or empty string) clears the review debt; a datetime string re-schedules it; omitted on a type change lets the new type's TTL re-stamp")
     },
     handler: (a) => {
       const { id, ...fields } = a;
+      if (fields.review_after === "")
+        fields.review_after = null;
       const clean = Object.fromEntries(Object.entries(fields).filter(([, v]) => v !== undefined));
       return { updated: update(id, clean) };
     }
@@ -27865,9 +27880,9 @@ var rawRegistry = [
   },
   {
     name: "mem_stats",
-    description: "Counts of observations and sessions (optionally scoped to a project).",
+    description: "Counts of observations, sessions, and needs_review (past-due review_after) \u2014 defaults to the current project, pass project to scope elsewhere.",
     args: { project: exports_external.string().optional() },
-    handler: (a) => stats(a.project)
+    handler: (a) => stats(proj(a.project))
   },
   {
     name: "mem_context",
@@ -27902,7 +27917,7 @@ var rawRegistry = [
       limit: exports_external.number().optional(),
       project: exports_external.string().optional()
     },
-    handler: (a) => review(a.action, a.id, a.limit, proj(a.project))
+    handler: (a) => review(a.action, a.id, a.limit, a.action === "list" ? proj(a.project) : a.project)
   },
   {
     name: "mem_current_project",
@@ -27932,7 +27947,7 @@ calls_vs_saves: ${callsVsSaves()}`);
   },
   {
     name: "mem_doctor",
-    description: "Health check: SQLite integrity probe, DB path, and store counts.",
+    description: "Health check: SQLite integrity probe, DB path, and store counts (observations, sessions, needs_review) \u2014 always global across all projects, deliberately not scoped to one.",
     args: {},
     handler: () => {
       try {

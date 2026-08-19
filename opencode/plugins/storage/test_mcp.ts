@@ -75,6 +75,10 @@ async function drive(entry: string) {
   const hits = JSON.parse(search.result.content[0].text)
   assert(hits.match_mode === "all" && hits.results.length === 1 && hits.results[0].id === savedObj.id, `${entry}: mem_search via MCP finds saved obs`)
 
+  const updated = await rpc(5, "tools/call", { name: "mem_update", arguments: { id: savedObj.id, review_after: null } })
+  const updatedObj = JSON.parse(updated.result.content[0].text)
+  assert(updatedObj.updated === true, `${entry}: mem_update with review_after: null validates and succeeds via MCP`)
+
   proc.kill()
 }
 

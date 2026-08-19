@@ -11,6 +11,7 @@ process.env.ECOMONO_DATA_DIR = mkdtempSync(join(tmpdir(), "ecomono-tools-"))
 process.env.ECOMONO_LEGACY_DB = join(tmpdir(), "ecomono-no-such-legacy.db")
 
 const { registryByName } = await import("./tools")
+const Obs = await import("./observations")
 const call = (name: string, args: any = {}) => registryByName[name].handler(args)
 
 // every tool has a name, description, args shape, handler
@@ -54,6 +55,39 @@ assert(explicitAll.match_mode === "all" && explicitAll.results.length === 0, "ex
 
 const explicitAny = call("mem_search", { query: "alpha beta", match_mode: "any", project: "modeproj" }) as any
 assert(explicitAny.match_mode === "any" && explicitAny.results.length === 2, "explicit match_mode 'any' reports 'any', not '(fallback)'")
+
+// --- mem_stats scoped through proj(): omitted project defaults to current project, not all projects ---
+call("mem_save", { title: "stats scope check current project", content: "x", project: Obs.currentProject().project })
+call("mem_save", { title: "stats scope check other project", content: "x", project: "statsprojOther" })
+const statsCurrent = call("mem_stats", {}) as any
+const statsExplicitCurrent = call("mem_stats", { project: Obs.currentProject().project }) as any
+assert(statsCurrent.observations === statsExplicitCurrent.observations,
+  "mem_stats with project omitted matches explicit current-project scope (not all projects)")
+
+// --- mem_review scoping through the registry: project omitted returns only current-project items ---
+const curReviewObs = call("mem_save", { title: "current project review item", content: "why", type: "manual", project: Obs.currentProject().project }) as any
+const otherReviewObs = call("mem_save", { title: "other project review item", content: "why", type: "manual", project: "reviewprojOther" }) as any
+Obs.update(curReviewObs.id, { review_after: "2000-01-01 00:00:00" })
+Obs.update(otherReviewObs.id, { review_after: "2000-01-01 00:00:00" })
+const reviewList = call("mem_review", { action: "list" }) as any[]
+assert(reviewList.some((r: any) => r.id === curReviewObs.id), "mem_review list (project omitted) includes the current-project item")
+assert(!reviewList.some((r: any) => r.id === otherReviewObs.id), "mem_review list (project omitted) excludes the other-project item")
+
+// --- mem_update review_after: null clears, "" normalizes to null (does not poison), explicit date wins over a simultaneous type change ---
+const clearObs = call("mem_save", { title: "review_after clear via mem_update", content: "why", type: "decision", project: "reviewprojClear" }) as any
+assert(Obs.getObservation(clearObs.id)!.review_after !== null, "decision starts with a review_after")
+call("mem_update", { id: clearObs.id, review_after: null })
+assert(Obs.getObservation(clearObs.id)!.review_after === null, "mem_update with review_after: null clears it")
+
+const emptyStringObs = call("mem_save", { title: "review_after empty string via mem_update", content: "why", type: "decision", project: "reviewprojClear" }) as any
+call("mem_update", { id: emptyStringObs.id, review_after: "" })
+assert(Obs.getObservation(emptyStringObs.id)!.review_after === null,
+  "mem_update with review_after: '' normalizes to null instead of storing an immediately-due empty string")
+
+const dateWinsObs = call("mem_save", { title: "explicit date wins over type change via mem_update", content: "why", type: "manual", project: "reviewprojClear" }) as any
+call("mem_update", { id: dateWinsObs.id, type: "decision", review_after: "2099-01-01 00:00:00" })
+assert(Obs.getObservation(dateWinsObs.id)!.review_after === "2099-01-01 00:00:00",
+  "mem_update: explicit review_after wins over a simultaneous type change")
 
 const doc = call("mem_doctor") as any
 assert(doc.ok && doc.db_path.endsWith("memory.db") && doc.observations >= 1, "mem_doctor")
