@@ -23,7 +23,10 @@ import * as Obs from "./observations"
 const FTS_MIN_SCORE = -1
 
 export type Relation = "supersedes" | "conflicts_with" | "related" | "compatible" | "scoped" | "not_conflict"
-const RELATIONS: Relation[] = ["supersedes", "conflicts_with", "related", "compatible", "scoped", "not_conflict"]
+// Exported so other callers validating an externally-sourced relation string
+// (e.g. conflict-scan.ts parsing an LLM verdict) share this one definition
+// instead of re-listing the enum and risking drift.
+export const RELATIONS: Relation[] = ["supersedes", "conflicts_with", "related", "compatible", "scoped", "not_conflict"]
 
 export interface Candidate {
   observation_id: number
