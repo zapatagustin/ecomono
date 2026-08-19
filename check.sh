@@ -18,6 +18,7 @@ run "storage, memory and bundle"   bash opencode/plugins/storage/run-tests.sh
 run "opencode plugins"             bash opencode/plugins/tests/run-tests.sh
 run "installer linking primitives" bash lib/test-common.sh
 run "agent model gate"             bash claude/hooks/test-agent-model-gate.sh
+run "workflow model gate"          bash claude/hooks/test-workflow-model-gate.sh
 run "heavy skill gate"             bash claude/hooks/test-heavy-skill-gate.sh
 run "secret access gate"           bash claude/hooks/test-secret-access-gate.sh
 run "judge standards gate"         bash claude/hooks/test-judge-standards-gate.sh

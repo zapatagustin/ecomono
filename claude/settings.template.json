@@ -97,6 +97,16 @@
             "statusMessage": "Checking the judge's standards block"
           }
         ]
+      },
+      {
+        "matcher": "Workflow",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "$HOME/.claude/hooks/workflow-model-gate.sh",
+            "statusMessage": "Checking workflow agent models (tier gate)"
+          }
+        ]
       }
     ],
     "PostToolUse": [
