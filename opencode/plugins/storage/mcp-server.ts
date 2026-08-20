@@ -16,14 +16,32 @@ import { registry } from "./tools"
 import { getDb } from "./db"
 import { MEMORY_INSTRUCTIONS } from "./protocol"
 
-getDb() // initialize schema + one-time legacy migration
+// Storage must never take down the MCP server itself. A store we cannot open
+// (corrupt file, full disk, bad permissions, or a busy_timeout expiry during a
+// migration window) degrades to mem_doctor and nothing else — same shape as
+// the opencode adapter (../memory.ts): no protocol injection, since telling
+// the agent to call mem_save when saving is impossible is worse than staying
+// quiet, but the one tool whose job is to report that memory is down has to
+// survive the failure it reports on.
+let dbOk = true
+try {
+  getDb() // initialize schema + one-time legacy migration
+} catch (e) {
+  dbOk = false
+  console.error("[ecomono-memory] storage unavailable, memory disabled:", (e as Error).message)
+}
 
 // `instructions` reaches Claude Code on initialize — this is how the memory
 // protocol gets injected on the Claude Code side (the opencode side injects it
-// via the plugin's system-prompt hook).
-const server = new McpServer({ name: "ecomono-memory", version: "1.0.0" }, { instructions: MEMORY_INSTRUCTIONS })
+// via the plugin's system-prompt hook). Suppressed when degraded, matching
+// the opencode adapter's "no protocol injection" behavior.
+const server = new McpServer(
+  { name: "ecomono-memory", version: "1.0.0" },
+  { instructions: dbOk ? MEMORY_INSTRUCTIONS : undefined },
+)
 
-for (const t of registry) {
+const tools = dbOk ? registry : registry.filter((t) => t.name === "mem_doctor")
+for (const t of tools) {
   server.registerTool(
     t.name,
     { description: t.description, inputSchema: t.args },

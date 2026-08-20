@@ -22,6 +22,7 @@ export function getDb(): Database {
   mkdirSync(DATA_DIR, { recursive: true })
   const d = new Database(DB_PATH)
   d.run("PRAGMA journal_mode=WAL")
+  d.run("PRAGMA busy_timeout = 5000")
   d.run("PRAGMA foreign_keys=ON")
   initSchema(d)
   migrateFromEngram(d)
@@ -144,26 +145,54 @@ function addColumn(d: Database, table: string, col: string, type: string) {
 // so search() and conflicts.ts can weight topic_key in bm25 (engram #526).
 // FTS5 virtual tables can't ALTER-add a column, so this drops and recreates
 // it — same idempotency pattern as addColumn(): detect the old shape via
-// PRAGMA table_info (2 columns, no topic_key) before touching anything. A
-// fresh DB's CREATE VIRTUAL TABLE above already made the 3-column shape, so
-// table_info reports 3 and this is a no-op. The triggers are dropped and
-// recreated by name (not IF NOT EXISTS) because they're on the observations
-// table, not the fts table, so they'd otherwise survive stale — still
-// inserting only (title, content) — even after the table itself is widened.
+// PRAGMA table_info (topic_key absent from the column list) before touching
+// anything. A fresh DB's CREATE VIRTUAL TABLE above already made the 3-column
+// shape, so table_info reports topic_key present and this is a no-op. The
+// triggers are dropped and recreated by name (not IF NOT EXISTS) because
+// they're on the observations table, not the fts table, so they'd otherwise
+// survive stale — still inserting only (title, content) — even after the
+// table itself is widened.
+//
+// The whole sequence runs inside one explicit transaction: a crash between
+// DROP TABLE and the rebuild would otherwise leave the fts table gone, and
+// the next startup's `CREATE VIRTUAL TABLE IF NOT EXISTS` (in initSchema)
+// would silently recreate an EMPTY 3-column table that this guard then
+// treats as already migrated forever. Wrapping in BEGIN/COMMIT with a
+// ROLLBACK on failure means a crash mid-migration always leaves the
+// pre-migration 2-column shape intact, so this function retries cleanly on
+// the next start.
 function migrateFtsTopicKey(d: Database) {
   const cols = (d.query("PRAGMA table_info(observations_fts)").all() as any[]).map((r) => r.name)
   if (cols.includes("topic_key")) return
-  d.run("DROP TRIGGER IF EXISTS obs_ai")
-  d.run("DROP TRIGGER IF EXISTS obs_ad")
-  d.run("DROP TRIGGER IF EXISTS obs_au")
-  d.run("DROP TABLE observations_fts")
-  d.run(`
-    CREATE VIRTUAL TABLE observations_fts
-    USING fts5(title, content, topic_key, content=observations, content_rowid=id)
-  `)
-  // Reindex every existing row into the widened table (external-content FTS5
-  // rebuild command — see https://sqlite.org/fts5.html#the_rebuild_command).
-  d.run("INSERT INTO observations_fts(observations_fts) VALUES('rebuild')")
+  d.run("BEGIN IMMEDIATE")
+  // Re-check post-lock: another host may have passed the pre-lock check above
+  // and already committed the migration while we were waiting on BEGIN
+  // IMMEDIATE. Without this, we'd re-drop and rebuild an already-migrated
+  // table — wasteful, not lossy, but still unnecessary work under the lock.
+  const colsLocked = (d.query("PRAGMA table_info(observations_fts)").all() as any[]).map((r) => r.name)
+  if (colsLocked.includes("topic_key")) { d.run("ROLLBACK"); return }
+  try {
+    d.run("DROP TRIGGER IF EXISTS obs_ai")
+    d.run("DROP TRIGGER IF EXISTS obs_ad")
+    d.run("DROP TRIGGER IF EXISTS obs_au")
+    d.run("DROP TABLE IF EXISTS observations_fts")
+    d.run(`
+      CREATE VIRTUAL TABLE observations_fts
+      USING fts5(title, content, topic_key, content=observations, content_rowid=id)
+    `)
+    // Reindex every existing row into the widened table (external-content
+    // FTS5 rebuild command — see https://sqlite.org/fts5.html#the_rebuild_command).
+    d.run("INSERT INTO observations_fts(observations_fts) VALUES('rebuild')")
+    d.run("COMMIT")
+  } catch (e) {
+    // SQLite may have already auto-rolled-back the transaction (SQLITE_FULL,
+    // IOERR, NOMEM, BUSY, INTERRUPT); calling ROLLBACK on a dead transaction
+    // throws "cannot rollback - no transaction is active", which would
+    // replace the original error below. Swallow that so `throw e` always
+    // surfaces the real cause.
+    try { d.run("ROLLBACK") } catch {}
+    throw e
+  }
 }
 
 // One-time import from a legacy Go-engram DB. Engram denormalizes (a `project`

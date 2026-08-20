@@ -27297,6 +27297,7 @@ function getDb() {
   mkdirSync(DATA_DIR, { recursive: true });
   const d = new Database(DB_PATH);
   d.run("PRAGMA journal_mode=WAL");
+  d.run("PRAGMA busy_timeout = 5000");
   d.run("PRAGMA foreign_keys=ON");
   initSchema(d);
   migrateFromEngram(d);
@@ -27409,15 +27410,29 @@ function migrateFtsTopicKey(d) {
   const cols = d.query("PRAGMA table_info(observations_fts)").all().map((r) => r.name);
   if (cols.includes("topic_key"))
     return;
-  d.run("DROP TRIGGER IF EXISTS obs_ai");
-  d.run("DROP TRIGGER IF EXISTS obs_ad");
-  d.run("DROP TRIGGER IF EXISTS obs_au");
-  d.run("DROP TABLE observations_fts");
-  d.run(`
-    CREATE VIRTUAL TABLE observations_fts
-    USING fts5(title, content, topic_key, content=observations, content_rowid=id)
-  `);
-  d.run("INSERT INTO observations_fts(observations_fts) VALUES('rebuild')");
+  d.run("BEGIN IMMEDIATE");
+  const colsLocked = d.query("PRAGMA table_info(observations_fts)").all().map((r) => r.name);
+  if (colsLocked.includes("topic_key")) {
+    d.run("ROLLBACK");
+    return;
+  }
+  try {
+    d.run("DROP TRIGGER IF EXISTS obs_ai");
+    d.run("DROP TRIGGER IF EXISTS obs_ad");
+    d.run("DROP TRIGGER IF EXISTS obs_au");
+    d.run("DROP TABLE IF EXISTS observations_fts");
+    d.run(`
+      CREATE VIRTUAL TABLE observations_fts
+      USING fts5(title, content, topic_key, content=observations, content_rowid=id)
+    `);
+    d.run("INSERT INTO observations_fts(observations_fts) VALUES('rebuild')");
+    d.run("COMMIT");
+  } catch (e) {
+    try {
+      d.run("ROLLBACK");
+    } catch {}
+    throw e;
+  }
 }
 function migrateFromEngram(d) {
   if (!existsSync(ENGRAM_DB))
@@ -28041,9 +28056,16 @@ Before ending a session or saying "done", call \`mem_session_summary\` with: Goa
 `;
 
 // mcp-server.ts
-getDb();
-var server = new McpServer({ name: "ecomono-memory", version: "1.0.0" }, { instructions: MEMORY_INSTRUCTIONS });
-for (const t of registry2) {
+var dbOk = true;
+try {
+  getDb();
+} catch (e) {
+  dbOk = false;
+  console.error("[ecomono-memory] storage unavailable, memory disabled:", e.message);
+}
+var server = new McpServer({ name: "ecomono-memory", version: "1.0.0" }, { instructions: dbOk ? MEMORY_INSTRUCTIONS : undefined });
+var tools = dbOk ? registry2 : registry2.filter((t) => t.name === "mem_doctor");
+for (const t of tools) {
   server.registerTool(t.name, { description: t.description, inputSchema: t.args }, async (args) => {
     try {
       const result = await t.handler(args);
