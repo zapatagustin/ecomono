@@ -62,25 +62,26 @@ function initSchema(d: Database) {
   d.run("CREATE INDEX IF NOT EXISTS idx_obs_created ON observations(project_id, created_at DESC)")
   d.run(`
     CREATE VIRTUAL TABLE IF NOT EXISTS observations_fts
-    USING fts5(title, content, content=observations, content_rowid=id)
+    USING fts5(title, content, topic_key, content=observations, content_rowid=id)
   `)
+  migrateFtsTopicKey(d)
   d.run(`
     CREATE TRIGGER IF NOT EXISTS obs_ai AFTER INSERT ON observations BEGIN
-      INSERT INTO observations_fts(rowid, title, content) VALUES (new.id, new.title, new.content);
+      INSERT INTO observations_fts(rowid, title, content, topic_key) VALUES (new.id, new.title, new.content, new.topic_key);
     END
   `)
   d.run(`
     CREATE TRIGGER IF NOT EXISTS obs_ad AFTER DELETE ON observations BEGIN
-      INSERT INTO observations_fts(observations_fts, rowid, title, content)
-      VALUES('delete', old.id, old.title, old.content);
+      INSERT INTO observations_fts(observations_fts, rowid, title, content, topic_key)
+      VALUES('delete', old.id, old.title, old.content, old.topic_key);
     END
   `)
   d.run(`
     CREATE TRIGGER IF NOT EXISTS obs_au AFTER UPDATE ON observations BEGIN
-      INSERT INTO observations_fts(observations_fts, rowid, title, content)
-      VALUES('delete', old.id, old.title, old.content);
-      INSERT INTO observations_fts(rowid, title, content)
-      VALUES (new.id, new.title, new.content);
+      INSERT INTO observations_fts(observations_fts, rowid, title, content, topic_key)
+      VALUES('delete', old.id, old.title, old.content, old.topic_key);
+      INSERT INTO observations_fts(rowid, title, content, topic_key)
+      VALUES (new.id, new.title, new.content, new.topic_key);
     END
   `)
   d.run(`
@@ -137,6 +138,32 @@ function initSchema(d: Database) {
 function addColumn(d: Database, table: string, col: string, type: string) {
   const cols = (d.query(`PRAGMA table_info(${table})`).all() as any[]).map((r) => r.name)
   if (!cols.includes(col)) d.run(`ALTER TABLE ${table} ADD COLUMN ${col} ${type}`)
+}
+
+// Widen observations_fts from (title, content) to (title, content, topic_key)
+// so search() and conflicts.ts can weight topic_key in bm25 (engram #526).
+// FTS5 virtual tables can't ALTER-add a column, so this drops and recreates
+// it — same idempotency pattern as addColumn(): detect the old shape via
+// PRAGMA table_info (2 columns, no topic_key) before touching anything. A
+// fresh DB's CREATE VIRTUAL TABLE above already made the 3-column shape, so
+// table_info reports 3 and this is a no-op. The triggers are dropped and
+// recreated by name (not IF NOT EXISTS) because they're on the observations
+// table, not the fts table, so they'd otherwise survive stale — still
+// inserting only (title, content) — even after the table itself is widened.
+function migrateFtsTopicKey(d: Database) {
+  const cols = (d.query("PRAGMA table_info(observations_fts)").all() as any[]).map((r) => r.name)
+  if (cols.includes("topic_key")) return
+  d.run("DROP TRIGGER IF EXISTS obs_ai")
+  d.run("DROP TRIGGER IF EXISTS obs_ad")
+  d.run("DROP TRIGGER IF EXISTS obs_au")
+  d.run("DROP TABLE observations_fts")
+  d.run(`
+    CREATE VIRTUAL TABLE observations_fts
+    USING fts5(title, content, topic_key, content=observations, content_rowid=id)
+  `)
+  // Reindex every existing row into the widened table (external-content FTS5
+  // rebuild command — see https://sqlite.org/fts5.html#the_rebuild_command).
+  d.run("INSERT INTO observations_fts(observations_fts) VALUES('rebuild')")
 }
 
 // One-time import from a legacy Go-engram DB. Engram denormalizes (a `project`

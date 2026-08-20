@@ -76,8 +76,12 @@ function findCandidates(newId: number, project: string, title: string, content: 
   const terms = words.slice(0, 12).map((t) => `"${t.replace(/"/g, '""')}"`).join(" OR ")
   if (terms) {
     try {
+      // topic_key weighted 0.0: signal 2 above already scores an exact topic_key
+      // match at a fixed 0.85 confidence, so letting bm25 also rank on it would
+      // double-count the same evidence. title/content keep the unweighted
+      // default (1.0, 1.0) this call had before the schema widened.
       const rows = db.query(
-        "SELECT o.id, o.title, bm25(observations_fts) AS score FROM observations o JOIN observations_fts ON o.id=observations_fts.rowid" +
+        "SELECT o.id, o.title, bm25(observations_fts, 1.0, 1.0, 0.0) AS score FROM observations o JOIN observations_fts ON o.id=observations_fts.rowid" +
         " WHERE observations_fts MATCH ? AND o.project_id=? AND o.state='active' AND o.id!=? ORDER BY score LIMIT 5"
       ).all(terms, project, newId) as any[]
       for (const r of rows) {

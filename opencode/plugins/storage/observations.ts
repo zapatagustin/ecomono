@@ -104,15 +104,14 @@ export function search(opts: {
     params.push(opts.scope)
   }
   // Weighted relevance instead of plain recency. Weights are positional and must
-  // match observations_fts's declared column order (title, content) exactly — it
-  // does not index topic_key, so that column can't be weighted here without a
-  // schema change. bm25() is lower-is-better, so no DESC. bm25 ties routinely
+  // match observations_fts's declared column order (title, content, topic_key)
+  // exactly. bm25() is lower-is-better, so no DESC. bm25 ties routinely
   // (identical or near-identical docs score identically), and without a
   // tie-break the order under LIMIT becomes query-plan-dependent — so newest
   // wins ties, matching the old (pre-bm25) recency-first expectation.
   // created_at has only second granularity, so a final o.id DESC breaks ties
   // that also share a clock second.
-  sql += " ORDER BY bm25(observations_fts, 5.0, 1.0), o.created_at DESC, o.id DESC LIMIT ?"
+  sql += " ORDER BY bm25(observations_fts, 5.0, 1.0, 3.0), o.created_at DESC, o.id DESC LIMIT ?"
   params.push(limit)
 
   return db.query(sql).all(...params) as any[]

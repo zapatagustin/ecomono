@@ -27332,25 +27332,26 @@ function initSchema(d) {
   d.run("CREATE INDEX IF NOT EXISTS idx_obs_created ON observations(project_id, created_at DESC)");
   d.run(`
     CREATE VIRTUAL TABLE IF NOT EXISTS observations_fts
-    USING fts5(title, content, content=observations, content_rowid=id)
+    USING fts5(title, content, topic_key, content=observations, content_rowid=id)
   `);
+  migrateFtsTopicKey(d);
   d.run(`
     CREATE TRIGGER IF NOT EXISTS obs_ai AFTER INSERT ON observations BEGIN
-      INSERT INTO observations_fts(rowid, title, content) VALUES (new.id, new.title, new.content);
+      INSERT INTO observations_fts(rowid, title, content, topic_key) VALUES (new.id, new.title, new.content, new.topic_key);
     END
   `);
   d.run(`
     CREATE TRIGGER IF NOT EXISTS obs_ad AFTER DELETE ON observations BEGIN
-      INSERT INTO observations_fts(observations_fts, rowid, title, content)
-      VALUES('delete', old.id, old.title, old.content);
+      INSERT INTO observations_fts(observations_fts, rowid, title, content, topic_key)
+      VALUES('delete', old.id, old.title, old.content, old.topic_key);
     END
   `);
   d.run(`
     CREATE TRIGGER IF NOT EXISTS obs_au AFTER UPDATE ON observations BEGIN
-      INSERT INTO observations_fts(observations_fts, rowid, title, content)
-      VALUES('delete', old.id, old.title, old.content);
-      INSERT INTO observations_fts(rowid, title, content)
-      VALUES (new.id, new.title, new.content);
+      INSERT INTO observations_fts(observations_fts, rowid, title, content, topic_key)
+      VALUES('delete', old.id, old.title, old.content, old.topic_key);
+      INSERT INTO observations_fts(rowid, title, content, topic_key)
+      VALUES (new.id, new.title, new.content, new.topic_key);
     END
   `);
   d.run(`
@@ -27403,6 +27404,20 @@ function addColumn(d, table, col, type) {
   const cols = d.query(`PRAGMA table_info(${table})`).all().map((r) => r.name);
   if (!cols.includes(col))
     d.run(`ALTER TABLE ${table} ADD COLUMN ${col} ${type}`);
+}
+function migrateFtsTopicKey(d) {
+  const cols = d.query("PRAGMA table_info(observations_fts)").all().map((r) => r.name);
+  if (cols.includes("topic_key"))
+    return;
+  d.run("DROP TRIGGER IF EXISTS obs_ai");
+  d.run("DROP TRIGGER IF EXISTS obs_ad");
+  d.run("DROP TRIGGER IF EXISTS obs_au");
+  d.run("DROP TABLE observations_fts");
+  d.run(`
+    CREATE VIRTUAL TABLE observations_fts
+    USING fts5(title, content, topic_key, content=observations, content_rowid=id)
+  `);
+  d.run("INSERT INTO observations_fts(observations_fts) VALUES('rebuild')");
 }
 function migrateFromEngram(d) {
   if (!existsSync(ENGRAM_DB))
@@ -27496,7 +27511,7 @@ function search(opts) {
     sql += " AND o.scope = ?";
     params.push(opts.scope);
   }
-  sql += " ORDER BY bm25(observations_fts, 5.0, 1.0), o.created_at DESC, o.id DESC LIMIT ?";
+  sql += " ORDER BY bm25(observations_fts, 5.0, 1.0, 3.0), o.created_at DESC, o.id DESC LIMIT ?";
   params.push(limit);
   return db2.query(sql).all(...params);
 }
@@ -27687,7 +27702,7 @@ function findCandidates(newId, project, title, content, topicKey, hash2) {
   const terms = words.slice(0, 12).map((t) => `"${t.replace(/"/g, '""')}"`).join(" OR ");
   if (terms) {
     try {
-      const rows = db2.query("SELECT o.id, o.title, bm25(observations_fts) AS score FROM observations o JOIN observations_fts ON o.id=observations_fts.rowid" + " WHERE observations_fts MATCH ? AND o.project_id=? AND o.state='active' AND o.id!=? ORDER BY score LIMIT 5").all(terms, project, newId);
+      const rows = db2.query("SELECT o.id, o.title, bm25(observations_fts, 1.0, 1.0, 0.0) AS score FROM observations o JOIN observations_fts ON o.id=observations_fts.rowid" + " WHERE observations_fts MATCH ? AND o.project_id=? AND o.state='active' AND o.id!=? ORDER BY score LIMIT 5").all(terms, project, newId);
       for (const r of rows) {
         if (r.score > FTS_MIN_SCORE)
           continue;

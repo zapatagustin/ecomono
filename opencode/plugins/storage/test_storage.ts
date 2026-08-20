@@ -35,6 +35,28 @@ const contentHit = Obs.save({ title: "unrelated title", content: "mentions widge
 const ranked = Obs.search({ query: "widget", project: "rankproj" })
 assert(ranked.length === 2 && ranked[0].id === titleHit.id && ranked[1].id === contentHit.id, "title match ranks above content-only match")
 
+// --- topic_key indexed: a term appearing ONLY in topic_key is findable ---
+const topicOnlyMatch = Obs.save({ title: "generic title", content: "generic body", topic_key: "quibblewhatsit-key", project: "topickeyproj" })!
+assert(Obs.search({ query: "quibblewhatsit", project: "topickeyproj" }).length === 1, "topic_key-only term is findable via search")
+
+// --- topic_key weighting: title(5.0) ranks above topic_key(3.0), which ranks above content-only(1.0) ---
+const titleHit2 = Obs.save({ title: "sprocket rollout plan", content: "unrelated body", project: "topicrank" })!
+const topicHit2 = Obs.save({ title: "unrelated title", content: "unrelated body", topic_key: "sprocket-part", project: "topicrank" })!
+const contentHit2 = Obs.save({ title: "unrelated title two", content: "mentions sprocket only in the body", project: "topicrank" })!
+const rankedByTopic = Obs.search({ query: "sprocket", project: "topicrank" })
+assert(
+  rankedByTopic.length === 3 &&
+  rankedByTopic[0].id === titleHit2.id &&
+  rankedByTopic[1].id === topicHit2.id &&
+  rankedByTopic[2].id === contentHit2.id,
+  "title match ranks above topic_key match, which ranks above content-only match"
+)
+
+// --- NULL topic_key rows still save/search fine ---
+const nullTopic = Obs.save({ title: "no topic key gremlin", content: "gremlin body text", project: "topicrank" })!
+assert(Obs.getObservation(nullTopic.id)!.topic_key == null, "topic_key defaults to null when omitted")
+assert(Obs.search({ query: "gremlin", project: "topicrank" }).some((r) => r.id === nullTopic.id), "row with NULL topic_key still searchable by title/content")
+
 // --- bm25 ties break by newest id when they also share a clock second ---
 const tieA = Obs.save({ title: "gizmo report", content: "gizmo report", project: "tieproj" })!
 const tieB = Obs.save({ title: "gizmo report", content: "gizmo report", project: "tieproj" })!
