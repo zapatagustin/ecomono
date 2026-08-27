@@ -5,12 +5,74 @@ from pathlib import Path
 
 URL_REGEX = re.compile(r"https?://[^\s)]+")
 FENCE_OPEN_REGEX = re.compile(r"^(\s{0,3})(`{3,}|~{3,})(.*)$")
-HEADING_REGEX = re.compile(r"^(#{1,6})\s+(.*)", re.MULTILINE)
+# Any indent, unlike FENCE_OPEN_REGEX above — used only to blank stray fence-marker
+# lines left over after real fence extraction (see extract_inline_codes), never to
+# extract blocks. Widening FENCE_OPEN_REGEX itself would make a lone indented ```
+# shown in prose swallow forward to the next real fence's close.
+FENCE_MARKER_LINE_REGEX = re.compile(r"^\s*(?:`{3,}|~{3,})[^`~]*$")
+# ecomono: ceiling — ATX headings only, tolerating the CommonMark 0-3 space
+# margin (same margin FENCE_OPEN_REGEX already tolerates). Two shapes are
+# still invisible to this regex AND to compress.HEADING_LINE_REGEX (the
+# masker), so the two sides still agree and no false validation error
+# results — but text inside either shape can be silently reworded by
+# compression with validation reporting clean: Setext headings ("Title\n===")
+# and blockquote-nested ATX ("> # Title"). Zero occurrences in this repo's
+# docs as of writing. Upgrade path: add Setext underline detection plus an
+# optional blockquote prefix to BOTH this regex and compress.HEADING_LINE_REGEX,
+# changed together — an unpaired change reintroduces the masker/validator
+# mismatch this scope limit currently avoids.
+HEADING_REGEX = re.compile(r"^[ ]{0,3}(#{1,6})[ \t]+(.*)", re.MULTILINE)
 BULLET_REGEX = re.compile(r"^\s*[-*+]\s+", re.MULTILINE)
 
 # crude but effective path detection
 # Requires either a path prefix (./ ../ / or drive letter) or a slash/backslash within the match
 PATH_REGEX = re.compile(r"(?:\./|\.\./|/|[A-Za-z]:\\)[\w\-/\\\.]+|[\w\-\.]+[/\\][\w\-/\\\.]+")
+
+# The bare `word/word` alternative above also catches date-shaped tokens
+# ("2024/01/15") and slash idioms that aren't paths at all ("and/or", "he/she",
+# "before/during/after"). Every PATH_REGEX match contains a slash/backslash (a
+# prefix requires one, and the bare-word alternative requires the separator),
+# so _is_pathlike below only needs to carve those two non-path shapes back out.
+# ecomono: ceiling — this also demotes a genuinely path-shaped numeric-separator
+# token to a warning whenever PATH_REGEX's slash requirement is met, e.g. a CIDR
+# block ("192.168.1.1/24") or a digit-led token that only looks like a date
+# ("2024/01.15"); a bare "192.168.1.1" or "1.2.3" never reaches here since
+# PATH_REGEX requires a slash. A letter-led token like "src/1.2.3" is unaffected —
+# DATE_SHAPED_REGEX requires digit-led, so it still errors as a real path.
+# Accepted tradeoff, same error-biased reasoning as IDIOM_STOPLIST/DIGITS_REGEX
+# below. Upgrade path: a filesystem existence check (`Path(s).exists()`
+# relative to repo root).
+DATE_SHAPED_REGEX = re.compile(r"^\d+[/.\-]\d+(?:[/.\-]\d+)+$")
+
+# ecomono: this stoplist is a hand-picked set of the "word/word" prose idioms
+# this skill's own docs and tests use (and/or, he/she, before/during/after,
+# read/write/execute) — not a dictionary lookup. A term outside it defaults
+# to pathlike (the error-biased side: a lost real path silently demoted to a
+# warning is worse than a noisy false positive on an unlisted idiom).
+# "24"/"7" used to live here for the "24/7" idiom, but every-segment-numeric
+# is now its own carve-out in _is_pathlike (see DIGITS_REGEX below), which
+# subsumes them. Upgrade path: replace with a filesystem existence check
+# (`Path(s).exists()` relative to repo root) if the stoplist keeps needing
+# tuning.
+IDIOM_STOPLIST = frozenset({
+    "and", "or", "he", "she", "they", "s",  # s/he
+    "either", "neither", "yes", "no",
+    "on", "off", "true", "false", "pass", "fail", "win", "lose",
+    "before", "during", "after", "read", "write", "execute",
+    "input", "output", "this", "that", "if", "when",
+})
+
+# Every segment pure digits ("3/15", "50/50", "1/2", "24/7") — a real path
+# segment is essentially never a bare integer. This subsumes DATE_SHAPED_REGEX
+# for the common case, but DATE_SHAPED_REGEX still catches a date where one
+# segment mixes separators after PATH_REGEX's own split (e.g. "2024/01.15"
+# splits on "/" into "2024" and "01.15", the latter not pure digits), so both
+# checks stay.
+# ecomono: ceiling — this also demotes a genuinely path-shaped all-numeric
+# reference ("2024/03", "123/456") to a warning; accepted tradeoff, same
+# error-biased reasoning as IDIOM_STOPLIST above. Upgrade path: a filesystem
+# existence check (`Path(s).exists()` relative to repo root).
+DIGITS_REGEX = re.compile(r"^\d+$")
 
 
 class ValidationResult:
@@ -181,8 +243,24 @@ def count_bullets(text):
 
 
 def extract_inline_codes(text):
-    text_without_fences = re.sub(r"^```[\s\S]*?^```", "", text, flags=re.MULTILINE)
-    text_without_fences = re.sub(r"^~~~[\s\S]*?^~~~", "", text_without_fences, flags=re.MULTILINE)
+    """Inline code spans, with fenced regions blanked out first.
+
+    Reuses _blank_fenced_regions — the same CommonMark-correct fence matcher
+    extract_code_blocks relies on — instead of the standalone `^```...^````
+    regex this used to carry: that hardcoded pattern only matched an
+    unindented, exactly-tripled-backtick fence at column 0, so any indented
+    or tilde fence slipped through untouched and leaked its marker backticks
+    into the pairing below, corrupting counts for the rest of the document.
+    FENCE_MARKER_LINE_REGEX then blanks any fence-marker-shaped line still
+    left over (e.g. one indented past the 3-space CommonMark margin, so it
+    isn't a real fence at all) for the same reason — a stray marker line's
+    odd backtick count would otherwise re-pair with real inline code later
+    in the file.
+    """
+    lines = _blank_fenced_regions(text)
+    text_without_fences = "\n".join(
+        "" if FENCE_MARKER_LINE_REGEX.match(line) else line for line in lines
+    )
     return re.findall(r"`([^`]+)`", text_without_fences)
 
 
@@ -197,8 +275,15 @@ def validate_headings(orig, comp, result):
         result.add_warning(f"Heading count mismatch: {len(h1)} vs {len(h2)}")
         return
 
+    # A renamed or reordered heading changes its slug, breaking every
+    # in-document anchor link pointing at it — data loss, not style, so this
+    # is an error rather than a warning.
+    # ecomono: an outright dropped/added heading (count mismatch above) stays
+    # a warning — that's a more visible structural change a reviewer already
+    # notices, and out of scope for this fix. Upgrade path: same escalation
+    # if that turns out to slip through review too.
     if h1 != h2:
-        result.add_warning("Heading text/order changed")
+        result.add_error("Heading text/order changed")
 
 
 def validate_code_blocks(orig, comp, result):
@@ -217,12 +302,55 @@ def validate_urls(orig, comp, result):
         result.add_error(f"URL mismatch: lost={u1 - u2}, added={u2 - u1}")
 
 
+def _is_pathlike(s):
+    """True if `s` should error (not just warn) when a reword drops it.
+
+    Every PATH_REGEX match already contains a slash/backslash. All trailing
+    `.`s are stripped first (a sentence-final match like "before/after." or
+    "2024/01/15.." carries one or more periods that belong to the sentence,
+    not the token — PATH_REGEX's char class admits consecutive periods, so
+    an ellipsis strips down to the real token instead of leaving a dangling
+    "." that would defeat the carve-outs below). Three shapes
+    among those matches carry no filesystem meaning and must not escalate to
+    an error: a date ("2024/01/15"), a token whose every slash-separated
+    segment is pure digits ("3/15", "50/50", "24/7" — a real path segment is
+    essentially never a bare integer), and a slash idiom whose every segment
+    is a common prose word ("and/or", "he/she", "before/during/after").
+    Everything else — including a bare two-segment reference like
+    "claude/hooks" that has no extension or path prefix — defaults to
+    pathlike, because a validator's silent false negative (a lost real path
+    demoted to a warning) is worse than a noisy false positive.
+    """
+    core = s.rstrip(".")
+    if DATE_SHAPED_REGEX.match(core):
+        return False
+    segments = re.split(r"[/\\]", core)
+    if segments and all(DIGITS_REGEX.match(seg) for seg in segments):
+        return False
+    if segments and all(seg.lower() in IDIOM_STOPLIST for seg in segments):
+        return False
+    return True
+
+
 def validate_paths(orig, comp, result):
     p1 = extract_paths(orig)
     p2 = extract_paths(comp)
 
-    if p1 != p2:
-        result.add_warning(f"Path mismatch: lost={p1 - p2}, added={p2 - p1}")
+    # A dropped path breaks a promised reference (SKILL.md/CLAUDE.md point
+    # readers at real files) — data loss, so it's an error, same severity as
+    # a lost URL or a lost inline code span. An added path is milder (prose
+    # legitimately gains a reference) and stays a warning. A lost match that
+    # doesn't look path-like (a slash idiom, not a path) stays a warning too.
+    lost = p1 - p2
+    added = p2 - p1
+    lost_errors = {p for p in lost if _is_pathlike(p)}
+    lost_warnings = lost - lost_errors
+    if lost_errors:
+        result.add_error(f"Path lost: {lost_errors}")
+    if lost_warnings:
+        result.add_warning(f"Path lost (low confidence): {lost_warnings}")
+    if added:
+        result.add_warning(f"Path added: {added}")
 
 
 def validate_bullets(orig, comp, result):

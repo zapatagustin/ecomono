@@ -53,11 +53,14 @@ function truncateWithToolBudget(text, toolName) {
   const omitted = lines.length - budget.headLines - budget.tailLines;
   const head = lines.slice(0, budget.headLines);
   const tail = lines.slice(lines.length - budget.tailLines);
+  // Same reasoning as truncateLongOutput below: only the synthesized lines
+  // need a \r appended — real lines already carry theirs from the split.
+  const cr = isCrlfDominant(text) ? "\r" : "";
   return [
     ...head,
-    "",
-    `[... ${omitted} lines omitted (${toolName} budget: ${budget.maxLines}) ...]`,
-    "",
+    cr,
+    `[... ${omitted} lines omitted (${toolName} budget: ${budget.maxLines}) ...]${cr}`,
+    cr,
     ...tail,
   ].join("\n");
 }
@@ -71,7 +74,29 @@ function stripAnsi(text) {
 
 /** Collapse 3+ consecutive blank lines into a single blank line. */
 function collapseBlankLines(text) {
-  return text.replace(/(\r?\n){3,}/g, "\n\n");
+  // Reuse the run's own matched line-ending style (g1) for the collapsed
+  // replacement instead of hardcoding "\n\n" — a hardcoded LF silently mixes
+  // bare-LF blank lines into an otherwise-CRLF document. No cross-run
+  // decision needed here: each run supplies its own style from the bytes
+  // already present at that spot.
+  // ecomono: ceiling — a mixed CRLF/LF blank run collapses to the LAST
+  // captured ending (g1 is the final iteration of the repeated group), not
+  // the dominant one across the run. Upgrade path: fall back to
+  // isCrlfDominant(text) when a run mixes styles instead of trusting g1.
+  return text.replace(/(\r\n|\n){3,}/g, (_m, g1) => g1 + g1);
+}
+
+/**
+ * Whether CRLF is this text's dominant line-ending style (majority vote: CRLF
+ * count * 2 > total newline count, since every CRLF also counts as an LF).
+ * Used only to pick the style for a synthesized line this file inserts —
+ * real content is never rewritten, so a minority style elsewhere is left
+ * exactly as found.
+ */
+function isCrlfDominant(text) {
+  const crlf = (text.match(/\r\n/g) ?? []).length;
+  const totalNewlines = (text.match(/\n/g) ?? []).length;
+  return crlf * 2 > totalNewlines;
 }
 
 /** Hard truncate to MAX_LINES with head+tail preservation. */
@@ -81,14 +106,26 @@ function truncateLongOutput(text) {
   const omitted = lines.length - HEAD_LINES - TAIL_LINES;
   const head = lines.slice(0, HEAD_LINES);
   const tail = lines.slice(lines.length - TAIL_LINES);
-  return [...head, "", `[... ${omitted} lines omitted (cave mode truncation) ...]`, "", ...tail].join("\n");
+  // Real lines already carry their own trailing \r (split("\n") leaves it in
+  // place) — only the synthesized separator/marker lines are new content, so
+  // only they need a \r appended to match the file's dominant style. Without
+  // this a CRLF file gets bare-LF lines spliced into the middle of it.
+  const cr = isCrlfDominant(text) ? "\r" : "";
+  return [...head, cr, `[... ${omitted} lines omitted (cave mode truncation) ...]${cr}`, cr, ...tail].join("\n");
 }
 
 /** Head+tail clamp by character count — the safety net for single-line blobs. */
 function truncateByChars(text) {
   if (text.length <= MAX_CHARS) return text;
   const omitted = text.length - HEAD_CHARS - TAIL_CHARS;
-  return `${text.slice(0, HEAD_CHARS)}\n\n[... ${omitted} chars omitted (cave mode char cap) ...]\n\n${text.slice(text.length - TAIL_CHARS)}`;
+  // Same reasoning as truncateLongOutput/truncateWithToolBudget: a hardcoded
+  // \n\n splices bare-LF separators into an otherwise-CRLF blob.
+  // ecomono: ceiling — raw char slicing can split a CRLF pair at the
+  // boundary (the cut lands between \r and \n), leaving a bare \r or \n
+  // dangling at the edge. Upgrade path: nudge the HEAD_CHARS/TAIL_CHARS
+  // slice points to the nearest line boundary.
+  const nl = isCrlfDominant(text) ? "\r\n\r\n" : "\n\n";
+  return `${text.slice(0, HEAD_CHARS)}${nl}[... ${omitted} chars omitted (cave mode char cap) ...]${nl}${text.slice(text.length - TAIL_CHARS)}`;
 }
 
 /** Full general pipeline: strip ANSI, collapse blanks, hard truncate by lines then chars. */
@@ -480,6 +517,45 @@ function selftest() {
   const found = truncated.match(/\[\.\.\. \d+ lines omitted \(bash budget: 80\) \.\.\.\]/);
   assert.ok(found, "expected a budget-omission marker in truncated output");
   assert.strictEqual(measureOverheadChars(truncated), found[0].length);
+
+  // Line-ending bug: the synthesized marker/blank lines used to hardcode a
+  // bare "\n" join, splicing bare-LF lines into an otherwise-CRLF document.
+  // In a CRLF-dominant input, the blank separators and the marker line
+  // itself must all carry \r, matching the surrounding real lines.
+  const crlfLongOutput = Array.from({ length: 200 }, (_, i) => `line ${i}`).join("\r\n");
+  const crlfTruncated = truncateWithToolBudget(crlfLongOutput, "bash");
+  assert.ok(
+    crlfTruncated.includes("\r\n\r\n[... 120 lines omitted (bash budget: 80) ...]\r\n\r\n"),
+    "expected the marker line and its blank separators to carry \\r in a CRLF-dominant document",
+  );
+  const crlfCollapsed = collapseBlankLines("a\r\n\r\n\r\n\r\nb");
+  assert.strictEqual(
+    crlfCollapsed,
+    "a\r\n\r\nb",
+    "expected collapseBlankLines to reuse the run's own CRLF style, not hardcode LF",
+  );
+
+  // Same bug, truncateLongOutput: the only one of the four CRLF-fixed
+  // functions with no coverage until now.
+  const crlfLongOutputHard = Array.from({ length: 700 }, (_, i) => `line ${i}`).join("\r\n");
+  const crlfTruncatedHard = truncateLongOutput(crlfLongOutputHard);
+  assert.ok(crlfTruncatedHard.length < crlfLongOutputHard.length, "hard truncation must shrink CRLF output");
+  assert.ok(
+    crlfTruncatedHard.includes("\r\n\r\n[... 400 lines omitted (cave mode truncation) ...]\r\n\r\n"),
+    "CRLF-dominant input: cave-mode truncation marker and its blank separators carry \\r",
+  );
+
+  // Same bug, truncateByChars: a CRLF-dominant blob over MAX_CHARS used to get
+  // the synthesized "[... N chars omitted ...]" marker spliced with a bare
+  // "\n\n" separator either side, even though every real newline around it is
+  // "\r\n".
+  const crlfCharsInput = Array.from({ length: 2000 }, (_, i) => `line ${i}`).join("\r\n");
+  const crlfCharsTruncated = truncateByChars(crlfCharsInput);
+  assert.ok(crlfCharsTruncated.length < crlfCharsInput.length, "char-cap truncation must shrink output");
+  assert.ok(
+    /\r\n\r\n\[\.\.\. \d+ chars omitted \(cave mode char cap\) \.\.\.\]\r\n\r\n/.test(crlfCharsTruncated),
+    "expected the chars marker and its blank separators to carry \\r in a CRLF-dominant document",
+  );
 
   // gross/net honesty: net must equal gross minus the measured overhead, and
   // (net == gross) exactly when the hook added no markers at all.

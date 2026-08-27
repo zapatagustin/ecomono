@@ -237,8 +237,9 @@ REDUNDANT_VERBS = [
 # Protected-region masking
 # ---------------------------------------------------------------------------
 # The rule regexes above would otherwise rewrite text inside fenced code
-# blocks, inline code, and URLs (e.g. "validate.py" -> "check.py", stripping
-# "the " from a URL), corrupting them and failing validation. We mask those
+# blocks, indented code, headings, inline code, and URLs (e.g. "validate.py" ->
+# "check.py", stripping "the " from a URL, or "# Just Getting Started" -> "#
+# Getting Started"), corrupting them and failing validation. We mask those
 # spans to opaque placeholders, run the rules on prose only, then restore
 # verbatim. Placeholders use Private-Use Unicode delimiters (category Co, not
 # matched by \w or \s) around a plain integer index, so no rule can touch them.
@@ -249,6 +250,15 @@ REDUNDANT_VERBS = [
 FENCE_OPEN_REGEX = re.compile(r"^(\s{0,3})(`{3,}|~{3,})(.*)$")
 INLINE_CODE_REGEX = re.compile(r"`[^`\n]+`")
 URL_REGEX = re.compile(r"https?://[^\s)]+")
+# ATX heading lines. Masked whole (marker + text) so a filler word in a heading
+# ("# Just Getting Started") can't be rewritten: validate.validate_headings
+# errors on any same-count heading text change, so a rewritten heading reverted
+# the whole compression. Mirrors validate.HEADING_REGEX's 0-3 space CommonMark
+# margin (same margin FENCE_OPEN_REGEX already tolerates), `#{1,6}` + required space.
+# ecomono: ceiling on scope (ATX-only, Setext/blockquote-nested unhandled) documented
+# once, at validate.HEADING_REGEX — see that comment for the two unhandled shapes and
+# the upgrade path.
+HEADING_LINE_REGEX = re.compile(r"^[ ]{0,3}#{1,6}[ \t]+.*$", re.MULTILINE)
 
 _PH_OPEN = ""
 _PH_CLOSE = ""
@@ -395,11 +405,12 @@ def _mask_regex(text: str, pattern: re.Pattern, stash: list) -> str:
 
 
 def protect(text: str):
-    """Mask code blocks, inline code, and URLs. Returns (masked_text, stash)."""
+    """Mask code blocks, headings, inline code, and URLs. Returns (masked_text, stash)."""
     stash = _Stash()
     stash.left, stash.right = _sentinels(text)
     text = _mask_fenced_blocks(text, stash)    # blocks first (may hold backticks/URLs)
     text = _mask_indented_blocks(text, stash)  # then indented code, same reason
+    text = _mask_regex(text, HEADING_LINE_REGEX, stash)
     text = _mask_regex(text, INLINE_CODE_REGEX, stash)
     text = _mask_regex(text, URL_REGEX, stash)
     return text, stash

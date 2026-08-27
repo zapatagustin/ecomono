@@ -113,9 +113,10 @@ After each compression, `scripts/validate.py` checks deterministically:
 
 | Check | Pass condition |
 |-------|---------------|
-| **Headings** | Warning if count or text changed (added headings tolerated) |
+| **Headings** | Count mismatch: warning. Same count but text/order changed: error |
 | **Code blocks** | Exact match — content, fence chars, line order |
 | **URLs** | Set equality — none lost, none added |
+| **Paths** | Lost path-like match: error. Lost idiom/date/numeric match (e.g. "and/or", "2024/01/15", "3/15"): warning. Added path: warning |
 | **Inline codes** | No backtick content lost |
 | **Bullets** | Count within 15% of original |
 

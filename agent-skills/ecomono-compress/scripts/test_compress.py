@@ -79,10 +79,11 @@ DOC = (
 masked, stash = C.protect(DOC)
 # Round-trip is the whole point of masking: nothing may be lost or reordered.
 check("compress", "protect/restore round-trip", C.restore(masked, stash), DOC)
-# Blocks are stashed before inline code and URLs, so a URL inside a fence is
-# captured once (as part of the block) and not double-stashed.
+# Blocks are stashed before headings, inline code and URLs, so a URL inside a
+# fence is captured once (as part of the block) and not double-stashed.
 check("compress", "stash order", stash, [
     "```py\nimport os\nthe utilize implement\n```",
+    "# T",
     "`validate.py`",
     "https://ex.com/the/path?a=b",
 ])
@@ -140,6 +141,15 @@ for label, src, want in [
 # Markdown-significant indentation survives: list markers keep their indent and
 # blockquotes keep their marker, because the validator counts bullets and would
 # not notice a flattened nested list.
+# --- Headings are protected from fluff removal, like code/URLs and paths ---
+# validate_headings errors on any same-count heading text/order change (it
+# breaks in-document anchor links), so a filler word rewritten out of a
+# heading used to revert the whole compression via __main__'s retry-then-
+# restore loop.
+check("compress", "heading with filler word untouched",
+      C.rule_compress("# Just Getting Started\n\nBody.\n"),
+      "# Just Getting Started\n\nBody.")
+
 check("compress", "list indent preserved",
       C.rule_compress("1. the first item\n2) the second\n  - nested   the thing\n> quote   the thing"),
       "1. first item\n2) second\n  - nested thing\n> quote thing")
@@ -259,6 +269,16 @@ check("validate", "inline code skips tilde fences",
 check("validate", "inline code across two fences",
       V.extract_inline_codes("```\n`h1`\n```\nmid `keep` mid\n```\n`h2`\n```\ntail `keep2`"),
       ["keep", "keep2"])
+# A fence indented within CommonMark's 0-3 space margin is still a real fence
+# (extract_code_blocks/_blank_fenced_regions already treat it as one). The old
+# fence-stripper here used a standalone `^```...^```` regex anchored to column
+# 0, so an indented fence's markers survived and re-paired with real inline
+# code elsewhere in the file — corrupting the whole document's count, not just
+# missing the one block. Confirmed on the pre-fix code: it returned
+# ['x', '\n ', '\n ', '\n\nc '] instead of ['x', 'y'].
+check("validate", "inline code skips indented fence (leaked markers)",
+      V.extract_inline_codes("a `x` b\n\n ```\n `hidden`\n ```\n\nc `y` d"),
+      ["x", "y"])
 
 # ===========================================================================
 # 5. Validators — accept AND reject, and error vs warning severity
@@ -281,15 +301,56 @@ VALIDATOR_CASES = [
      "https://b.com/y then https://a.com/x", (True, 0, 0)),
     ("url lost", V.validate_urls, "https://a.com/x", "gone", (False, 1, 0)),
     ("url invented", V.validate_urls, "text", "https://evil.com/x", (False, 1, 0)),
-    # Headings: only a warning, and a count mismatch short-circuits so the
-    # text-changed warning is not also emitted.
+    # Headings: a count mismatch (heading dropped/added outright) short-circuits
+    # as a warning, before the text/order comparison runs. A same-count rename
+    # or reorder is an error — it silently breaks in-document anchor links
+    # (same text -> same slug), so it must not validate clean.
     ("headings identical", V.validate_headings, "# A\n## B", "# A\n## B", (True, 0, 0)),
     ("heading dropped", V.validate_headings, "# A\n## B", "# A", (True, 0, 1)),
-    ("heading retitled", V.validate_headings, "# A\n## B", "# A\n## C", (True, 0, 1)),
-    ("heading level changed", V.validate_headings, "# A\n## B", "# A\n### B", (True, 0, 1)),
-    # Paths: warning only, because prose legitimately rephrases around a path.
+    ("heading retitled", V.validate_headings, "# A\n## B", "# A\n## C", (False, 1, 0)),
+    ("heading level changed", V.validate_headings, "# A\n## B", "# A\n### B", (False, 1, 0)),
+    # Paths: a lost path is an error (a promised file reference vanished);
+    # an added one stays a warning (prose legitimately gains a reference).
     ("path preserved", V.validate_paths, "src/main.py", "see src/main.py", (True, 0, 0)),
-    ("path lost", V.validate_paths, "src/main.py", "nothing", (True, 0, 1)),
+    ("path lost", V.validate_paths, "src/main.py", "nothing", (False, 1, 0)),
+    ("path added", V.validate_paths, "prose", "see src/main.py", (True, 0, 1)),
+    # A real lost path — 2+ slash levels and an extension — is still an error.
+    ("real path lost", V.validate_paths, "see src/utils/helper.py for it", "see nothing for it", (False, 1, 0)),
+    # Slash idioms match the bare word/word alternative but aren't paths, so
+    # losing them on a reword ("and/or" -> "or") stays a warning, not an error.
+    ("slash idiom lost is a warning, not an error", V.validate_paths,
+     "and/or he/she a couple times, before/after lunch",
+     "or she a couple times, after lunch", (True, 0, 1)),
+    # A bare two-segment reference with no extension/prefix is still a real
+    # path (the repo's own doc convention, e.g. "claude/hooks") — must error,
+    # not warn, when lost.
+    ("extensionless directory path lost is an error", V.validate_paths,
+     "see claude/hooks for it", "see nothing for it", (False, 1, 0)),
+    ("bare slash idiom lost is a warning", V.validate_paths,
+     "and/or", "or", (True, 0, 1)),
+    ("date-shaped match lost is a warning, not an error", V.validate_paths,
+     "logged on 2024/01/15 today", "logged today", (True, 0, 1)),
+    ("three-way idiom lost is a warning, not an error", V.validate_paths,
+     "run before/during/after the change", "run the change", (True, 0, 1)),
+    # Sentence-final period: PATH_REGEX's bare-word alternative swallows the
+    # trailing "." into the match, so the carve-outs must still fire on it.
+    ("sentence-final idiom lost is a warning, not an error", V.validate_paths,
+     "This applies before/after.", "This applies.", (True, 0, 1)),
+    ("sentence-final date-shaped match lost is a warning, not an error", V.validate_paths,
+     "It happened on 2024/01/15.", "It happened.", (True, 0, 1)),
+    # Ellipsis: PATH_REGEX's char class admits consecutive periods, so a
+    # sentence-final "..." must strip down to the real token just like a
+    # single "." does — the idiom stays a warning, not an error.
+    ("sentence-final ellipsis idiom lost is a warning, not an error", V.validate_paths,
+     "This applies before/after...", "This applies.", (True, 0, 1)),
+    # Two-segment bare numeric tokens ("3/15", "50/50", "1/2") — a real path
+    # segment is essentially never a bare integer, so these stay warnings too.
+    ("two-segment numeric match lost is a warning, not an error", V.validate_paths,
+     "the score was 3/15 today", "the score was low today", (True, 0, 1)),
+    ("fifty-fifty numeric match lost is a warning, not an error", V.validate_paths,
+     "odds are 50/50 here", "odds are even here", (True, 0, 1)),
+    ("one-half numeric match lost is a warning, not an error", V.validate_paths,
+     "roughly 1/2 of them", "roughly half of them", (True, 0, 1)),
     # Inline code: losing one is an error, inventing one is only a warning.
     ("inline code preserved", V.validate_inline_codes, "`a` `b`", "`b` `a`", (True, 0, 0)),
     ("inline code lost", V.validate_inline_codes, "`a` `b`", "`a`", (False, 1, 0)),
@@ -299,6 +360,26 @@ VALIDATOR_CASES = [
 ]
 for label, fn, orig, comp, want in VALIDATOR_CASES:
     check("validate", label, verdict(fn, orig, comp), want)
+
+# _is_pathlike carve-outs, direct: sentence-final period must not defeat the
+# idiom/date carve-outs, two-segment bare-numeric tokens must carve out too,
+# and real paths (with or without a trailing period) must still error.
+for label, s, want in [
+    ("sentence-final idiom", "before/after.", False),
+    ("sentence-final ellipsis idiom", "before/after...", False),
+    ("sentence-final date", "2024/01/15.", False),
+    ("sentence-final ellipsis date-ish", "2024/01/15..", False),
+    ("two-segment numeric", "3/15", False),
+    ("fifty-fifty numeric", "50/50", False),
+    ("one-half numeric", "1/2", False),
+    ("real extensionless path unaffected", "claude/hooks", True),
+    ("real path with extension unaffected", "src/utils/helper.py", True),
+    # rstrip(".") only strips trailing periods, not the extension's own dot —
+    # a real path ending a sentence must still error, not fall through as if
+    # the extension itself had been stripped away.
+    ("real path with sentence-final period", "src/utils/helper.py.", True),
+]:
+    check("validate", f"_is_pathlike {label}", V._is_pathlike(s), want)
 
 # Bullet drift threshold is 15%, and zero bullets in the original disables the
 # check entirely (no ZeroDivisionError). 10 -> 9 is 10% (pass), 10 -> 8 is 20%.
@@ -337,6 +418,45 @@ _c = write("real_comp.md", C.rule_compress(REAL))
 _r = V.validate(_o, _c)
 check("validate", "real doc validates clean", (_r.is_valid, _r.errors, _r.warnings), (True, [], []))
 truthy("validate", "real doc actually shrank", len(_c.read_text()) < len(REAL))
+
+# A heading containing a filler word must still compress and validate clean,
+# with the heading itself byte-identical (the bug: it used to get rewritten,
+# fail validate_headings, and revert the whole file).
+HEADING_DOC = "# Just Getting Started\n\nYou should really utilize this guide.\n"
+_ho = write("heading_orig.md", HEADING_DOC)
+_hc = write("heading_comp.md", C.rule_compress(HEADING_DOC))
+check("validate", "heading with filler byte-identical after compression",
+      _hc.read_text().splitlines()[0], "# Just Getting Started")
+_hr = V.validate(_ho, _hc)
+check("validate", "heading-with-filler doc validates clean", (_hr.is_valid, _hr.errors, _hr.warnings), (True, [], []))
+
+# A bare "#" (no title, nothing on the same line) must not absorb the next
+# paragraph as its title. HEADING_REGEX used to require `\s+` after the
+# hashes, which spans newlines, so a bare "#\n\n<paragraph>" captured the
+# paragraph as the heading text; the paragraph then got fluff-rewritten
+# (unprotected, since it wasn't recognized as heading text on the masking
+# side either) and validate_headings raised a hard error on the mismatch.
+BARE_HEADING_DOC = "#\n\nYou should really utilize this guide.\n"
+_bo = write("bare_heading_orig.md", BARE_HEADING_DOC)
+_bc = write("bare_heading_comp.md", C.rule_compress(BARE_HEADING_DOC))
+_br = V.validate(_bo, _bc)
+check("validate", "bare heading doc validates clean", (_br.is_valid, _br.errors, _br.warnings), (True, [], []))
+
+# An ATX heading indented 1-3 spaces is still CommonMark-valid. HEADING_REGEX
+# and HEADING_LINE_REGEX used to anchor at column 0 only, so this heading was
+# invisible to the masker (its filler word got rewritten) but visible to
+# extract_headings on the compressed side only, once compress._clean_line had
+# stripped the indent — a count mismatch (0 vs 1) that only warned, silently
+# masking a reworded heading. Both regexes now tolerate the 0-3 space margin,
+# and the whole indented line (indent + text) is masked as one unit, so the
+# indent and the filler word both survive untouched.
+INDENTED_HEADING_DOC = "  # Just Really Getting Started\n\nBody text.\n"
+_iho = write("indented_heading_orig.md", INDENTED_HEADING_DOC)
+_ihc = write("indented_heading_comp.md", C.rule_compress(INDENTED_HEADING_DOC))
+check("validate", "indented heading byte-identical after compression",
+      _ihc.read_text().splitlines()[0], "  # Just Really Getting Started")
+_ihr = V.validate(_iho, _ihc)
+check("validate", "indented heading doc validates clean", (_ihr.is_valid, _ihr.errors, _ihr.warnings), (True, [], []))
 
 # ===========================================================================
 # 6. detect — every class it claims, and one it must not claim
