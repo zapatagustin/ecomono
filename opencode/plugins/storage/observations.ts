@@ -50,6 +50,12 @@ export function save(opts: {
   const db = getDb()
   const project = opts.project || detectProject()
   const title = opts.title
+  // Admission boundary: an unlabeled entry is unsearchable and unreviewable, so
+  // reject before the row (and its FTS/judgment side effects) ever exist.
+  // Content stays unchecked on purpose — a title-only stub is an established,
+  // tested save shape (see tools.ts's nudge-reset test), unlike upstream engram
+  // where content was always mandatory.
+  if (!title || !title.trim()) throw new Error("observation title is required")
   const type = opts.type || "manual"
   const scope = opts.scope || "project"
   const content = opts.content || ""
@@ -130,6 +136,12 @@ export function getObservation(id: number): Observation | null {
 const UPDATABLE_COLUMNS = new Set(["title", "type", "scope", "content", "topic_key", "state", "review_after"])
 
 export function update(id: number, fields: Partial<Observation>): boolean {
+  // Same admission boundary as save(): an explicit blank/whitespace-only title
+  // is rejected before any UPDATE runs. `"title" in fields` (not truthiness)
+  // so an update that doesn't touch title at all is unaffected.
+  if ("title" in fields && (!fields.title || !String(fields.title).trim())) {
+    throw new Error("observation title is required")
+  }
   const db = getDb()
   const sets: string[] = []
   const params: any[] = []

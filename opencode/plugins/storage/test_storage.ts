@@ -188,5 +188,30 @@ assert(Obs.getObservation(nullClearObs.id)!.review_after !== null, "decision sta
 Obs.update(nullClearObs.id, { review_after: null })
 assert(Obs.getObservation(nullClearObs.id)!.review_after === null, "explicit null clears review_after")
 
+// --- admission boundary: blank/whitespace-only title is rejected before persistence (engram #767) ---
+const obsCountBefore = (db.query("SELECT COUNT(*) c FROM observations").get() as any).c
+assert.throws(() => Obs.save({ title: "   ", content: "orphaned content", project: "admissionproj" }),
+  /observation title is required/, "save() rejects a whitespace-only title")
+assert.throws(() => Obs.save({ title: "", content: "orphaned content", project: "admissionproj" }),
+  /observation title is required/, "save() rejects an empty title")
+const obsCountAfter = (db.query("SELECT COUNT(*) c FROM observations").get() as any).c
+assert(obsCountAfter === obsCountBefore, "rejected save() leaves no row behind")
+
+const updateTarget = Obs.save({ title: "update admission target", content: "why", project: "admissionproj" })!
+assert.throws(() => Obs.update(updateTarget.id, { title: "\t\n " }),
+  /observation title is required/, "update() rejects a whitespace-only title")
+assert(Obs.getObservation(updateTarget.id)!.title === "update admission target", "rejected update() leaves the title unchanged")
+
+// content stays optional by design (title-only stub, exercised by tools.ts's
+// nudge-reset test) — save() must NOT throw when content is omitted.
+assert.doesNotThrow(() => Obs.save({ title: "title-only stub stays valid", project: "admissionproj" }),
+  "save() still allows an omitted content")
+
+// --- admission boundary: blank/whitespace-only prompt content is rejected (engram #767) ---
+const promptCountBefore = (db.query("SELECT COUNT(*) c FROM prompts").get() as any).c
+assert.throws(() => Prompts.savePrompt("sess-1", "   "), /prompt content is required/, "savePrompt() rejects whitespace-only content")
+const promptCountAfter = (db.query("SELECT COUNT(*) c FROM prompts").get() as any).c
+assert(promptCountAfter === promptCountBefore, "rejected savePrompt() leaves no row behind")
+
 closeDb()
 console.log("✓ storage: all assertions passed")

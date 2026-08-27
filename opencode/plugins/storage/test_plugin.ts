@@ -34,6 +34,11 @@ assert(saved.id > 0, "mem_save round-trips to storage")
 const hits = JSON.parse(await hooks.tool.mem_search.execute({ query: "adapter wired" }))
 assert(hits.match_mode === "all" && hits.results.length === 1 && hits.results[0].id === saved.id, "mem_search via execute finds saved obs")
 
+// a handler throwing (blank-title admission guard) must not reject the execute()
+// call — same catch-and-report shape as the MCP adapter's tool wrapper.
+const errRaw = await hooks.tool.mem_save.execute({ title: "", content: "no title" })
+assert(typeof errRaw === "string" && errRaw.includes("observation title is required"), "execute catches handler throw and reports it")
+
 // system prompt injection
 const out: any = { system: [] }
 await hooks["experimental.chat.system.transform"]({} as any, out)

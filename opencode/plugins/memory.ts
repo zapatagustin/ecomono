@@ -69,8 +69,15 @@ export const MemoryPlugin: Plugin = async (input) => {
       args: t.args,
       execute: async (args: any) => {
         if (takesProject && args.project == null) args.project = project
-        const result = await t.handler(args)
-        return typeof result === "string" ? result : JSON.stringify(result)
+        try {
+          const result = await t.handler(args)
+          return typeof result === "string" ? result : JSON.stringify(result)
+        } catch (e) {
+          // Same catch-and-report shape as the MCP adapter (mcp-server.ts):
+          // a handler throwing (e.g. mem_save's blank-title admission guard)
+          // must not propagate an uncaught rejection out of the tool call.
+          return `error: ${(e as Error).message}`
+        }
       },
     }
   }

@@ -38,6 +38,14 @@ assert((call("mem_search", { query: "storage", project: "ecomono" }) as any).res
 assert((call("mem_pin", { id: saved.id }) as any).pinned, "mem_pin")
 assert((call("mem_unpin", { id: saved.id }) as any).unpinned, "mem_unpin")
 
+// --- admission boundary: mem_save/mem_update/mem_save_prompt reject blank fields (engram #767) ---
+assert.throws(() => call("mem_save", { title: " \t\n ", content: "x", project: "admissiontools" }),
+  /observation title is required/, "mem_save rejects a whitespace-only title")
+assert.throws(() => call("mem_update", { id: saved.id, title: "" }),
+  /observation title is required/, "mem_update rejects an empty title")
+assert.throws(() => call("mem_save_prompt", { session_id: "sess-admission", content: "  " }),
+  /prompt content is required/, "mem_save_prompt rejects whitespace-only content")
+
 assert((call("mem_timeline", { project: "ecomono" }) as any).observations.length === 1, "mem_timeline")
 assert((call("mem_stats", { project: "ecomono" }) as any).observations === 1, "mem_stats")
 assert((call("mem_suggest_topic_key", { title: "Auth Model!" }) as any).topic_key === "auth-model", "mem_suggest_topic_key")

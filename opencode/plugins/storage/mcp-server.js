@@ -27493,6 +27493,8 @@ function save(opts) {
   const db2 = getDb();
   const project = opts.project || detectProject();
   const title = opts.title;
+  if (!title || !title.trim())
+    throw new Error("observation title is required");
   const type = opts.type || "manual";
   const scope = opts.scope || "project";
   const content = opts.content || "";
@@ -27537,6 +27539,9 @@ function getObservation(id) {
 }
 var UPDATABLE_COLUMNS = new Set(["title", "type", "scope", "content", "topic_key", "state", "review_after"]);
 function update(id, fields) {
+  if ("title" in fields && (!fields.title || !String(fields.title).trim())) {
+    throw new Error("observation title is required");
+  }
   const db2 = getDb();
   const sets = [];
   const params = [];
@@ -27688,6 +27693,8 @@ ${r.content}`);
 
 // prompts.ts
 function savePrompt(sessionId, content) {
+  if (!content || !content.trim())
+    throw new Error("prompt content is required");
   const db2 = getDb();
   db2.run("INSERT INTO prompts (session_id, content) VALUES (?, ?)", [sessionId, content]);
 }
