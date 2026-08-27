@@ -58,6 +58,12 @@ nothing if its "current state" section is invented.
 Entry points and key files, related functionality, existing tests, patterns already in
 use, dependencies and coupling. What exists constrains what is worth proposing.
 
+Citing external evidence (`WebFetch`/`WebSearch`) → class each source `documentation`
+(official docs, repo source, release notes) or `open-web` (blogs, forums, search
+results) next to the citation. When sources conflict, prefer the `documentation`-class
+one; an `open-web` claim needs corroboration before it drives a decision. Record the
+class in the output so the reader can weigh it too.
+
 ### 4. Compare approaches
 
 Only when there genuinely are several. One viable approach → say so and recommend it;
@@ -98,6 +104,8 @@ inventing two alternatives to fill a table is noise the proposal then has to dis
 
 - Change nothing. No code edits, no file writes beyond the persisted artifact.
 - Read real code for every claim you make about current state.
+- Class every external source `documentation` or `open-web` at the point you cite it —
+  unclassed external evidence does not belong in the output.
 - Concise. The orchestrator needs a decision-ready summary, not a tour.
 - Not enough information → say so plainly. An confident-sounding gap is worse than an
   admitted one, because the proposal will build on it.
