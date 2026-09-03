@@ -45,13 +45,15 @@ Check file exists, is readable, under 500KB. Resolve absolute path.
 
 ### Step 3: Run CLI
 
+Run from `<skill_dir>` (required — `scripts` is a relative package, not a standalone script):
+
 ```bash
-python3 <skill_dir>/scripts/__main__.py --api <resolved_filepath>
+cd <skill_dir> && python3 -m scripts --api <resolved_filepath>
 ```
 
 If Groq API key is not available, omit `--api` for rule-based only:
 ```bash
-python3 <skill_dir>/scripts/__main__.py <resolved_filepath>
+cd <skill_dir> && python3 -m scripts <resolved_filepath>
 ```
 
 ### Step 4: Handle result

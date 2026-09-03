@@ -21,8 +21,16 @@ export function getDb(): Database {
   if (db) return db
   mkdirSync(DATA_DIR, { recursive: true })
   const d = new Database(DB_PATH)
-  d.run("PRAGMA journal_mode=WAL")
+  // busy_timeout FIRST, before anything that takes a lock (engram #613).
+  // `PRAGMA journal_mode=WAL` needs a brief exclusive lock on the db file, and
+  // with no busy_timeout in force yet a contended cold start — two MCP server
+  // processes for two parallel sessions opening the same store at once — fails
+  // instantly with SQLITE_BUSY instead of waiting. Measured: WAL-then-timeout
+  // throws "database is locked" at 0ms against a held lock, timeout-then-WAL
+  // waits and succeeds. Every later statement (initSchema, the FTS migration's
+  // BEGIN IMMEDIATE) was already covered; the switch itself was not.
   d.run("PRAGMA busy_timeout = 5000")
+  d.run("PRAGMA journal_mode=WAL")
   d.run("PRAGMA foreign_keys=ON")
   initSchema(d)
   migrateFromEngram(d)

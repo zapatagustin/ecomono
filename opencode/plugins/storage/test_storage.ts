@@ -35,6 +35,17 @@ const contentHit = Obs.save({ title: "unrelated title", content: "mentions widge
 const ranked = Obs.search({ query: "widget", project: "rankproj" })
 assert(ranked.length === 2 && ranked[0].id === titleHit.id && ranked[1].id === contentHit.id, "title match ranks above content-only match")
 
+// bm25's sign convention, pinned directly (engram #828/#847 both got it wrong):
+// SQLite FTS5's bm25() returns NEGATIVE scores and lower means a better match.
+// This documents that convention at the source; it does not exercise
+// search()'s ORDER BY or conflicts.ts's FTS_MIN_SCORE floor themselves.
+const scores = db.query(
+  "SELECT o.id, bm25(observations_fts, 5.0, 1.0, 3.0) AS score FROM observations o JOIN observations_fts f ON o.id=f.rowid" +
+  " WHERE observations_fts MATCH 'widget' AND o.project_id='rankproj' ORDER BY score"
+).all() as any[]
+assert(scores.length === 2 && scores.every((r) => r.score < 0), "bm25 scores are negative")
+assert(scores[0].score < scores[1].score && scores[0].id === titleHit.id, "more negative bm25 = better match, so ascending order puts the best first")
+
 // --- topic_key indexed: a term appearing ONLY in topic_key is findable ---
 const topicOnlyMatch = Obs.save({ title: "generic title", content: "generic body", topic_key: "quibblewhatsit-key", project: "topickeyproj" })!
 assert(Obs.search({ query: "quibblewhatsit", project: "topickeyproj" }).length === 1, "topic_key-only term is findable via search")

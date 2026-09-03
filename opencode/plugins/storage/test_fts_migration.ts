@@ -91,8 +91,24 @@ postCrash.close()
 process.env.ECOMONO_DATA_DIR = dataDir
 process.env.ECOMONO_LEGACY_DB = join(tmp, "no-such-legacy.db") // skip engram migration
 
+// --- pragma order: busy_timeout must be in force BEFORE journal_mode=WAL ---
+// The fixture DB above is still in the default (non-WAL) journal mode, so the
+// first getDb() has to take the exclusive lock that switching to WAL needs.
+// Hold that lock from another process — the real shape of two MCP servers cold
+// -starting for two parallel sessions — and getDb() must wait it out rather
+// than die on SQLITE_BUSY. With the pragmas in the other order it throws
+// "database is locked" immediately, which is what this pins.
+const holder = Bun.spawn([
+  process.execPath, "-e",
+  `const {Database}=require("bun:sqlite");const d=new Database(${JSON.stringify(dbPath)});` +
+  `d.run("BEGIN EXCLUSIVE");console.error("locked");await Bun.sleep(400);d.run("ROLLBACK");d.close()`,
+], { stderr: "pipe" })
+await holder.stderr.getReader().read() // wait for "locked"
+
 const { getDb, closeDb } = await import("./db")
 const d = getDb()
+assert((d.query("PRAGMA journal_mode").get() as any).journal_mode === "wal", "getDb() waits out a contended cold start and still reaches WAL")
+await holder.exited
 
 // widened to 3 columns
 const cols = (d.query("PRAGMA table_info(observations_fts)").all() as any[]).map((r) => r.name)

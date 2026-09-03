@@ -65,6 +65,9 @@ and a skimmed approval is worse than a slow one because it looks identical.
 Over budget → split along **deliverable** units, never along line counts. Each slice needs
 a clear start, a clear finish, its own verification, and a sane rollback.
 
+Shrink by removing scope, never by reformatting. Collapsing whitespace or compacting code
+to duck under the line count games the gate — the reviewer still reads the same change.
+
 | Strategy | Base branches |
 |---|---|
 | Stacked to main | Each PR merges to main in order. Independent slices, fast iteration |

@@ -620,8 +620,21 @@ SENSITIVE_BASENAME = re.compile(
     r"|.*\.(pem|key|p12|pfx|crt|cer|jks|keystore|asc|gpg)"
     r")$"
 )
-SENSITIVE_DIRS = frozenset({".ssh", ".aws", ".gnupg", ".kube", ".docker"})
-SENSITIVE_TOKENS = ("secret", "credential", "password", "passwd", "apikey", "accesskey", "token", "privatekey")
+SENSITIVE_DIRS = frozenset({".ssh", ".aws", ".gnupg", ".kube", ".docker", "credentials", "secrets"})
+# "cred" (bare) is deliberately excluded from the flattened-substring set below
+# — it is a substring of "credit", "incredible", "accredited", the worst
+# false-positive source when matching is flattened-substring rather than
+# segment-exact. "creds" is spelled out explicitly instead, so the common
+# abbreviation still trips the substring check without reopening those FPs.
+# "cred" as an exact path segment (e.g. "cred.json", "aws-cred.json") is still
+# caught separately by EXACT_SEGMENT_TOKENS below.
+SENSITIVE_TOKENS = ("secret", "credential", "creds", "password", "passwd", "apikey", "accesskey", "token", "privatekey")
+# Exact-segment match only (never substring): a path component that, once
+# split on non-alphanumeric characters, equals one of these tokens exactly.
+# Keeps "cred" from tripping on "credit-report.md", "incredible-app/",
+# "accredited-vendors/" while still catching "cred/", "cred.json",
+# "aws-cred.json", "db-cred.txt".
+EXACT_SEGMENT_TOKENS = frozenset({"cred"})
 
 
 # A filename says nothing about what got pasted into the body. The files this skill
@@ -664,15 +677,57 @@ def secret_in_content(text: str) -> str | None:
     return None
 
 
+def _sensitive_match(path: Path) -> str | None:
+    """Return the path component that tripped the sensitivity check, or None.
+
+    Scans the path as given — filename plus every ancestor directory, not
+    just the basename — since a file sitting under secret/, creds/ or
+    my-secrets-vault/ is exactly as sensitive as one named secret.md. The
+    caller must pass an already-resolved path; this function does not
+    resolve it.
+    """
+    if SENSITIVE_BASENAME.match(path.name):
+        return path.name
+    parts_lower = {p.lower() for p in path.parts}
+    hit_dir = parts_lower & SENSITIVE_DIRS
+    if hit_dir:
+        return next(iter(hit_dir))
+    # Exact-segment match: split each component on non-alphanumeric characters
+    # and compare each resulting segment exactly against EXACT_SEGMENT_TOKENS.
+    # Distinct from the flattened-substring pass below — this one never does
+    # substring matching, so it can safely include tokens (like "cred") that
+    # would cause false positives if matched as a substring.
+    for part in path.parts:
+        segments = re.split(r"[^0-9a-z]+", part.lower())
+        if any(seg in EXACT_SEGMENT_TOKENS for seg in segments):
+            return next(seg for seg in segments if seg in EXACT_SEGMENT_TOKENS)
+    # Flattened-substring matching, per path component: strip the same
+    # separator chars the original implementation stripped, then substring-test
+    # each token against the flattened component. Applied to every component
+    # (not just the basename) so a sensitive dir anywhere in the path still
+    # trips this. This is the original matching strategy — a segment-exact
+    # rewrite tried earlier this session and regressed real coverage: glued or
+    # camelCase compounds like "api-key.json", "mysecrets.md", "dbpassword.txt",
+    # "authToken.txt", "awscredentials.json" never split into a bare token on a
+    # non-alphanumeric boundary, so segment-exact silently let them through to
+    # the API leg.
+    # ecomono: ceiling — flattened substring false-positives on ordinary names
+    # that merely contain a token's letters ("secretary-notes/" hits "secret",
+    # "tokenizer-utils/" and "tokenomics/" hit "token"). Accepted: a false
+    # positive here only blocks the API leg (local compression still runs); a
+    # false negative ships a secret to a third party — the cost is asymmetric.
+    # Upgrade path: segment + suffix + adjacent-pair hybrid match.
+    for part in path.parts:
+        flat = re.sub(r"[_\-\s.]", "", part.lower())
+        for tok in SENSITIVE_TOKENS:
+            if tok in flat:
+                return tok
+    return None
+
+
 def is_sensitive(path: Path) -> bool:
     """Heuristic: refuse to send files that contain secrets to API."""
-    if SENSITIVE_BASENAME.match(path.name):
-        return True
-    parts_lower = {p.lower() for p in path.parts}
-    if parts_lower & SENSITIVE_DIRS:
-        return True
-    name_flat = re.sub(r"[_\-\s.]", "", path.name.lower())
-    return any(tok in name_flat for tok in SENSITIVE_TOKENS)
+    return _sensitive_match(path) is not None
 
 
 def _should_compress(filepath: Path) -> bool:
@@ -684,8 +739,14 @@ def _should_compress(filepath: Path) -> bool:
     return should_compress(filepath)
 
 
-def compress_file(filepath: Path, use_api: bool = False, model: str = DEFAULT_MODEL) -> dict:
-    """Run compression. Returns {'status': ..., 'path': ..., 'backup': ..., 'tokens_saved': ...}"""
+def compress_file(filepath: Path, use_api: bool = False, model: str = DEFAULT_MODEL, write_to: Path | None = None) -> dict:
+    """Run compression. Returns {'status': ..., 'path': ..., 'backup': ..., 'tokens_saved': ...}
+
+    `write_to` redirects the compressed output to a different path than `filepath`
+    (defaulting to `filepath` itself). A caller that must validate the candidate
+    before it becomes live — see scripts/__main__.py's retry loop — passes a
+    staging path here so this function never puts unvalidated content in `filepath`.
+    """
     MAX_SIZE = 500_000
 
     if not filepath.exists():
@@ -703,8 +764,10 @@ def compress_file(filepath: Path, use_api: bool = False, model: str = DEFAULT_MO
     # corrupted file. Refuse anything detect.py doesn't classify as prose.
     if not _should_compress(filepath):
         return {"status": "error", "reason": f"Not a natural-language file (code/config): {filepath.name}. Refusing to compress."}
-    if is_sensitive(filepath) and use_api:
-        return {"status": "error", "reason": f"Sensitive filename: {filepath.name}. Refusing API send."}
+    if use_api:
+        sensitive_hit = _sensitive_match(filepath)
+        if sensitive_hit:
+            return {"status": "error", "reason": f"Sensitive path component: {sensitive_hit!r} (in {filepath}). Refusing API send."}
 
     original = filepath.read_text(encoding="utf-8", errors="ignore")
     if not original.strip():
@@ -747,7 +810,7 @@ def compress_file(filepath: Path, use_api: bool = False, model: str = DEFAULT_MO
         return {"status": "error", "reason": "Backup write verification failed"}
 
     # Write compressed (atomic: crash mid-write can't truncate the target)
-    atomic_write_text(filepath, compressed)
+    atomic_write_text(write_to or filepath, compressed)
 
     # Estimate savings
     orig_tokens = len(original.split())
@@ -765,29 +828,3 @@ def compress_file(filepath: Path, use_api: bool = False, model: str = DEFAULT_MO
         "percent": round(pct, 1),
         "used_api": use_api,
     }
-
-
-def main():
-    import argparse
-
-    parser = argparse.ArgumentParser(description="Ecomono Compress")
-    parser.add_argument("filepath", help="File to compress")
-    parser.add_argument("--api", action="store_true", help="Enable Groq semantic pass")
-    parser.add_argument("--model", default=DEFAULT_MODEL, help="Model for semantic pass")
-    args = parser.parse_args()
-
-    result = compress_file(Path(args.filepath), use_api=args.api, model=args.model)
-
-    if result["status"] == "ok":
-        print(json.dumps(result, indent=2))
-        sys.exit(0)
-    elif result["status"] == "skip":
-        print(f"⏭️  {result['reason']}")
-        sys.exit(0)
-    else:
-        print(f"❌ {result['reason']}", file=sys.stderr)
-        sys.exit(1)
-
-
-if __name__ == "__main__":
-    main()

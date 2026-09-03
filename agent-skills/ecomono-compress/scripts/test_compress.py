@@ -537,6 +537,90 @@ sens = write("secrets.md", "# T\n\nYou should utilize the thing.\n")
 check("pipeline", "sensitive name blocks api", C.compress_file(sens, use_api=True)["status"], "error")
 check("pipeline", "sensitive name compresses locally", C.compress_file(sens)["status"], "ok")
 
+# A sensitive DIRECTORY anywhere in the path must block the API leg too, not
+# just a sensitive basename — upstream caveman PR #891. is_sensitive already
+# checks every path component (path.parts), not just path.name, so this
+# only needed SENSITIVE_DIRS to list these directory names.
+(TMP / "secrets").mkdir()
+in_secrets_dir = write("secrets/notes.md", "# T\n\nYou should utilize the thing.\n")
+check("pipeline", "file under secrets/ dir flagged sensitive", C.is_sensitive(in_secrets_dir), True)
+check("pipeline", "file under secrets/ dir blocks api", C.compress_file(in_secrets_dir, use_api=True)["status"], "error")
+
+(TMP / "credentials").mkdir()
+in_credentials_dir = write("credentials/notes.md", "# T\n\nYou should utilize the thing.\n")
+check("pipeline", "file under credentials/ dir flagged sensitive", C.is_sensitive(in_credentials_dir), True)
+check("pipeline", "file under credentials/ dir blocks api", C.compress_file(in_credentials_dir, use_api=True)["status"], "error")
+
+# A sensitive TOKEN anywhere in the path must trip is_sensitive too, not just
+# an exact SENSITIVE_DIRS match — a dir named "secret" (singular), "creds", or
+# with a token as a substring is just as sensitive as one in SENSITIVE_DIRS.
+(TMP / "secret").mkdir()
+check("pipeline", "file under secret/ (singular, not in SENSITIVE_DIRS) flagged sensitive",
+      C.is_sensitive(write("secret/notes.md", "x")), True)
+(TMP / "creds").mkdir()
+check("pipeline", "file under creds/ (abbreviation) flagged sensitive",
+      C.is_sensitive(write("creds/notes.md", "x")), True)
+(TMP / "my-secrets-vault").mkdir()
+check("pipeline", "file under my-secrets-vault/ flagged sensitive",
+      C.is_sensitive(write("my-secrets-vault/notes.md", "x")), True)
+(TMP / "credentials-2024").mkdir()
+check("pipeline", "file under credentials-2024/ flagged sensitive",
+      C.is_sensitive(write("credentials-2024/notes.md", "x")), True)
+# A benign directory sharing no substring with any token must not trip it.
+(TMP / "project").mkdir()
+check("pipeline", "file under project/ (benign) not flagged sensitive",
+      C.is_sensitive(write("project/notes.md", "x")), False)
+
+# Flattened-substring matching (the restored original strategy, applied to every
+# path component): dropping the bare "cred" token keeps these negative, since
+# none of them contain "credential" or "creds" once flattened.
+for benign in (
+    "incredible-app", "credit-report.md", "accredited-vendors", "credo.md",
+    "credits", "discredit-analysis.md",
+):
+    (TMP / benign).mkdir(exist_ok=True) if "." not in benign else None
+    target = f"{benign}/notes.md" if "." not in benign else benign
+    check("pipeline", f"{benign} not flagged sensitive (bare 'cred' dropped)",
+          C.is_sensitive(write(target, "x")), False)
+
+# "cred" as an EXACT path segment must still trip is_sensitive — dropping the
+# bare substring above must not silently drop the exact-word case too.
+(TMP / "cred").mkdir(exist_ok=True)
+check("pipeline", "cred/ dir (exact segment) flagged sensitive",
+      C.is_sensitive(write("cred/notes.md", "x")), True)
+check("pipeline", "cred.json (exact segment) flagged sensitive",
+      C.is_sensitive(write("cred.json", "x")), True)
+check("pipeline", "aws-cred.json (exact segment) flagged sensitive",
+      C.is_sensitive(write("aws-cred.json", "x")), True)
+check("pipeline", "db-cred.txt (exact segment) flagged sensitive",
+      C.is_sensitive(write("db-cred.txt", "x")), True)
+# Exact-segment match must not widen into the substring FPs it was built to avoid.
+for exact_negative in ("credit-report.md", "incredible-app", "accredited-vendors"):
+    (TMP / exact_negative).mkdir(exist_ok=True) if "." not in exact_negative else None
+    target = f"{exact_negative}/notes.md" if "." not in exact_negative else exact_negative
+    check("pipeline", f"{exact_negative} still not flagged sensitive (exact-segment check)",
+          C.is_sensitive(write(target, "x")), False)
+
+# Documented ceiling: flattened substring matching still false-positives on
+# ordinary names that merely contain "secret" or "token" as a substring — the
+# accepted asymmetry is that a false positive only blocks the API leg (local
+# compression still runs), while a false negative would ship a secret to a
+# third party. Pinned as True so a future change to this ceiling is visible.
+for ceiling_fp in ("secretary-notes", "tokenizer-utils", "tokenomics"):
+    (TMP / ceiling_fp).mkdir(exist_ok=True)
+    check("pipeline", f"{ceiling_fp} flagged sensitive (documented ceiling, not a real secret)",
+          C.is_sensitive(write(f"{ceiling_fp}/notes.md", "x")), True)
+
+# Restored coverage: compound/glued/camelCase names the segment-exact rewrite
+# (this session) regressed — none of these split into a bare token on a
+# non-alphanumeric boundary, so only flattened-substring matching catches them.
+for restored in (
+    "api-key.json", "aws_access_key_id.txt", "private-key.txt", "mysecrets.md",
+    "dbpassword.txt", "authToken.txt", "awscredentials.json",
+):
+    check("pipeline", f"{restored} flagged sensitive (restored substring coverage)",
+          C.is_sensitive(write(restored, "x")), True)
+
 # Happy path: original preserved byte-for-byte in the backup, compressed text
 # written in place, and the token accounting reports a real saving.
 BODY = "# Title\n\nYou should really utilize the `foo.py` helper in order to build it.\n\n- one\n- two\n"
@@ -604,6 +688,97 @@ special.chmod(0o2644)  # setgid + rw-r--r--
 C.atomic_write_text(special, "new content\n")
 check("pipeline", "atomic write strips setgid bit",
       _stat.S_IMODE(special.stat().st_mode), 0o644)
+
+# ===========================================================================
+# Staged-candidate validation — upstream caveman PR #938. compress_file must
+# never put an unvalidated candidate straight into the live file: a caller
+# that passes write_to redirects the write to a staging sibling, so a kill
+# between "write" and "validate" can never catch the live file mid-change.
+# ===========================================================================
+
+# Direct check on compress_file's new contract: right after it returns —
+# before anyone has validated anything — the live file must be exactly what
+# it was before the call, and the (unvalidated) candidate must be on the
+# staging path instead. This is the actual bug: the pre-fix compress_file had
+# no write_to and always wrote the candidate straight into the live file.
+staged_live = write("staged.md", "# T\n\nYou should utilize the thing.\n")
+staged_before = staged_live.read_text()
+staged_path = TMP / "staged.md.staged"
+staged_res = C.compress_file(staged_live, write_to=staged_path)
+check("pipeline", "staged write status ok", staged_res["status"], "ok")
+check("pipeline", "staged write: live file untouched pre-validation", staged_live.read_text(), staged_before)
+check("pipeline", "staged write: candidate lands on staging path", staged_path.exists(), True)
+truthy("pipeline", "staged write: staged candidate differs from live", staged_path.read_text() != staged_before)
+staged_path.unlink(missing_ok=True)
+(TMP / "staged.md.original.md").unlink(missing_ok=True)
+
+# End-to-end via the CLI: force validation to always fail and confirm the
+# live file comes out byte-identical, with no leftover staging or backup file.
+import contextlib
+import io
+
+sys.path.insert(0, str(Path(__file__).parent.parent))
+from scripts import __main__ as M  # noqa: E402
+
+
+class _AlwaysInvalid:
+    is_valid = False
+    errors = ["forced failure for test"]
+    warnings = []
+
+
+cli_live = write("cli_fail.md", "# T\n\nYou should utilize the thing.\n")
+cli_before = cli_live.read_text()
+# Legacy predictable staging name (pre-fix): a symlink planted here used to be
+# followed by atomic_write_text's path.resolve(), then swapped onto the live
+# file by os.replace. The fixed CLI never touches this path at all — it stages
+# via tempfile.mkstemp's unpredictable name instead — so a file already sitting
+# at the old name must come out of a run completely untouched.
+legacy_staged = write("cli_fail.md.staged", "pre-existing, unrelated content\n")
+legacy_staged_before = legacy_staged.read_text()
+_real_validate = M.validate
+M.validate = lambda *a, **kw: _AlwaysInvalid()
+old_argv = sys.argv
+sys.argv = ["scripts", str(cli_live)]
+try:
+    with contextlib.redirect_stdout(io.StringIO()):
+        try:
+            M.main()
+        except SystemExit:
+            pass
+finally:
+    M.validate = _real_validate
+    sys.argv = old_argv
+
+check("pipeline", "cli: failed validation leaves live file byte-identical", cli_live.read_text(), cli_before)
+# Staged name is now an unpredictable tempfile.mkstemp name (".cli_fail.md.<rand>"),
+# not the old predictable "cli_fail.md.staged" — glob for that pattern rather than
+# checking one fixed path.
+check("pipeline", "cli: failed validation cleans up staging file",
+      list(TMP.glob(f".{cli_live.name}.*")), [])
+check("pipeline", "cli: failed validation cleans up backup file",
+      (TMP / "cli_fail.md.original.md").exists(), False)
+check("pipeline", "cli: pre-existing legacy .staged file left untouched",
+      legacy_staged.read_text(), legacy_staged_before)
+legacy_staged.unlink(missing_ok=True)
+
+# _promote must carry the live file's existing permission bits onto the
+# promoted candidate — os.replace alone would silently narrow them to the
+# staged temp file's (mkstemp default 0600) mode on every successful run.
+# Deleting the os.chmod call in _promote must fail this check.
+perm_cli = write("perm_cli.md", "# Title\n\nYou should really utilize the `foo.py` helper in order to build it.\n\n- one\n- two\n")
+perm_cli.chmod(0o640)
+sys.argv = ["scripts", str(perm_cli)]
+try:
+    with contextlib.redirect_stdout(io.StringIO()):
+        M.main()
+finally:
+    sys.argv = old_argv
+
+check("pipeline", "cli: promote actually ran (file compressed)",
+      perm_cli.read_text() != "# Title\n\nYou should really utilize the `foo.py` helper in order to build it.\n\n- one\n- two\n", True)
+check("pipeline", "cli: promote preserves live file's original permission bits",
+      _stat.S_IMODE(perm_cli.stat().st_mode), 0o640)
 
 shutil.rmtree(TMP, ignore_errors=True)
 

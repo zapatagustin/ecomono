@@ -27296,8 +27296,8 @@ function getDb() {
     return db;
   mkdirSync(DATA_DIR, { recursive: true });
   const d = new Database(DB_PATH);
-  d.run("PRAGMA journal_mode=WAL");
   d.run("PRAGMA busy_timeout = 5000");
+  d.run("PRAGMA journal_mode=WAL");
   d.run("PRAGMA foreign_keys=ON");
   initSchema(d);
   migrateFromEngram(d);
