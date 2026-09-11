@@ -22,6 +22,18 @@ import * as Obs from "./observations"
 // produced; the floor is what removes it.
 const FTS_MIN_SCORE = -1
 
+// Candidate lookup for signal 3 below. Exported as the seam the query-plan
+// regression test in test_storage.ts EXPLAINs, so it checks the SQL
+// findCandidates() actually runs instead of a hand-rebuilt copy.
+//
+// FTS table first, CROSS JOIN second, for the same reason as
+// observations.buildSearchSql() — see the note there (engram #947/#977): a
+// plain INNER JOIN lets the planner drive from idx_obs_project once
+// sqlite_stat1 exists, re-evaluating MATCH once per outer row.
+export const FTS_CANDIDATE_SQL =
+  "SELECT o.id, o.title, bm25(observations_fts, 1.0, 1.0, 0.0) AS score FROM observations_fts CROSS JOIN observations o ON o.id=observations_fts.rowid" +
+  " WHERE observations_fts MATCH ? AND o.project_id=? AND o.state='active' AND o.id!=? ORDER BY score LIMIT 5"
+
 export type Relation = "supersedes" | "conflicts_with" | "related" | "compatible" | "scoped" | "not_conflict"
 // Exported so other callers validating an externally-sourced relation string
 // (e.g. conflict-scan.ts parsing an LLM verdict) share this one definition
@@ -80,10 +92,7 @@ function findCandidates(newId: number, project: string, title: string, content: 
       // match at a fixed 0.85 confidence, so letting bm25 also rank on it would
       // double-count the same evidence. title/content keep the unweighted
       // default (1.0, 1.0) this call had before the schema widened.
-      const rows = db.query(
-        "SELECT o.id, o.title, bm25(observations_fts, 1.0, 1.0, 0.0) AS score FROM observations o JOIN observations_fts ON o.id=observations_fts.rowid" +
-        " WHERE observations_fts MATCH ? AND o.project_id=? AND o.state='active' AND o.id!=? ORDER BY score LIMIT 5"
-      ).all(terms, project, newId) as any[]
+      const rows = db.query(FTS_CANDIDATE_SQL).all(terms, project, newId) as any[]
       for (const r of rows) {
         if (r.score > FTS_MIN_SCORE) continue
         consider(r.id, r.title, "related", 0.5)

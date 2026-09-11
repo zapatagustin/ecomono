@@ -30,7 +30,8 @@ brainstorm. Everything downstream of the agreed design gets isolated instead.
 
 ## Sequence
 
-1. **Restate the goal** in one line. Wrong restatement caught now costs nothing.
+1. **Restate the goal** in one line and let them correct it. Wrong restatement
+   caught now costs nothing; the corrected line is what the plan inherits.
 2. **Find the real constraint.** What makes this hard — scale, an existing
    contract, a deadline, someone else's API? Read the code that already touches
    it before proposing anything.
@@ -38,7 +39,7 @@ brainstorm. Everything downstream of the agreed design gets isolated instead.
    questions whose answers are all "yes, sensible".
 4. **Propose one approach** with its ceiling named. Alternatives only where the
    tradeoff is real.
-5. **Agree, then stop.** Hand off to `writing-plans` if the work is multi-step,
+5. **Agree, then stop.** Hand off to `ecomono-plan` if the work is multi-step,
    or implement directly if it is one edit.
 
 ## Output

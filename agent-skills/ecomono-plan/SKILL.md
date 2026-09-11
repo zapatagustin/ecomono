@@ -51,4 +51,5 @@ An ordered checklist. Per task: the files, the end condition, the verification,
 and whether it runs isolated or inline. Plus one line for what was cut and when
 it would be worth adding.
 
-Then stop. Writing the plan is not executing it.
+Then ask whether the plan captures what they want, and stop. Writing the plan
+is not executing it.

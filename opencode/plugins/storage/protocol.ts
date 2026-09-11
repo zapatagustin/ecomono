@@ -41,4 +41,8 @@ Also search PROACTIVELY when starting work that might have been done before, or 
 ### SESSION CLOSE PROTOCOL (mandatory)
 
 Before ending a session or saying "done", call \`mem_session_summary\` with: Goal, Discoveries, Accomplished, Next Steps, Relevant Files. Without it, the next session starts blind.
+
+### DELIVERY GUARANTEE
+
+Memory calls are internal bookkeeping, never the reply. Finish memory writes before the final answer, and if a memory call fails, still deliver the answer — say the save failed, do not let it replace the result.
 `

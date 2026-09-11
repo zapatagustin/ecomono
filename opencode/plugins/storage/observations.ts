@@ -79,7 +79,7 @@ export function splitTerms(query: string): string[] {
   return query.trim().split(/\s+/).filter(Boolean)
 }
 
-export function search(opts: {
+export interface SearchOpts {
   query: string
   project?: string
   type?: string
@@ -87,14 +87,26 @@ export function search(opts: {
   limit?: number
   all_projects?: boolean
   match_mode?: string
-}): { id: number; title: string; content: string; type: string; created_at: string; project: string }[] {
-  const db = getDb()
+}
+
+// Exported as the seam the query-plan regression test in test_storage.ts
+// EXPLAINs, so it checks the SQL search() actually runs instead of a
+// hand-rebuilt copy. Returns null when the query has no usable terms.
+export function buildSearchSql(opts: SearchOpts): { sql: string; params: any[] } | null {
   const limit = opts.limit || 10
   const mode = opts.match_mode === "any" ? "OR" : "AND"
   const terms = splitTerms(opts.query).map(t => `"${t.replace(/"/g, '""')}"`).join(` ${mode} `)
-  if (!terms) return []
+  if (!terms) return null
 
-  let sql = "SELECT o.id, o.title, o.content, o.type, o.created_at, o.project_id as project FROM observations o INNER JOIN observations_fts fts ON o.id = fts.rowid WHERE observations_fts MATCH ? AND o.state = 'active'"
+  // FTS table first, CROSS JOIN second: CROSS JOIN pins the join order
+  // left-to-right, keeping observations_fts the driving table (engram
+  // #947/#977). With a plain INNER JOIN the planner is free to reorder, and as
+  // soon as sqlite_stat1 exists — anyone running ANALYZE or PRAGMA optimize,
+  // the sqlite3 CLI, a future migration — it drives from idx_obs_project and
+  // re-evaluates MATCH once per outer row (2.78 ms vs 0.15 ms on 20k rows). A
+  // 2026-08 review closed this as N/A on byte-identical plans; that was
+  // measured on a DB with no stats, where FTS-first happens to win anyway.
+  let sql = "SELECT o.id, o.title, o.content, o.type, o.created_at, o.project_id as project FROM observations_fts fts CROSS JOIN observations o ON o.id = fts.rowid WHERE observations_fts MATCH ? AND o.state = 'active'"
   const params: any[] = [terms]
 
   if (opts.project && !opts.all_projects) {
@@ -120,7 +132,14 @@ export function search(opts: {
   sql += " ORDER BY bm25(observations_fts, 5.0, 1.0, 3.0), o.created_at DESC, o.id DESC LIMIT ?"
   params.push(limit)
 
-  return db.query(sql).all(...params) as any[]
+  return { sql, params }
+}
+
+export function search(opts: SearchOpts): { id: number; title: string; content: string; type: string; created_at: string; project: string }[] {
+  const db = getDb()
+  const built = buildSearchSql(opts)
+  if (!built) return []
+  return db.query(built.sql).all(...built.params) as any[]
 }
 
 export function getObservation(id: number): Observation | null {

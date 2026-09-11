@@ -27507,14 +27507,13 @@ function save(opts) {
 function splitTerms(query) {
   return query.trim().split(/\s+/).filter(Boolean);
 }
-function search(opts) {
-  const db2 = getDb();
+function buildSearchSql(opts) {
   const limit = opts.limit || 10;
   const mode = opts.match_mode === "any" ? "OR" : "AND";
   const terms = splitTerms(opts.query).map((t) => `"${t.replace(/"/g, '""')}"`).join(` ${mode} `);
   if (!terms)
-    return [];
-  let sql = "SELECT o.id, o.title, o.content, o.type, o.created_at, o.project_id as project FROM observations o INNER JOIN observations_fts fts ON o.id = fts.rowid WHERE observations_fts MATCH ? AND o.state = 'active'";
+    return null;
+  let sql = "SELECT o.id, o.title, o.content, o.type, o.created_at, o.project_id as project FROM observations_fts fts CROSS JOIN observations o ON o.id = fts.rowid WHERE observations_fts MATCH ? AND o.state = 'active'";
   const params = [terms];
   if (opts.project && !opts.all_projects) {
     sql += " AND o.project_id = ?";
@@ -27530,7 +27529,14 @@ function search(opts) {
   }
   sql += " ORDER BY bm25(observations_fts, 5.0, 1.0, 3.0), o.created_at DESC, o.id DESC LIMIT ?";
   params.push(limit);
-  return db2.query(sql).all(...params);
+  return { sql, params };
+}
+function search(opts) {
+  const db2 = getDb();
+  const built = buildSearchSql(opts);
+  if (!built)
+    return [];
+  return db2.query(built.sql).all(...built.params);
 }
 function getObservation(id) {
   const db2 = getDb();
@@ -27701,6 +27707,7 @@ function savePrompt(sessionId, content) {
 
 // conflicts.ts
 var FTS_MIN_SCORE = -1;
+var FTS_CANDIDATE_SQL = "SELECT o.id, o.title, bm25(observations_fts, 1.0, 1.0, 0.0) AS score FROM observations_fts CROSS JOIN observations o ON o.id=observations_fts.rowid" + " WHERE observations_fts MATCH ? AND o.project_id=? AND o.state='active' AND o.id!=? ORDER BY score LIMIT 5";
 var RELATIONS = ["supersedes", "conflicts_with", "related", "compatible", "scoped", "not_conflict"];
 function findCandidates(newId, project, title, content, topicKey, hash2) {
   const db2 = getDb();
@@ -27724,7 +27731,7 @@ function findCandidates(newId, project, title, content, topicKey, hash2) {
   const terms = words.slice(0, 12).map((t) => `"${t.replace(/"/g, '""')}"`).join(" OR ");
   if (terms) {
     try {
-      const rows = db2.query("SELECT o.id, o.title, bm25(observations_fts, 1.0, 1.0, 0.0) AS score FROM observations o JOIN observations_fts ON o.id=observations_fts.rowid" + " WHERE observations_fts MATCH ? AND o.project_id=? AND o.state='active' AND o.id!=? ORDER BY score LIMIT 5").all(terms, project, newId);
+      const rows = db2.query(FTS_CANDIDATE_SQL).all(terms, project, newId);
       for (const r of rows) {
         if (r.score > FTS_MIN_SCORE)
           continue;
@@ -28060,6 +28067,10 @@ Also search PROACTIVELY when starting work that might have been done before, or 
 ### SESSION CLOSE PROTOCOL (mandatory)
 
 Before ending a session or saying "done", call \`mem_session_summary\` with: Goal, Discoveries, Accomplished, Next Steps, Relevant Files. Without it, the next session starts blind.
+
+### DELIVERY GUARANTEE
+
+Memory calls are internal bookkeeping, never the reply. Finish memory writes before the final answer, and if a memory call fails, still deliver the answer \u2014 say the save failed, do not let it replace the result.
 `;
 
 // mcp-server.ts

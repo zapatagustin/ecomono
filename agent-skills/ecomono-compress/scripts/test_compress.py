@@ -296,6 +296,15 @@ VALIDATOR_CASES = [
      "P.\n\n    a the\n\nQ.", "P.\n\n    a the\n\nQ.", (True, 0, 0)),
     ("indented block rewritten", V.validate_code_blocks,
      "P.\n\n    validate the\n\nQ.", "P.\n\n    check the\n\nQ.", (False, 1, 0)),
+    # Fenced and indented blocks are compared in DOCUMENT order, not grouped by
+    # type: two blocks that swap relative position are a real reordering of the
+    # file's code, and a type-grouped comparison reports them as identical.
+    ("fenced and indented blocks keep document order", V.validate_code_blocks,
+     "# T\n\n```\nA\n```\n\nprose\n\n    indented B\n\ntail\n",
+     "# T\n\n```\nA\n```\n\nprose\n\n    indented B\n\ntail\n", (True, 0, 0)),
+    ("fenced and indented blocks swapped is an error", V.validate_code_blocks,
+     "# T\n\n```\nA\n```\n\nprose\n\n    indented B\n\ntail\n",
+     "# T\n\n    indented B\n\nprose\n\n```\nA\n```\n\ntail\n", (False, 1, 0)),
     # URLs: an error. Set-compared, so reordering is fine but losing one is not.
     ("urls preserved out of order", V.validate_urls, "https://a.com/x https://b.com/y",
      "https://b.com/y then https://a.com/x", (True, 0, 0)),
@@ -468,6 +477,8 @@ DETECT_CASES = [
     ("a.txt", "text", "natural_language", True),
     ("a.rst", "text", "natural_language", True),
     ("a.typ", "text", "natural_language", True),
+    # Cursor rule files: markdown body plus frontmatter, same shape as SKILL.md.
+    ("a.mdc", "---\nname: r\n---\n\n# Rule\n\ntext\n", "natural_language", True),
     ("a.py", "print(1)", "code", False),
     ("a.sh", "echo hi", "code", False),
     ("a.go", "package main", "code", False),
@@ -712,6 +723,27 @@ truthy("pipeline", "staged write: staged candidate differs from live", staged_pa
 staged_path.unlink(missing_ok=True)
 (TMP / "staged.md.original.md").unlink(missing_ok=True)
 
+# A candidate that is not strictly shorter than the original is a failed
+# compression, not a compression: the semantic pass can return structurally
+# faithful text that is LONGER than the input, and every check after the no-op
+# guard would pass it through to the backup+write step. Rejection has to land
+# on the same path the exact no-op takes, before anything is written.
+expand_live = write("expand.md", "# T\n\nYou should utilize the thing.\n")
+expand_before = expand_live.read_text()
+expand_staged = TMP / "expand.md.staged"
+_real_semantic_api = C.call_semantic_api
+C.call_semantic_api = lambda text, model=None: text + "\n\n" + ("padding words " * 40)
+try:
+    expand_res = C.compress_file(expand_live, use_api=True, write_to=expand_staged)
+finally:
+    C.call_semantic_api = _real_semantic_api
+check("pipeline", "expanding candidate rejected", expand_res["status"], "skip")
+check("pipeline", "expanding candidate leaves live file byte-identical",
+      expand_live.read_text(), expand_before)
+check("pipeline", "expanding candidate writes no staged output", expand_staged.exists(), False)
+check("pipeline", "expanding candidate writes no backup",
+      (TMP / "expand.md.original.md").exists(), False)
+
 # End-to-end via the CLI: force validation to always fail and confirm the
 # live file comes out byte-identical, with no leftover staging or backup file.
 import contextlib
@@ -780,6 +812,124 @@ check("pipeline", "cli: promote actually ran (file compressed)",
 check("pipeline", "cli: promote preserves live file's original permission bits",
       _stat.S_IMODE(perm_cli.stat().st_mode), 0o640)
 
+# The retry loop builds its own candidates without going through
+# compress_file, so the non-expansion rule has to hold there too. The first
+# semantic call returns a shorter but structurally invalid candidate (renamed
+# heading -> a hard validator error), forcing a retry; the retry's call
+# expands. The expanded text must never reach the live file.
+retry_live = write("retry_expand.md", "# T\n\nYou should really utilize the thing in order to work.\n")
+retry_original = retry_live.read_text()
+_semantic_calls = []
+
+def _fake_semantic(text, model=None):
+    _semantic_calls.append(text)
+    if len(_semantic_calls) == 1:
+        return "# X\n\nuse thing.\n"
+    return text + "\n\nPADDING " + ("more words " * 60)
+
+# `import compress` and `scripts.compress` are two distinct module objects,
+# so compress_file's own global has to be patched on the one the CLI imports.
+from scripts import compress as SC  # noqa: E402
+
+_real_c_api, _real_m_api = SC.call_semantic_api, M.call_semantic_api
+SC.call_semantic_api = M.call_semantic_api = _fake_semantic
+sys.argv = ["scripts", "--api", str(retry_live)]
+try:
+    with contextlib.redirect_stdout(io.StringIO()):
+        try:
+            M.main()
+        except SystemExit:
+            pass
+finally:
+    SC.call_semantic_api, M.call_semantic_api = _real_c_api, _real_m_api
+    sys.argv = old_argv
+
+truthy("pipeline", "cli: retry loop actually ran", len(_semantic_calls) >= 2)
+check("pipeline", "cli: expanding retry candidate never reaches the live file",
+      "PADDING" in retry_live.read_text(), False)
+check("pipeline", "cli: expanding retry keeps the rule-based result",
+      retry_live.read_text(), C.rule_compress(retry_original))
+
+# The final rule-based fallback (attempt == 2) has to pass the same
+# is_shorter_than gate as compress_file() and the retry branch above: a
+# structurally-invalid semantic pass on a file rule_compress cannot shorten
+# any further must NOT be promoted just because it happens to validate
+# trivially against an unchanged candidate.
+fallback_live = write("fallback_noop.md", "# T\n\nTerse text.\n")
+fallback_original = fallback_live.read_text()
+_fallback_calls = []
+
+def _fake_semantic_invalid(text, model=None):
+    _fallback_calls.append(text)
+    # Shorter than the original (so compress_file's own gate lets it through
+    # to validate()) but with a renamed heading, so validate() always rejects
+    # it as structurally changed — every attempt exhausts into the fallback.
+    return "# X\n\nText.\n"
+
+_real_c_api2, _real_m_api2 = SC.call_semantic_api, M.call_semantic_api
+SC.call_semantic_api = M.call_semantic_api = _fake_semantic_invalid
+sys.argv = ["scripts", "--api", str(fallback_live)]
+try:
+    with contextlib.redirect_stdout(io.StringIO()) as fallback_out:
+        try:
+            M.main()
+        except SystemExit:
+            pass
+finally:
+    SC.call_semantic_api, M.call_semantic_api = _real_c_api2, _real_m_api2
+    sys.argv = old_argv
+
+truthy("pipeline", "cli: fallback test actually exercised the semantic pass", len(_fallback_calls) >= 1)
+check("pipeline", "cli: non-shortening rule-based fallback leaves live file byte-identical",
+      fallback_live.read_text(), fallback_original)
+check("pipeline", "cli: non-shortening rule-based fallback is not reported as promoted",
+      "kept rule-based result" in fallback_out.getvalue(), False)
+check("pipeline", "cli: non-shortening rule-based fallback cleans up backup file",
+      (TMP / "fallback_noop.md.original.md").exists(), False)
+
+# Regression: the retry-preparation branch (attempt 0/1, not the attempt==2
+# fallback above) built its `compressed` candidate from rule_compress(original)
+# and, when the semantic retry raised RuntimeError, staged that candidate
+# unconditionally — with no is_shorter_than gate — so a rule_compress no-op
+# text validated structurally on the next loop iteration and got promoted as
+# a "compression" that saved 0.0%.
+noshrink_live = write("noshrink_retry.md", "# T\n\nText.\n")
+noshrink_original = noshrink_live.read_text()
+_noshrink_calls = []
+
+
+def _fake_semantic_noshrink(text, model=None):
+    _noshrink_calls.append(text)
+    if len(_noshrink_calls) == 1:
+        # Shorter than the original (passes compress_file's own gate) but with
+        # a renamed heading, so validate() rejects it and forces a retry.
+        return "# X\n\nTxt.\n"
+    raise RuntimeError("semantic API unavailable")
+
+
+_real_c_api3, _real_m_api3 = SC.call_semantic_api, M.call_semantic_api
+SC.call_semantic_api = M.call_semantic_api = _fake_semantic_noshrink
+sys.argv = ["scripts", "--api", str(noshrink_live)]
+noshrink_exit = None
+try:
+    with contextlib.redirect_stdout(io.StringIO()):
+        try:
+            M.main()
+        except SystemExit as e:
+            noshrink_exit = e.code
+finally:
+    SC.call_semantic_api, M.call_semantic_api = _real_c_api3, _real_m_api3
+    sys.argv = old_argv
+
+truthy("pipeline", "cli: no-shrink retry test actually exercised both semantic calls",
+       len(_noshrink_calls) >= 2)
+check("pipeline", "cli: retry candidate that fails to shrink after RuntimeError leaves live file byte-identical",
+      noshrink_live.read_text(), noshrink_original)
+check("pipeline", "cli: retry candidate that fails to shrink after RuntimeError cleans up backup file",
+      (TMP / "noshrink_retry.md.original.md").exists(), False)
+check("pipeline", "cli: retry candidate that fails to shrink after RuntimeError exits non-zero",
+      noshrink_exit, 1)
+
 shutil.rmtree(TMP, ignore_errors=True)
 
 if failures:
@@ -790,6 +940,6 @@ if failures:
 total = sum(counts.values())
 print(f"ok   compress: {counts['compress']} checks — masking round-trip, idempotence, rule families, fenced+indented+collision regressions")
 print(f"ok   validate: {counts['validate']} checks — fence scanner edges (masker agrees), every validator accept+reject")
-print(f"ok   detect:   {counts['detect']} checks — 18 file classes plus unknown/backup/missing refusals")
+print(f"ok   detect:   {counts['detect']} checks — 19 file classes plus unknown/backup/missing refusals")
 print(f"ok   pipeline: {counts['pipeline']} checks — guard ladder, backup integrity, secret and sensitive-name gates")
 print(f"ok   compress-pipeline: {total} checks passed")

@@ -730,6 +730,20 @@ def is_sensitive(path: Path) -> bool:
     return _sensitive_match(path) is not None
 
 
+def is_shorter_than(candidate: str, original: str) -> bool:
+    """True when `candidate` is a real compression of `original`.
+
+    Every candidate has to pass this, not just the first one: validate() only
+    checks structural invariants (headings, code blocks, URLs), so a semantic
+    rewrite that expands the prose while keeping the structure intact is
+    reported as a successful compression and written over the file. Equal
+    length is a reject too — a compression that saved nothing is not one.
+    Compared on stripped text so a trailing-newline difference alone cannot
+    decide it.
+    """
+    return len(candidate.strip()) < len(original.strip())
+
+
 def _should_compress(filepath: Path) -> bool:
     """Delegate to detect.should_compress; import works under -m or standalone."""
     try:
@@ -801,6 +815,16 @@ def compress_file(filepath: Path, use_api: bool = False, model: str = DEFAULT_MO
     # Check for no-op
     if compressed.strip() == original.strip():
         return {"status": "skip", "reason": "Output identical to input (already compressed)"}
+
+    # A candidate that is not strictly shorter is a failed compression, and is
+    # rejected on the same path the exact no-op takes — before the backup is
+    # written and before anything reaches `write_to`/`filepath`.
+    # ecomono: with --api an expanding semantic pass aborts the whole run
+    # rather than falling back to the (smaller) rule-based result; rerun
+    # without --api. Upgrade path: fall back to the rule-based candidate
+    # the way __main__.py's validation-failure branch already does.
+    if not is_shorter_than(compressed, original):
+        return {"status": "skip", "reason": "Output not smaller than input; refusing to expand the file"}
 
     # Write backup
     backup.write_text(original, encoding="utf-8")

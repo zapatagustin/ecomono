@@ -100,13 +100,17 @@ def extract_headings(text):
     return [(level, title.strip()) for level, title in HEADING_REGEX.findall(text)]
 
 
-def extract_code_blocks(text):
+def extract_code_blocks(text, with_positions=False):
     """Line-based fenced code block extractor.
 
     Handles ``` and ~~~ fences with variable length (CommonMark: closing
     fence must use same char and be at least as long as opening). Supports
     nested fences (e.g. an outer 4-backtick block wrapping inner 3-backtick
     content).
+
+    `with_positions` returns (start_line, block_text) pairs instead of bare
+    text, so a caller can merge fenced and indented blocks in document order
+    — see _ordered_code_blocks.
     """
     blocks = []
     lines = text.split("\n")
@@ -117,6 +121,7 @@ def extract_code_blocks(text):
         if not m:
             i += 1
             continue
+        start = i
         fence_char = m.group(2)[0]
         fence_len = len(m.group(2))
         open_line = lines[i]
@@ -146,8 +151,8 @@ def extract_code_blocks(text):
             # document's trailing blank lines rather than counting them as code.
             while block_lines and not block_lines[-1].strip():
                 block_lines.pop()
-        blocks.append("\n".join(block_lines))
-    return blocks
+        blocks.append((start, "\n".join(block_lines)))
+    return blocks if with_positions else [body for _, body in blocks]
 
 
 INDENTED_CODE_INDENT = 4
@@ -186,8 +191,11 @@ def _blank_fenced_regions(text):
     return out
 
 
-def extract_indented_blocks(text):
+def extract_indented_blocks(text, with_positions=False):
     """CommonMark indented code blocks — 4+ spaces, fenced regions excluded.
+
+    `with_positions` returns (start_line, block_text) pairs — see
+    extract_code_blocks.
 
     A run counts as code only when a blank line or the start of the document
     precedes it; an indented line continuing the paragraph above is prose. Blank
@@ -205,6 +213,7 @@ def extract_indented_blocks(text):
     while i < n:
         line = lines[i]
         if prev_blank and line.startswith(pad) and line.strip():
+            start = i
             run = []
             while i < n:
                 cur = lines[i]
@@ -222,12 +231,12 @@ def extract_indented_blocks(text):
                         break
                 else:
                     break
-            blocks.append("\n".join(run))
+            blocks.append((start, "\n".join(run)))
             prev_blank = False
             continue
         prev_blank = not line.strip()
         i += 1
-    return blocks
+    return blocks if with_positions else [body for _, body in blocks]
 
 
 def extract_urls(text):
@@ -286,9 +295,23 @@ def validate_headings(orig, comp, result):
         result.add_error("Heading text/order changed")
 
 
+def _ordered_code_blocks(text):
+    """Every code block — fenced and indented — in document order.
+
+    Concatenating the two extractors instead groups by TYPE, which loses the
+    relative order between a fenced block and an indented one: a compressed
+    file that swapped them produces the same list as the original, so
+    validate_code_blocks reports "preserved exactly" on a document whose code
+    actually moved. Sorting the merged pairs by start line compares position
+    as well as content.
+    """
+    merged = extract_code_blocks(text, with_positions=True) + extract_indented_blocks(text, with_positions=True)
+    return [body for _, body in sorted(merged, key=lambda pair: pair[0])]
+
+
 def validate_code_blocks(orig, comp, result):
-    c1 = extract_code_blocks(orig) + extract_indented_blocks(orig)
-    c2 = extract_code_blocks(comp) + extract_indented_blocks(comp)
+    c1 = _ordered_code_blocks(orig)
+    c2 = _ordered_code_blocks(comp)
 
     if c1 != c2:
         result.add_error("Code blocks not preserved exactly")

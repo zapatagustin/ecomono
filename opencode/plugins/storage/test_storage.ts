@@ -224,5 +224,40 @@ assert.throws(() => Prompts.savePrompt("sess-1", "   "), /prompt content is requ
 const promptCountAfter = (db.query("SELECT COUNT(*) c FROM prompts").get() as any).c
 assert(promptCountAfter === promptCountBefore, "rejected savePrompt() leaves no row behind")
 
+// --- query plan: FTS stays the driving table even with stats (engram #947/#977) ---
+// Both FTS queries join observations_fts to observations. With a plain INNER
+// JOIN the planner is free to pick the outer table, and once sqlite_stat1
+// exists it picks idx_obs_project — re-evaluating MATCH once per outer row
+// ("SCAN ... VIRTUAL TABLE INDEX 0:=M3", the '=' marking a constrained rowid
+// lookup) instead of once for the whole query. Measured 2.78 ms vs 0.15 ms on
+// 20k rows. Nothing here runs ANALYZE today, which is exactly why this is a
+// latent bug: a sqlite3 CLI session or a future migration flips it silently.
+// This test forces the stats into existence and pins the driving table.
+const PLAN_PROJECTS = 100
+const PLAN_ROWS = 2000
+db.run("BEGIN")
+const planProject = db.prepare("INSERT OR IGNORE INTO projects (id, name) VALUES (?, ?)")
+const planObs = db.prepare("INSERT INTO observations (project_id, title, type, scope, content, topic_key) VALUES (?, ?, ?, ?, ?, ?)")
+for (let p = 0; p < PLAN_PROJECTS; p++) planProject.run(`planproj${p}`, `planproj${p}`)
+for (let i = 0; i < PLAN_ROWS; i++) {
+  planObs.run(`planproj${i % PLAN_PROJECTS}`, `plan title ${i}`, "discovery", "project", `planword${i % 37} filler body text`, `plankey${i % 11}`)
+}
+db.run("COMMIT")
+db.run("ANALYZE")
+assert((db.query("SELECT COUNT(*) c FROM sqlite_master WHERE name='sqlite_stat1'").get() as any).c === 1, "ANALYZE produced the stats the planner reads")
+
+const firstStep = (sql: string, params: any[]): string =>
+  (db.query("EXPLAIN QUERY PLAN " + sql).all(...params) as any[])[0].detail
+
+const searchBuilt = Obs.buildSearchSql({ query: "planword3", project: "planproj1", limit: 10 })!
+const searchStep = firstStep(searchBuilt.sql, searchBuilt.params)
+assert(/^SCAN .*\bobservations_fts\b|^SCAN fts\b/.test(searchStep),
+  `search() must drive from the FTS table, not from observations; got: ${searchStep}`)
+
+const Conf = await import("./conflicts")
+const conflictStep = firstStep(Conf.FTS_CANDIDATE_SQL, ['"planword3"', "planproj1", -1])
+assert(/^SCAN .*\bobservations_fts\b/.test(conflictStep),
+  `findCandidates() must drive from the FTS table, not from observations; got: ${conflictStep}`)
+
 closeDb()
 console.log("✓ storage: all assertions passed")

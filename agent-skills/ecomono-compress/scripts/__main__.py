@@ -16,7 +16,7 @@ import stat
 import sys
 import tempfile
 from pathlib import Path
-from .compress import compress_file, rule_compress, call_semantic_api, atomic_write_text, DEFAULT_MODEL
+from .compress import compress_file, rule_compress, call_semantic_api, atomic_write_text, is_shorter_than, DEFAULT_MODEL
 from .validate import validate
 
 
@@ -99,11 +99,16 @@ def main():
                 if use_api:
                     # Semantic output never validated — fall back to the rule-based
                     # result (Phase 1) rather than discarding all compression.
-                    atomic_write_text(staged, rule_compress(original_text))
-                    if validate(backup, staged).is_valid:
-                        _promote(staged, fp)
-                        print("   ⚠️  Semantic pass failed validation — kept rule-based result")
-                        break
+                    # is_shorter_than guards this the same way compress_file() and
+                    # the retry branch above do: an equal-or-longer rule-based
+                    # result is not a compression and must not be promoted.
+                    rule_result = rule_compress(original_text)
+                    if is_shorter_than(rule_result, original_text):
+                        atomic_write_text(staged, rule_result)
+                        if validate(backup, staged).is_valid:
+                            _promote(staged, fp)
+                            print("   ⚠️  Semantic pass failed validation — kept rule-based result")
+                            break
                 # fp was never touched — every candidate was validated on `staged`
                 # first — so it is already byte-identical to the pre-run original.
                 print("   ❌ Validation failed. Original left untouched.")
@@ -113,9 +118,24 @@ def main():
             print(f"   🔄 Recompressing (attempt {attempt + 2})...")
             compressed = rule_compress(original_text)
             try:
-                compressed = call_semantic_api(compressed, model=model)
+                semantic = call_semantic_api(compressed, model=model)
+                # A retry candidate bypasses compress_file, so the non-expansion
+                # rule is applied here too — otherwise a repair that pads the
+                # prose back out validates and gets promoted as a "compression".
+                if is_shorter_than(semantic, original_text):
+                    compressed = semantic
+                else:
+                    print("   ⚠️  Semantic pass expanded the text — kept rule-based result")
             except RuntimeError as e:
                 print(f"   ⚠️  Semantic pass skipped: {e}")
+
+            if not is_shorter_than(compressed, original_text):
+                # Neither the rule-based nor semantic candidate is shorter than
+                # the original — nothing worth staging for the next validation
+                # pass. Same "leave the original untouched" exit as above.
+                print("   ❌ Validation failed. Original left untouched.")
+                backup.unlink(missing_ok=True)
+                sys.exit(1)
             atomic_write_text(staged, compressed)  # re-validated at the top of the next iteration
     finally:
         staged.unlink(missing_ok=True)  # no-op once os.replace has consumed it
