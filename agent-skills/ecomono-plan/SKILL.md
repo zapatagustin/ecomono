@@ -44,12 +44,16 @@ A task failing this test is not a task, it is a note to yourself.
    done. "Tests pass" is not a verification; the test name is.
 5. **Name the ceiling** of any deliberate shortcut, with its upgrade trigger, so
    it lands as an `ecomono:` comment in the code rather than as folklore.
+6. **Name the review focus.** Up to five failure modes or input classes the spec
+   implies that no task's verification exercises, most likely to bite first. Each
+   one gets pinned by a test in the task that owns that code, or is dropped with
+   a one-line reason.
 
 ## Output
 
 An ordered checklist. Per task: the files, the end condition, the verification,
-and whether it runs isolated or inline. Plus one line for what was cut and when
-it would be worth adding.
+and whether it runs isolated or inline. Then the review focus list. Plus one line
+for what was cut and when it would be worth adding.
 
 Then ask whether the plan captures what they want, and stop. Writing the plan
 is not executing it.

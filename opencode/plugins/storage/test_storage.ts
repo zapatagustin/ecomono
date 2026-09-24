@@ -49,6 +49,8 @@ assert(scores[0].score < scores[1].score && scores[0].id === titleHit.id, "more 
 // --- topic_key indexed: a term appearing ONLY in topic_key is findable ---
 const topicOnlyMatch = Obs.save({ title: "generic title", content: "generic body", topic_key: "quibblewhatsit-key", project: "topickeyproj" })!
 assert(Obs.search({ query: "quibblewhatsit", project: "topickeyproj" }).length === 1, "topic_key-only term is findable via search")
+// engram #1214: search rows carry topic_key so callers need no follow-up get
+assert(Obs.search({ query: "quibblewhatsit", project: "topickeyproj" })[0].topic_key === "quibblewhatsit-key", "search result includes topic_key")
 
 // --- topic_key weighting: title(5.0) ranks above topic_key(3.0), which ranks above content-only(1.0) ---
 const titleHit2 = Obs.save({ title: "sprocket rollout plan", content: "unrelated body", project: "topicrank" })!
@@ -124,6 +126,14 @@ assert(Prompts.getPrompts("sess-1").length === 1, "prompt saved and fetched")
 
 // --- topic key helper ---
 assert(Obs.suggestTopicKey("Auth Model v2!") === "auth-model-v2", "topic key slugifies")
+// engram #1213: unicode-only titles must not all collapse to "untitled"
+const cjkKey = Obs.suggestTopicKey("認証モデル")
+const cyrKey = Obs.suggestTopicKey("Модель авторизации")
+assert(/^u-[0-9a-f]{6}$/.test(cjkKey) && cjkKey !== cyrKey, "unicode-only titles get distinct hash-tagged keys")
+assert(Obs.suggestTopicKey("認証モデル") === cjkKey, "unicode topic key is deterministic")
+assert(/^auth-model-u-[0-9a-f]{6}$/.test(Obs.suggestTopicKey("Auth Model — 認証")), "mixed title keeps readable slug plus hash tag")
+assert(Obs.suggestTopicKey("!!!") === "untitled", "ASCII-only punctuation still falls back to untitled")
+assert(Obs.suggestTopicKey("café".normalize("NFC")) === Obs.suggestTopicKey("café".normalize("NFD")), "NFC and NFD spellings of the same title hash to the same topic key")
 
 // --- review_after decay (engram #481): stamped per type at save time ---
 const decisionObs = Obs.save({ title: "Chose event bus", content: "why", type: "decision", project: "reviewproj" })!

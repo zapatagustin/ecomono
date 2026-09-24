@@ -56,6 +56,10 @@ assertion and the cause inline; leave the tracebacks in the subagent.
 Exception: the single decisive run whose output you must quote as proof stays
 inline. Delegate the loop, not the evidence.
 
+"The suite" is the project's full test command, not the file you touched. A task
+scoped to one test file does not bound the verification. Report every failure by
+name, including the ones that were already failing before your change.
+
 ## Output
 
 The test, the implementation, and the command output showing red then green. If

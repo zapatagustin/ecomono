@@ -10,7 +10,7 @@ BUN="$(command -v bun 2>/dev/null || { [ -x "$HOME/.bun/bin/bun" ] && echo "$HOM
 # (curl | bash) nor flake.nix (pkgs.bun from nixpkgs) pins bun, so the mismatch is
 # normal, not a misconfiguration. Bump this line in the same commit as any bundle
 # rebuilt with a newer bun.
-BUN_BUNDLE_VERSION="1.3.13"
+BUN_BUNDLE_VERSION="1.4.2"
 BUN_VERSION="$("$BUN" --version 2>/dev/null)" \
   || { echo "error: '$BUN --version' failed — bun is present but not runnable" >&2; exit 1; }
 

@@ -106,7 +106,7 @@ export function buildSearchSql(opts: SearchOpts): { sql: string; params: any[] }
   // re-evaluates MATCH once per outer row (2.78 ms vs 0.15 ms on 20k rows). A
   // 2026-08 review closed this as N/A on byte-identical plans; that was
   // measured on a DB with no stats, where FTS-first happens to win anyway.
-  let sql = "SELECT o.id, o.title, o.content, o.type, o.created_at, o.project_id as project FROM observations_fts fts CROSS JOIN observations o ON o.id = fts.rowid WHERE observations_fts MATCH ? AND o.state = 'active'"
+  let sql = "SELECT o.id, o.title, o.content, o.type, o.topic_key, o.created_at, o.project_id as project FROM observations_fts fts CROSS JOIN observations o ON o.id = fts.rowid WHERE observations_fts MATCH ? AND o.state = 'active'"
   const params: any[] = [terms]
 
   if (opts.project && !opts.all_projects) {
@@ -135,7 +135,7 @@ export function buildSearchSql(opts: SearchOpts): { sql: string; params: any[] }
   return { sql, params }
 }
 
-export function search(opts: SearchOpts): { id: number; title: string; content: string; type: string; created_at: string; project: string }[] {
+export function search(opts: SearchOpts): { id: number; title: string; content: string; type: string; topic_key: string | null; created_at: string; project: string }[] {
   const db = getDb()
   const built = buildSearchSql(opts)
   if (!built) return []
@@ -214,7 +214,17 @@ export function timeline(project?: string, limit?: number): { id: number; title:
 }
 
 export function suggestTopicKey(title: string): string {
-  return title.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "") || "untitled"
+  // Normalized once up front so NFC and NFD spellings of the same title
+  // (e.g. "café" as one precomposed rune vs "e" + combining acute) hash and
+  // slugify identically instead of producing two distinct u-xxxxxx tags.
+  const normalized = title.normalize("NFC")
+  const slug = normalized.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "")
+  // The ASCII slug drops every non-ASCII rune, so two unrelated unicode titles
+  // would collide on the same key (engram #1213). A short hash of the source
+  // keeps them distinct while the slug stays readable.
+  if (!/[^\x00-\x7f]/.test(normalized)) return slug || "untitled"
+  const tag = "u-" + createHash("sha256").update(normalized).digest("hex").slice(0, 6)
+  return slug ? `${slug}-${tag}` : tag
 }
 
 export function stats(project?: string): { observations: number; sessions: number; needs_review: number } {
