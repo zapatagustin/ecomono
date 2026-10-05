@@ -26,12 +26,19 @@ export const SkillRegistryPlugin: Plugin = async (input) => {
 
     try {
       await execFileAsync(
-        process.execPath,
+        // Not process.execPath: inside opencode that is the opencode binary itself
+        // (a compiled Bun image), which cannot run a script by argv. The flake ships
+        // nodejs and install.sh warns when it is missing, so resolve node from PATH.
+        "node",
         [GENERATOR, "--quiet", "--cwd", cwd],
         { timeout: 30_000 },
       )
     } catch (err) {
-      console.error("[skill-registry] refresh failed:", err)
+      if ((err as { code?: string }).code === "ENOENT") {
+        console.error("[skill-registry] node not on PATH; skill registry not refreshed")
+      } else {
+        console.error("[skill-registry] refresh failed:", err)
+      }
     }
   }
 
