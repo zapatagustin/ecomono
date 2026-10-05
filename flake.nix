@@ -91,7 +91,6 @@
           # guard.
           xdg.configFile = {
             "opencode/tui-plugins".source = ./opencode/tui-plugins;
-            "opencode/package.json".source = ./opencode/package.json;
           # The type allow-list keeps a special file from ever becoming a `source`
           # entry. Be clear about what it does NOT do, because the first version of
           # this comment claimed the fix and the claim did not survive being tested:
@@ -121,6 +120,23 @@
                   && !(lib.hasSuffix ".hm-bak" name)
                   && !(lib.hasSuffix ".bak" name))
                   (builtins.readDir ./opencode/plugins));
+
+          # opencode re-pins @opencode-ai/plugin in ~/.config/opencode/package.json
+          # to its own version on every start and kicks off a background install.
+          # A read-only store symlink there fails that with EACCES on every launch
+          # (an error line and ~0.3 s). Deploy a writable copy instead, after Home
+          # Manager has removed any symlink it used to own there, and reseed it only
+          # when the repo file changes (tracked by package.json.seed). opencode owns
+          # the pin in between and re-pins again after a reseed.
+          home.activation.ecomonoOpencodePackageJson = lib.hm.dag.entryAfter [ "linkGeneration" ] ''
+            pkgjson="${config.xdg.configHome}/opencode/package.json"
+            seed=${./opencode/package.json}
+            if [ -L "$pkgjson" ] || [ ! -e "$pkgjson" ] || ! cmp -s "$seed" "$pkgjson.seed"; then
+              $DRY_RUN_CMD rm -f "$pkgjson"
+              $DRY_RUN_CMD install -D -m 0644 "$seed" "$pkgjson"
+              $DRY_RUN_CMD install -m 0644 "$seed" "$pkgjson.seed"
+            fi
+          '';
 
           # Imperative bits Nix can't own: user-scope plugins/MCP live under
           # runtime-managed state, so register them idempotently on activation.

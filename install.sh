@@ -57,7 +57,15 @@ fi
 log "linking opencode config -> $OC"
 link "$REPO/opencode/AGENTS.md"    "$OC/AGENTS.md"
 link "$REPO/opencode/opencode.json" "$OC/opencode.json"
-link "$REPO/opencode/package.json" "$OC/package.json"
+# package.json is copied, not linked: opencode rewrites it on every start
+# (re-pins @opencode-ai/plugin to its own version), and through a link that
+# would dirty the repo on each upgrade. Re-copied only when the repo file
+# changes (tracked by package.json.seed); opencode owns the pin in between.
+if [ -L "$OC/package.json" ] || [ ! -e "$OC/package.json" ] || ! cmp -s "$REPO/opencode/package.json" "$OC/package.json.seed"; then
+  rm -f "$OC/package.json"
+  cp "$REPO/opencode/package.json" "$OC/package.json"
+  cp "$REPO/opencode/package.json" "$OC/package.json.seed"
+fi
 link "$REPO/opencode/commands"     "$OC/commands"
 link "$REPO/opencode/tui-plugins"  "$OC/tui-plugins"
 # tui.json embeds an absolute plugin path (JSON can't expand $HOME) -> patch it.

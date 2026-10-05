@@ -1470,7 +1470,9 @@ reads the variable first, which is both the documented semantics and what lets a
 a fixture. And the tests live in a subdirectory because opencode auto-loads every `.ts`
 directly under `plugins/`: `opencode debug info` lists `cave-compress.ts` and
 `skill-registry.ts` as loaded although `opencode.json` names only `memory.ts`. A test file at
-that level would be loaded as a plugin on every session start.
+that level would be loaded as a plugin on every session start. For the same reason the
+pure helpers live in `opencode/plugins/cave-compress/core.ts`: opencode treats every export of a
+top-level `plugins/*.ts` as a plugin factory; subdirectories are not scanned.
 
 That auto-load also exposed a drift class rather than closing one. `install.sh` links every
 child of `opencode/plugins/`; `flake.nix` listed them by hand, so a plugin added to the

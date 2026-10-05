@@ -208,11 +208,13 @@ or just copy `claude/settings.template.json` from a checkout.
 
 ## Uninstall
 
-Almost every top-level entry the installer lays down is a symlink. The two exceptions
-are real files, not symlinks, so the removals below don't touch them:
-`~/.claude/settings.json` (seeded once, left alone on later runs) and
-`~/.config/opencode/tui.json` (a patched copy the installer rewrites every run). Delete
-either yourself if you want it gone too. `~/.claude/skills`, `~/.agents/skills`,
+Almost every top-level entry the installer lays down is a symlink. Two are real files,
+so the symlink removals below skip them: `~/.claude/settings.json` (seeded once, left alone
+on later runs) and `~/.config/opencode/tui.json` (a patched copy the installer rewrites
+every run). Delete either yourself if you want it gone too. `package.json` is copied too,
+and re-copied when the repo file changes, because opencode rewrites it at startup to
+re-pin its plugin SDK; the `rm` below removes it along with its `package.json.seed` stamp.
+`~/.claude/skills`, `~/.agents/skills`,
 `~/.config/opencode/skills`, and `~/.config/opencode/plugins` are also real dirs (created
 by `mkdir -p` for `link_children`) and are left behind after uninstall — only their
 symlinked children are removed below.
@@ -223,7 +225,7 @@ Remove the top-level symlinks:
 rm ~/.claude/CLAUDE.md ~/.claude/agents ~/.claude/commands ~/.claude/hooks \
    ~/.claude/output-styles ~/.claude/themes
 rm ~/.config/opencode/AGENTS.md ~/.config/opencode/opencode.json \
-   ~/.config/opencode/package.json ~/.config/opencode/commands ~/.config/opencode/tui-plugins
+   ~/.config/opencode/package.json ~/.config/opencode/package.json.seed ~/.config/opencode/commands ~/.config/opencode/tui-plugins
 ```
 
 Those four dirs' *children* are symlinked one at a time (`link_children`), and that

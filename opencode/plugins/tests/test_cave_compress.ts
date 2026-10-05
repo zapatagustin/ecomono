@@ -1,5 +1,5 @@
 /**
- * Tests for the pure compression functions in ../cave-compress.ts.
+ * Tests for the pure compression functions in ../cave-compress/core.ts.
  *
  * Scope: the CRLF-dominant handling added this session — isCrlfDominant itself,
  * and the three truncation/collapse functions that use it to pick a synthesized
@@ -17,7 +17,7 @@ import {
   truncateWithToolBudget,
   truncateByChars,
   truncateLongOutput,
-} from "../cave-compress"
+} from "../cave-compress/core"
 
 // ── isCrlfDominant ───────────────────────────────────────────────────────────
 
