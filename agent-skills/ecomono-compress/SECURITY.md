@@ -9,9 +9,9 @@ no-network process; Phase 2, opt-in only, makes a real external HTTP call.
    regex transformations (filler removal, phrase replacement, article removal, etc.) entirely
    in-process. No network access, no credentials, no session tokens consumed.
 2. **Phase 2 — semantic pass (optional, `--api` flag only)** — `compress.py`'s
-   `call_semantic_api()` sends the Phase-1-compressed text as a prompt to the Groq API
-   (`https://api.groq.com/openai/v1/chat/completions`, model
-   `meta-llama/llama-4-scout-17b-16e-instruct`) and uses the returned completion as the final
+   `call_semantic_api()` sends the Phase-1-compressed text as a prompt to OpenCode Go
+   (`https://opencode.ai/zen/go/v1/chat/completions`, OpenAI-compatible, model
+   `glm-5.3-flash`) and uses the returned completion as the final
    compressed output. This is a real external API call and does transmit file content off the
    machine.
 3. **Python validates deterministically** — `scripts/validate.py` (pure stdlib) diffs original
@@ -25,12 +25,15 @@ so the flag alone does not gate the network call; the absent key does.
 
 ## Credentials (Phase 2 only)
 
-When `--api` is passed, `_read_api_key()` reads a Groq API key from, in order:
+When `--api` is passed, `_read_api_key()` reads the OpenCode API key from, in order:
 
-1. `GROQ_API_KEY` environment variable
-2. `/run/secrets/opencode/groq-api-key` file
+1. `OPENCODE_API_KEY` environment variable
+2. `/run/secrets/opencode/opencode-api-key` file (sops-nix on NixOS)
+3. the `opencode` entry (`type: api`) in `~/.local/share/opencode/auth.json`, the store
+   `opencode auth login` writes (absolute `XDG_DATA_HOME` only; empty or relative values are ignored per the XDG spec)
 
-If neither is present, the semantic call raises and the CLI falls back to the Phase 1
+A key containing whitespace or control characters is rejected (never sent, never logged) and the
+ladder continues to the next source. If none of these is present, the semantic call raises and the CLI falls back to the Phase 1
 rule-based result — no request is sent without a key.
 
 ## What the skill does
@@ -39,14 +42,15 @@ rule-based result — no request is sent without a key.
 - Reads the file content
 - Phase 1 (always): compresses that content locally, no network
 - Phase 2 (only with `--api`): sends the Phase-1 output — not the raw original file — to the
-  Groq chat completions API over HTTPS, using the credential above
+  OpenCode Go chat completions endpoint over HTTPS, using the credential above; each pass sends a fresh
+  `x-opencode-session` header (Go routing requirement) and nothing else identifying
 - Writes a compressed version and `.original.md` backup
 
 ## What the skill does NOT do
 
 - Does not execute user file content as code
 - Without `--api`, does not make any network request
-- With `--api`, only ever contacts the Groq chat completions endpoint — no other host,
+- With `--api`, only ever contacts the OpenCode Go chat completions endpoint — no other host,
   no telemetry, no analytics
 - Does not use shell=True or string interpolation
 - Does not access files outside the path the user provides

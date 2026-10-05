@@ -43,30 +43,39 @@ It fetches **no binaries**. The `gentle-ai` dependency is gone: its skill-regist
 generator was reimplemented as `claude/hooks/ecomono-skill-registry.js`, and its
 SDD dispatchers only ever read an `openspec/` layout this setup does not use.
 
-### Provider credentials are not shipped here
-
-`opencode/opencode.json` declares each provider's `baseURL` and model list, and
-deliberately **no `apiKey`**. Use `opencode auth login`, which works on every
-platform.
-
-This used to carry `"apiKey": "{file:/run/secrets/...}"` for all five providers.
-Those paths only exist on a NixOS host running sops-nix, and `install.sh` links
-`opencode.json` verbatim rather than patching it the way it patches `tui.json` — so
-on Arch, Debian or any generic install the credentials silently pointed at files
-that were never going to be there. A repo that installs on four platforms has no
-business hardcoding one platform's secret store.
-
-A NixOS consumer that does have sops-nix can still inject them, since
-`programs.opencode.settings` merges per key:
-
-```nix
-programs.opencode.settings.provider.groq.options.apiKey =
-  "{file:/run/secrets/opencode/groq-api-key}";
-```
-
 It **checks** — but does not install — `node`, `claude`, `opencode`, and `bun`,
 printing a distro-specific hint if any is missing (those belong to your package
 manager).
+
+### Provider credentials are not shipped here
+
+Models come from OpenCode's built-in `opencode-go` provider (the OpenCode Go
+subscription), so `opencode/opencode.json` pins a model per agent and declares
+no provider block for it and no `apiKey` anywhere. Authenticate once with
+`opencode auth login` (or `/connect` in the TUI); it works on every platform,
+and the `ecomono-compress` skill's optional `--api` pass reads that same key.
+
+A NixOS consumer running sops-nix can inject the key instead, since
+`programs.opencode.settings` merges per key; `ecomono-compress` reads the same
+file as its second choice after `OPENCODE_API_KEY`:
+
+```nix
+programs.opencode.settings.provider."opencode-go".options.apiKey =
+  "{file:/run/secrets/opencode/opencode-api-key}";
+```
+
+`provider.anthropic` stays as an empty placeholder no agent uses today, open to
+the same injection.
+
+Earlier versions declared `baseURL` and model lists for four API-key providers
+(nvidia, groq, cerebras, openrouter), and before that their `apiKey` as
+`{file:/run/secrets/...}`. Those paths only exist on a NixOS host running
+sops-nix, and `install.sh` links `opencode.json` verbatim rather than patching
+it the way it patches `tui.json` — so on Arch, Debian or any generic install the
+credentials silently pointed at files that were never going to be there. A repo
+that installs on four platforms has no business hardcoding one platform's
+secret store. A NixOS consumer still injecting those four keys can drop them;
+nothing reads them any more.
 
 ### Permission posture
 

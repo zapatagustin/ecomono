@@ -20,10 +20,13 @@ masker and the validator shared a blind spot, so the pair agreed on a wrong
 answer — which is why the fence and indent cases are fed to BOTH and required to
 match rather than each being checked alone.
 """
+import json
+import os
 import shutil
 import sys
 import tempfile
 from pathlib import Path
+from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).parent))
 import compress as C  # noqa: E402
@@ -31,7 +34,7 @@ import detect as D  # noqa: E402
 import validate as V  # noqa: E402
 
 failures = []
-counts = {"compress": 0, "validate": 0, "detect": 0, "pipeline": 0}
+counts = {"compress": 0, "validate": 0, "detect": 0, "pipeline": 0, "keys": 0}
 
 
 def check(area, label, got, want):
@@ -930,6 +933,141 @@ check("pipeline", "cli: retry candidate that fails to shrink after RuntimeError 
 check("pipeline", "cli: retry candidate that fails to shrink after RuntimeError exits non-zero",
       noshrink_exit, 1)
 
+# ===========================================================================
+# Key ladder — env > API_KEY_FILE > auth.json; every malformed rung falls
+# through to None instead of raising, and the CLI keeps the rule-based result.
+# ===========================================================================
+
+KD = Path(tempfile.mkdtemp(prefix="ecomono-keys-test-"))
+(KD / "opencode").mkdir()
+AUTHJ = KD / "opencode" / "auth.json"
+KFILE = KD / "keyfile"
+_real_key_file = C.API_KEY_FILE
+
+
+def ladder(env=None, keyfile=None, auth=None, raw=None):
+    """Run _read_api_key under an isolated env/API_KEY_FILE/auth.json."""
+    AUTHJ.unlink(missing_ok=True)
+    KFILE.unlink(missing_ok=True)
+    if keyfile is not None:
+        KFILE.write_text(keyfile)
+    if auth is not None:
+        AUTHJ.write_text(json.dumps(auth))
+    if raw is not None:
+        AUTHJ.write_text(raw)
+    e = {"XDG_DATA_HOME": str(KD)}
+    e.update(env or {})
+    C.API_KEY_FILE = KFILE
+    try:
+        with mock.patch.dict(os.environ, e):
+            if "OPENCODE_API_KEY" not in e:
+                os.environ.pop("OPENCODE_API_KEY", None)
+            return C._read_api_key()
+    finally:
+        C.API_KEY_FILE = _real_key_file
+
+
+try:
+    GOOD = {"opencode": {"type": "api", "key": "auth-key"}}
+    check("keys", "env wins", ladder({"OPENCODE_API_KEY": " env-key "}, "file-key", GOOD), "env-key")
+    check("keys", "file beats auth.json", ladder(None, "file-key\n", GOOD), "file-key")
+    check("keys", "empty file falls through", ladder(None, "  \n", GOOD), "auth-key")
+    check("keys", "auth.json api key", ladder(None, None, GOOD), "auth-key")
+    check("keys", "oauth type -> None", ladder(None, None, {"opencode": {"type": "oauth", "key": "x"}}), None)
+    check("keys", "top-level list -> None", ladder(None, None, []), None)
+    check("keys", "opencode str -> None", ladder(None, None, {"opencode": "str"}), None)
+    check("keys", "invalid json -> None", ladder(None, None, None, "{nope"), None)
+    check("keys", "non-str key -> None", ladder(None, None, {"opencode": {"type": "api", "key": 5}}), None)
+
+    with mock.patch.dict(os.environ, {"XDG_DATA_HOME": ""}):
+        af = C._auth_file()
+        truthy("keys", "empty XDG -> absolute under home", af.is_absolute() and Path.home() in af.parents)
+    with mock.patch.dict(os.environ, {"XDG_DATA_HOME": "relative/dir"}):
+        truthy("keys", "relative XDG ignored", Path.home() in C._auth_file().parents)
+    with mock.patch.dict(os.environ, {"XDG_DATA_HOME": str(KD)}):
+        truthy("keys", "XDG honoured lazily", KD in C._auth_file().parents)
+
+    if os.geteuid() != 0:
+        AUTHJ.write_text(json.dumps(GOOD))
+        KFILE.write_text("file-key")
+        KFILE.chmod(0o000)
+        C.API_KEY_FILE = KFILE
+        try:
+            with mock.patch.dict(os.environ, {"XDG_DATA_HOME": str(KD)}):
+                os.environ.pop("OPENCODE_API_KEY", None)
+                check("keys", "unreadable file falls through", C._read_api_key(), "auth-key")
+        finally:
+            C.API_KEY_FILE = _real_key_file
+            KFILE.chmod(0o600)
+
+    AUTHJ.unlink(missing_ok=True)
+    KFILE.unlink(missing_ok=True)
+    C.API_KEY_FILE = KFILE
+    try:
+        with mock.patch.dict(os.environ, {"XDG_DATA_HOME": str(KD)}):
+            os.environ.pop("OPENCODE_API_KEY", None)
+            try:
+                C.call_semantic_api("x")
+                raised = False
+            except RuntimeError:
+                raised = True
+            check("keys", "no key -> RuntimeError", raised, True)
+    finally:
+        C.API_KEY_FILE = _real_key_file
+
+
+    def _boom(text, model=None):
+        raise RuntimeError("boom")
+
+
+    _real_api_keys = C.call_semantic_api
+    C.call_semantic_api = _boom
+    try:
+        fb = write("fallback.md", "# T\n\nYou should utilize the helper to build it.\n")
+        fres = C.compress_file(fb, use_api=True)
+        check("keys", "api failure keeps rule-based ok", fres["status"], "ok")
+        check("keys", "api failure -> used_api False", fres["used_api"], False)
+    finally:
+        C.call_semantic_api = _real_api_keys
+
+    # binary sops file: UnicodeDecodeError must fall through, not raise
+    KFILE.write_bytes(b"\xff\xfe")
+    AUTHJ.write_text(json.dumps(GOOD))
+    C.API_KEY_FILE = KFILE
+    try:
+        with mock.patch.dict(os.environ, {"XDG_DATA_HOME": str(KD)}):
+            os.environ.pop("OPENCODE_API_KEY", None)
+            check("keys", "binary sops file falls through", C._read_api_key(), "auth-key")
+    finally:
+        C.API_KEY_FILE = _real_key_file
+    check("keys", "env key with newline -> file rung", ladder({"OPENCODE_API_KEY": "ab\ncd"}, "file-key", GOOD), "file-key")
+    check("keys", "env key with space -> None", ladder({"OPENCODE_API_KEY": "ab cd"}, None, None), None)
+    check("keys", "sops key with newline -> auth.json", ladder(None, "ab\ncd", GOOD), "auth-key")
+    check("keys", "auth.json key with tab -> None", ladder(None, None, {"opencode": {"type": "api", "key": "ab\tcd"}}), None)
+
+    # redaction: neither the HTTPError body nor a generic error may leak the key
+    import io
+    import urllib.error
+    import urllib.request
+    SECRET = "sk-secret-123"
+    def _redaction(exc):
+        def _raise(*a, **k):
+            raise exc
+        with mock.patch.dict(os.environ, {"OPENCODE_API_KEY": SECRET}), \
+             mock.patch.object(urllib.request, "urlopen", _raise):
+            try:
+                C.call_semantic_api("x")
+            except RuntimeError as err:
+                return str(err)
+        return None
+    msg = _redaction(urllib.error.HTTPError("http://x", 400, "Bad", hdrs=None, fp=io.BytesIO(b"echo " + SECRET.encode())))
+    truthy("keys", "HTTPError body redacted", msg is not None and "***" in msg and SECRET not in msg)
+    msg = _redaction(ValueError(f"Invalid header value b'Bearer {SECRET}'"))
+    truthy("keys", "generic error redacted", msg is not None and "***" in msg and SECRET not in msg)
+finally:
+    shutil.rmtree(KD, ignore_errors=True)
+
+
 shutil.rmtree(TMP, ignore_errors=True)
 
 if failures:
@@ -942,4 +1080,5 @@ print(f"ok   compress: {counts['compress']} checks — masking round-trip, idemp
 print(f"ok   validate: {counts['validate']} checks — fence scanner edges (masker agrees), every validator accept+reject")
 print(f"ok   detect:   {counts['detect']} checks — 19 file classes plus unknown/backup/missing refusals")
 print(f"ok   pipeline: {counts['pipeline']} checks — guard ladder, backup integrity, secret and sensitive-name gates")
+print(f"ok   keys:     {counts['keys']} checks — key ladder fall-through, lazy XDG, used_api on fallback")
 print(f"ok   compress-pipeline: {total} checks passed")

@@ -11,7 +11,7 @@ description: >
 
 ## Purpose
 
-Compress natural language files (CLAUDE.md, todos, preferences) into ecomono-speak to reduce input tokens. All compression runs via local Python — zero session tokens consumed. Optional semantic pass uses cheap Groq API (llama-4-scout, ~2s, cents).
+Compress natural language files (CLAUDE.md, todos, preferences) into ecomono-speak to reduce input tokens. All compression runs via local Python — zero session tokens consumed. Optional semantic pass uses OpenCode Go (glm-5.3-flash, ~2s, covered by the Go subscription).
 
 ## Trigger
 
@@ -21,7 +21,7 @@ Compress natural language files (CLAUDE.md, todos, preferences) into ecomono-spe
 
 ```
 this SKILL.md
-scripts/compress.py    — rule-based compressor (+ optional Groq API)
+scripts/compress.py    — rule-based compressor (+ optional OpenCode Go semantic pass)
 scripts/validate.py    — deterministic validator (pure stdlib)
 scripts/__main__.py    — CLI: compress → validate → retry
 ```
@@ -51,7 +51,7 @@ Run from `<skill_dir>` (required — `scripts` is a relative package, not a stan
 cd <skill_dir> && python3 -m scripts --api <resolved_filepath>
 ```
 
-If Groq API key is not available, omit `--api` for rule-based only:
+If no OpenCode API key is available (`opencode auth login` not run), omit `--api` for rule-based only:
 ```bash
 cd <skill_dir> && python3 -m scripts <resolved_filepath>
 ```
@@ -105,9 +105,9 @@ Does NOT modify:
 
 ### Phase 2: Semantic pass (optional, `--api` flag)
 
-Sends rule-compressed text to Groq API (`meta-llama/llama-4-scout-17b-16e-instruct`) for semantic compression. Cheap model, ~2s, cents per run. Preserves the same protected elements.
+Sends rule-compressed text to OpenCode Go (`glm-5.3-flash`, OpenAI-compatible endpoint) for semantic compression. Cheap model, ~2s, covered by the Go subscription. Preserves the same protected elements.
 
-API key read from: `GROQ_API_KEY` env var → `/run/secrets/opencode/groq-api-key`.
+API key read from: `OPENCODE_API_KEY` env var → `/run/secrets/opencode/opencode-api-key` (sops-nix) → `opencode` entry in `~/.local/share/opencode/auth.json` (written by `opencode auth login`; absolute `XDG_DATA_HOME` only; empty or relative values are ignored per the XDG spec).
 
 ### Validation
 

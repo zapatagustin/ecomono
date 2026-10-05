@@ -287,49 +287,6 @@
     "./plugins/memory.ts"
   ],
   "provider": {
-    "nvidia": {
-      "options": {
-        "baseURL": "https://integrate.api.nvidia.com/v1"
-      },
-      "models": {
-        "qwen/qwen3-next-80b-a3b-instruct": {},
-        "qwen/qwen3.5-122b-a10b": {},
-        "deepseek-ai/deepseek-v4-flash": {},
-        "deepseek-ai/deepseek-v4-pro": {}
-      }
-    },
-    "groq": {
-      "options": {
-        "baseURL": "https://api.groq.com/openai/v1"
-      },
-      "models": {
-        "meta-llama/llama-4-scout-17b-16e-instruct": {},
-        "llama-3.3-70b-versatile": {},
-        "qwen/qwen3-32b": {},
-        "qwen/qwen3.6-27b": {}
-      }
-    },
-    "cerebras": {
-      "options": {
-        "baseURL": "https://api.cerebras.ai/v1"
-      },
-      "models": {
-        "gemma-4-31b": {},
-        "gpt-oss-120b": {},
-        "zai-glm-4.7": {}
-      }
-    },
-    "openrouter": {
-      "options": {
-        "baseURL": "https://openrouter.ai/api/v1"
-      },
-      "models": {
-        "qwen/qwen3-next-80b-a3b-instruct": {},
-        "qwen/qwen3-next-80b-a3b-instruct:free": {},
-        "deepseek/deepseek-v4-flash": {},
-        "deepseek/deepseek-v4-pro": {}
-      }
-    },
     "anthropic": {}
   },
   "share": "disabled"

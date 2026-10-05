@@ -4,7 +4,7 @@ Ecomono Compress — CLI orchestrator.
 
 Usage:
     python3 -m scripts <filepath>              # rule-based only
-    python3 -m scripts --api <filepath>        # rule-based + Groq semantic pass
+    python3 -m scripts --api <filepath>        # rule-based + OpenCode Go semantic pass
     python3 -m scripts --api --model <name> <filepath>
 
 Flow: rule-compress → (optional semantic api) → validate → retry (up to 2x).
@@ -38,7 +38,7 @@ def main():
 
     parser = argparse.ArgumentParser(description="Ecomono Compress CLI")
     parser.add_argument("filepath", help="File to compress")
-    parser.add_argument("--api", action="store_true", help="Enable Groq semantic pass")
+    parser.add_argument("--api", action="store_true", help="Enable OpenCode Go semantic pass")
     parser.add_argument("--model", default=DEFAULT_MODEL, help="Model for semantic pass")
     args = parser.parse_args()
 
@@ -75,6 +75,7 @@ def main():
             print(f"❌ {result.get('reason', 'unknown error')}")
             sys.exit(1)
 
+        used_api = bool(result.get("used_api"))
         print(f"   {result['original_tokens']} → {result['compressed_tokens']} tokens "
               f"({result['percent']}% saved)")
 
@@ -107,6 +108,7 @@ def main():
                         atomic_write_text(staged, rule_result)
                         if validate(backup, staged).is_valid:
                             _promote(staged, fp)
+                            used_api = False
                             print("   ⚠️  Semantic pass failed validation — kept rule-based result")
                             break
                 # fp was never touched — every candidate was validated on `staged`
@@ -117,6 +119,7 @@ def main():
 
             print(f"   🔄 Recompressing (attempt {attempt + 2})...")
             compressed = rule_compress(original_text)
+            used_api = False  # true again only if this retry's semantic output is kept
             try:
                 semantic = call_semantic_api(compressed, model=model)
                 # A retry candidate bypasses compress_file, so the non-expansion
@@ -124,6 +127,7 @@ def main():
                 # prose back out validates and gets promoted as a "compression".
                 if is_shorter_than(semantic, original_text):
                     compressed = semantic
+                    used_api = True
                 else:
                     print("   ⚠️  Semantic pass expanded the text — kept rule-based result")
             except RuntimeError as e:
@@ -157,7 +161,7 @@ def main():
         "compressed_tokens": compressed_tokens,
         "tokens_saved": saved,
         "percent": pct,
-        "used_api": use_api,
+        "used_api": used_api,
     }, indent=2))
 
 

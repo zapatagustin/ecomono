@@ -4,8 +4,8 @@ Ecomono Compress — rule-based + optional API semantic pass.
 
 Usage:
     python3 -m scripts.compress <filepath>
-    python3 -m scripts.compress --api <filepath>   (enable Groq semantic pass)
-    python3 -m scripts.compress --api --model meta-llama/llama-4-scout-17b-16e-instruct <filepath>
+    python3 -m scripts.compress --api <filepath>   (enable OpenCode Go semantic pass)
+    python3 -m scripts.compress --api --model glm-5.3-flash <filepath>
 
 Phase 1: rule-based mechanical compression (instant, 0 tokens)
 Phase 2: optional semantic pass via cheap API (fast, ~2s, cents)
@@ -508,19 +508,30 @@ def rule_compress(text: str) -> str:
 
 
 # ---------------------------------------------------------------------------
-# Phase 2: Optional semantic pass via Groq API
+# Phase 2: Optional semantic pass via OpenCode Go (OpenAI-compatible endpoint)
 # ---------------------------------------------------------------------------
 
-API_KEY_FILE = "/run/secrets/opencode/groq-api-key"
-DEFAULT_MODEL = "meta-llama/llama-4-scout-17b-16e-instruct"
-API_BASE = "https://api.groq.com/openai/v1"
+# Key ladder: env, then the sops-nix file a NixOS host deploys, then the store
+# `opencode auth login` writes. Same console key the Go provider uses.
+API_KEY_FILE = Path("/run/secrets/opencode/opencode-api-key")
+
+
+def _auth_file() -> Path:
+    """opencode auth store; XDG_DATA_HOME counts only when set and absolute (XDG spec)."""
+    xdg = os.environ.get("XDG_DATA_HOME", "")
+    base = Path(xdg) if xdg and os.path.isabs(xdg) else Path.home() / ".local/share"
+    return base / "opencode/auth.json"
+
+
+DEFAULT_MODEL = "glm-5.3-flash"
+API_BASE = "https://opencode.ai/zen/go/v1"
 
 
 def call_semantic_api(text: str, model: str = DEFAULT_MODEL) -> str:
     """Send text to cheap model for semantic compression refinement."""
     key = _read_api_key()
     if not key:
-        raise RuntimeError("Groq API key not found")
+        raise RuntimeError("OpenCode API key not found")
 
     prompt = f"""Compress this markdown into ecomono format: ultra-terse, zero filler, full technical accuracy.
 
@@ -552,6 +563,11 @@ Input:
     import time
     import urllib.request
     import urllib.error
+    import uuid
+
+    # Go routes by conversation: one stable id per semantic pass is the
+    # whole conversation here (single request, retries included).
+    session_id = uuid.uuid4().hex
 
     for attempt in range(3):
         try:
@@ -562,6 +578,7 @@ Input:
                     "Authorization": f"Bearer {key}",
                     "Content-Type": "application/json",
                     "User-Agent": "ecomono-compress/2.0",
+                    "x-opencode-session": session_id,
                 },
                 method="POST",
             )
@@ -585,25 +602,53 @@ Input:
                 continue
             if e.code == 413:
                 raise RuntimeError("Input too large for model — falling back to rule-based")
-            raise RuntimeError(f"API call failed (HTTP {e.code}): {e}")
+            try:
+                body = e.read().decode(errors="replace")
+            except Exception:
+                body = ""
+            body = body.replace(key, "***")[:300]  # a gateway may echo the Authorization header
+            raise RuntimeError(f"API call failed (HTTP {e.code}): {body or e}")
         except RuntimeError:
             raise  # our own truncation/too-large signal — propagate to caller
         except Exception as e:
             # network, JSON parse, malformed response — wrap so caller (which
             # only catches RuntimeError) can fall back to the rule-based result.
-            raise RuntimeError(f"API call failed: {e}")
+            msg = str(e).replace(key, "***")  # http.client echoes header values in errors
+            raise RuntimeError(f"API call failed: {msg}")
 
     raise RuntimeError("API call failed after retries")
 
 
+def _usable_key(key) -> str | None:
+    """Stripped key, or None when empty or holding whitespace/control chars (http.client would echo it)."""
+    if not isinstance(key, str):
+        return None
+    key = key.strip()
+    if not key or any(ch.isspace() or ord(ch) < 32 or ch == "\x7f" for ch in key):
+        return None
+    return key
+
+
 def _read_api_key() -> str | None:
-    """Read Groq API key from secret file or env var."""
-    key = os.environ.get("GROQ_API_KEY")
+    """Read the OpenCode API key: env var, then sops file, then the `opencode auth login` store."""
+    key = _usable_key(os.environ.get("OPENCODE_API_KEY", ""))
     if key:
         return key
-    path = Path(API_KEY_FILE)
-    if path.exists():
-        return path.read_text().strip()
+    try:
+        if API_KEY_FILE.exists():
+            key = _usable_key(API_KEY_FILE.read_text())
+            if key:
+                return key
+    except (OSError, ValueError):  # ValueError covers UnicodeDecodeError
+        pass
+    try:
+        entry = json.loads(_auth_file().read_text())["opencode"]
+        if entry["type"] == "api":
+            key = _usable_key(entry["key"])
+            if key:
+                return key
+    except (OSError, ValueError, TypeError, AttributeError, KeyError, RuntimeError):  # RuntimeError: no HOME
+        pass
     return None
 
 
@@ -805,9 +850,11 @@ def compress_file(filepath: Path, use_api: bool = False, model: str = DEFAULT_MO
     compressed = rule_compress(original)
 
     # Phase 2: Optional semantic pass
+    used_api = False
     if use_api:
         try:
             compressed = call_semantic_api(compressed, model=model)
+            used_api = True
         except RuntimeError as e:
             print(f"⚠️  Semantic pass skipped: {e}", file=sys.stderr)
             # Continue with rule-based result
@@ -850,5 +897,5 @@ def compress_file(filepath: Path, use_api: bool = False, model: str = DEFAULT_MO
         "compressed_tokens": compressed_tokens,
         "tokens_saved": saved,
         "percent": round(pct, 1),
-        "used_api": use_api,
+        "used_api": used_api,
     }

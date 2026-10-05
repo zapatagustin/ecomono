@@ -233,6 +233,10 @@ to protect the reviewer; a correct change nobody can review is not delivered.
 <!-- ecomono:sdd-model-assignments -->
 ## Model assignments
 
+On OpenCode this section does not apply: every agent's model is pinned in
+`opencode/opencode.json`, so skip the `model` gate below there. The table is Claude
+Code's tier map.
+
 Read once per session, cache `phase → alias`, pass it in every `Agent` call.
 
 **Mandatory model gate:** every `Agent` call MUST include `model`. A call without it
