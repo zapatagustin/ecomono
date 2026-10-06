@@ -84,6 +84,9 @@ retires the other observation. Apply it to a text-overlap candidate and you dele
 live artifact some other phase still needs — including, on an archive run, the change's
 own delta spec. Override the suggestion only when you can say why, in the envelope.
 
+A result with `stale: true` means the judgment was closed with no relation recorded and needs
+nothing further.
+
 Resolve every candidate before your final output — §D's rule that the last thing
 you emit is text, not a tool call, applies to these calls too.
 

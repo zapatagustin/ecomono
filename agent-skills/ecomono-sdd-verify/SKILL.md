@@ -106,6 +106,14 @@ disposable location), never in the workspace. Verification leaves no files behin
 Report what you ran and what it printed. A verdict without command output is an
 opinion.
 
+Each `Risk:` item received from apply gets its own probe and its own line in the report:
+held or not held, with the evidence. Items from several apply batches arrive as one list.
+Risk items are probe targets, not evidence — re-derive each from the diff and the artifacts
+you fetched this run. A `Risk: none` claim is checked against the diff — if it touches a
+shared helper, parser, or utility that unrequested behavior depends on, report that as a
+finding. With no list received, record "no Risk list received" and still perform that
+check; `Risk: absent` is treated the same way.
+
 ## Graceful degradation
 
 | Artifacts present | Verdict may reach | Never claim |

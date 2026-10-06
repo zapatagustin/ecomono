@@ -313,6 +313,14 @@ Do NOT overwrite.
 The sub-agent does the read-merge-write; you are responsible for telling it there is
 something to merge. First batch → no instruction needed.
 
+### Risk forwarding
+
+Apply runs in batches. Accumulate the `Risk:` items from every apply batch since the last
+verify, repeat the whole list verbatim in your phase report to the user, and pass it into
+the `ecomono-sdd-verify` prompt as mandatory probe targets. `Risk: none` is passed through
+unchanged, so verify can see the writer made the claim. An envelope with no `Risk:` line
+(older writer, truncated output) is forwarded as `Risk: absent`, never as none.
+
 ### Subject hash forwarding
 
 `ecomono-sdd-archive` has no `Bash` and cannot derive what it is archiving. Neither do

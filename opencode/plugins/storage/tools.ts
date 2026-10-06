@@ -261,7 +261,7 @@ const rawRegistry: MemTool[] = [
   },
   {
     name: "mem_judge",
-    description: "Resolve a save-time conflict candidate: record the relation between the new observation and the candidate. 'supersedes' also retires the candidate.",
+    description: "Resolve a save-time conflict candidate: record the relation between the new observation and the candidate. 'supersedes' also retires the candidate. Returns stale: true when either observation has been deleted since the candidate was parked, or, for 'supersedes', when the candidate is no longer active; the judgment is then closed, no relation is recorded, and no further action is needed.",
     args: {
       judgment_id: z.string().describe("From a mem_save candidates[] entry"),
       relation: z.enum(["supersedes", "conflicts_with", "related", "compatible", "scoped", "not_conflict"]),
