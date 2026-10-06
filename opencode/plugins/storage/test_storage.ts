@@ -293,5 +293,63 @@ assert(/^SCAN .*\bobservations_fts\b/.test(conflictStep),
   assert((d2.query("SELECT COUNT(*) n FROM judgments WHERE id='j-bc'").get() as any).n === 1, "sweep keeps live judgment")
 }
 
+// --- generation fence (engram #1646): file replaced on disk with UNFLUSHED WAL -> reopen, stale WAL not replayed ---
+{
+  const { dbPath } = await import("./db")
+  const { Database } = await import("bun:sqlite")
+  const { renameSync, existsSync, readdirSync, rmSync } = await import("fs")
+  const before = getDb()
+  before.run("PRAGMA wal_autocheckpoint = 0") // keep the insert in memory.db-wal
+  Obs.save({ title: "fence-old-row", content: "x", project: "fenceproj" })
+  assert(existsSync(dbPath() + "-wal"), "old handle has a WAL at rename time")
+  const fresh = join(process.env.ECOMONO_DATA_DIR!, "rebuilt.db")
+  const f = new Database(fresh); f.run("CREATE TABLE marker (a)"); f.close()
+  renameSync(fresh, dbPath())
+  let after: any
+  assert.doesNotThrow(() => { after = getDb() }, "getDb after file replace does not throw")
+  assert(after !== before, "getDb reopens when the inode at the path changed")
+  assert((after.query("SELECT COUNT(*) n FROM observations WHERE title = 'fence-old-row'").get() as any).n === 0, "stale WAL frames are not replayed onto the new file")
+  const { id } = Obs.save({ title: "fence-new-row", content: "y", project: "fenceproj" }) as any
+  closeDb()
+  const check = new Database(dbPath(), { readonly: true })
+  assert((check.query("SELECT COUNT(*) n FROM observations WHERE id = ? AND title = 'fence-new-row'").get(id) as any).n === 1, "write after replace is visible in the file at the path")
+  check.close()
+  const dir = process.env.ECOMONO_DATA_DIR!
+  const stale = readdirSync(dir).filter((n) => n.includes(".stale-"))
+  assert(stale.length > 0, "stale sidecar moved aside, not deleted")
+  for (const n of stale) rmSync(join(dir, n))
+}
+
+// --- generation fence, two processes: another process already handled the swap -> its LIVE sidecars are not moved aside ---
+{
+  const { dbPath } = await import("./db")
+  const { Database } = await import("bun:sqlite")
+  const { renameSync, existsSync, readdirSync, rmSync } = await import("fs")
+  const dir = process.env.ECOMONO_DATA_DIR!
+  const staleCount = () => readdirSync(dir).filter((n) => n.includes(".stale-")).length
+  const before = getDb()
+  before.run("PRAGMA wal_autocheckpoint = 0")
+  Obs.save({ title: "fence2-old-row", content: "x", project: "fenceproj" })
+  assert(existsSync(dbPath() + "-wal"), "fenced process has a live -wal before the swap")
+  assert(getDb() === before, "same handle before the swap; sidecar identity recorded")
+  const fresh = join(dir, "rebuilt2.db")
+  const f = new Database(fresh); f.run("CREATE TABLE peer (a)"); f.close()
+  renameSync(fresh, dbPath())
+  // Simulate the peer process handling the swap first: its stale sidecars aside, then its live handle.
+  for (const side of [dbPath() + "-wal", dbPath() + "-shm"]) renameSync(side, `${side}.stale-peer`)
+  const peer = new Database(dbPath())
+  peer.run("PRAGMA journal_mode=WAL")
+  peer.run("INSERT INTO peer VALUES ('from-peer')")
+  const staleBefore = staleCount()
+  const after = getDb()
+  assert(after !== before, "fenced getDb reopens after the swap")
+  assert(staleCount() === staleBefore, "live sidecars of another process are not moved aside")
+  assert((after.query("SELECT COUNT(*) n FROM peer WHERE a = 'from-peer'").get() as any).n === 1, "fenced handle sees the peer's row")
+  after.run("INSERT INTO peer VALUES ('from-fenced')")
+  assert((peer.query("SELECT COUNT(*) n FROM peer WHERE a = 'from-fenced'").get() as any).n === 1, "peer sees the fenced handle's write")
+  peer.close()
+  for (const n of readdirSync(dir).filter((n) => n.includes(".stale-"))) rmSync(join(dir, n))
+}
+
 closeDb()
 console.log("✓ storage: all assertions passed")

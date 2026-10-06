@@ -106,7 +106,8 @@ work, not yours.)
 
 Approved after a round means **zero confirmed CRITICALs and zero confirmed real
 WARNINGs**. Theoretical warnings and suggestions may remain — they are reported, not
-blocking.
+blocking. This is necessary, not sufficient: the full terminal conditions are SKILL.md
+step 9.
 
 ## Delegation
 

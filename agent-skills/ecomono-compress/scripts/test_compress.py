@@ -1089,6 +1089,17 @@ finally:
     shutil.rmtree(KD, ignore_errors=True)
 
 
+# request_limits: pure sizing of max_tokens / timeout
+small_mt, small_to = C.request_limits("x" * 400)
+check("keys", "small input -> floored max_tokens", small_mt, 8192)
+check("keys", "small input -> base + floor timeout", small_to, int(C.TIMEOUT_BASE_S + 8192 * C.TIMEOUT_PER_TOKEN_S))
+cjk_mt, _ = C.request_limits("漢" * 30000)
+check("keys", "CJK estimate is bytes-based, above chars/4", cjk_mt > 30000 // 4 + 256, True)
+big_mt, big_to = C.request_limits("x" * 10_000_000)
+check("keys", "huge input clamped at cap", big_mt, C.OUTPUT_CAP)
+check("keys", "huge input timeout is scaled, minutes", 200 < big_to < 600, True)
+check("keys", "timeout monotonic", C.request_limits("x" * 40000)[1] <= big_to, True)
+
 shutil.rmtree(TMP, ignore_errors=True)
 
 if failures:

@@ -32,7 +32,7 @@ assert(found.match_mode === "all" && found.results.length === 1 && found.results
 const got = call("mem_get_observation", { id: saved.id }) as any
 assert(got.title === "Ported engram to bun", "mem_get_observation")
 
-assert((call("mem_update", { id: saved.id, content: "native bun:sqlite storage" }) as any).updated, "mem_update")
+assert((call("mem_update", { id: saved.id, expected_project: "*", content: "native bun:sqlite storage" }) as any).updated, "mem_update")
 assert((call("mem_search", { query: "storage", project: "ecomono" }) as any).results.length === 1, "update reindexed")
 
 assert((call("mem_pin", { id: saved.id }) as any).pinned, "mem_pin")
@@ -41,7 +41,7 @@ assert((call("mem_unpin", { id: saved.id }) as any).unpinned, "mem_unpin")
 // --- admission boundary: mem_save/mem_update/mem_save_prompt reject blank fields (engram #767) ---
 assert.throws(() => call("mem_save", { title: " \t\n ", content: "x", project: "admissiontools" }),
   /observation title is required/, "mem_save rejects a whitespace-only title")
-assert.throws(() => call("mem_update", { id: saved.id, title: "" }),
+assert.throws(() => call("mem_update", { id: saved.id, expected_project: "*", title: "" }),
   /observation title is required/, "mem_update rejects an empty title")
 assert.throws(() => call("mem_save_prompt", { session_id: "sess-admission", content: "  " }),
   /prompt content is required/, "mem_save_prompt rejects whitespace-only content")
@@ -84,16 +84,16 @@ assert(!reviewList.some((r: any) => r.id === otherReviewObs.id), "mem_review lis
 // --- mem_update review_after: null clears, "" normalizes to null (does not poison), explicit date wins over a simultaneous type change ---
 const clearObs = call("mem_save", { title: "review_after clear via mem_update", content: "why", type: "decision", project: "reviewprojClear" }) as any
 assert(Obs.getObservation(clearObs.id)!.review_after !== null, "decision starts with a review_after")
-call("mem_update", { id: clearObs.id, review_after: null })
+call("mem_update", { id: clearObs.id, expected_project: "*", review_after: null })
 assert(Obs.getObservation(clearObs.id)!.review_after === null, "mem_update with review_after: null clears it")
 
 const emptyStringObs = call("mem_save", { title: "review_after empty string via mem_update", content: "why", type: "decision", project: "reviewprojClear" }) as any
-call("mem_update", { id: emptyStringObs.id, review_after: "" })
+call("mem_update", { id: emptyStringObs.id, expected_project: "*", review_after: "" })
 assert(Obs.getObservation(emptyStringObs.id)!.review_after === null,
   "mem_update with review_after: '' normalizes to null instead of storing an immediately-due empty string")
 
 const dateWinsObs = call("mem_save", { title: "explicit date wins over type change via mem_update", content: "why", type: "manual", project: "reviewprojClear" }) as any
-call("mem_update", { id: dateWinsObs.id, type: "decision", review_after: "2099-01-01 00:00:00" })
+call("mem_update", { id: dateWinsObs.id, expected_project: "*", type: "decision", review_after: "2099-01-01 00:00:00" })
 assert(Obs.getObservation(dateWinsObs.id)!.review_after === "2099-01-01 00:00:00",
   "mem_update: explicit review_after wins over a simultaneous type change")
 
@@ -101,7 +101,7 @@ const doc = call("mem_doctor") as any
 assert(doc.ok && doc.db_path.endsWith("memory.db") && doc.observations >= 1, "mem_doctor")
 assert(doc.integrity === "ok", `mem_doctor probes integrity (got ${doc.integrity})`)
 
-assert((call("mem_delete", { id: saved.id }) as any).deleted, "mem_delete")
+assert((call("mem_delete", { id: saved.id, expected_project: "*" }) as any).deleted, "mem_delete")
 assert(call("mem_get_observation", { id: saved.id }) === null, "deleted gone")
 
 // --- session inactivity nudge (engram #178): simulated clock, no real sleeps ---
@@ -140,6 +140,8 @@ assert(summary.includes("Accomplished: stuff"), "session summary keeps the agent
 // --- missing id / expected_project guard (engram #1575) ---
 assert(call("mem_update", { id: 999999, title: "x" }).updated === false, "mem_update on a missing id reports false")
 assert(call("mem_delete", { id: 999999 }).deleted === false, "mem_delete on a missing id reports false")
+assert(!("reason" in call("mem_update", { id: 999999, title: "x" })), "mem_update on a missing id carries no reason")
+assert(!("reason" in call("mem_delete", { id: 999999 })), "mem_delete on a missing id carries no reason")
 const own = call("mem_save", { title: "Owned obs", content: "belongs to ownproj", project: "ownproj" }) as any
 assert(call("mem_update", { id: own.id, title: "Hijacked", expected_project: "other" }).updated === false, "mem_update with wrong expected_project reports false")
 assert(Obs.getObservation(own.id)!.title === "Owned obs", "mismatched mem_update leaves the row unchanged")
@@ -148,5 +150,25 @@ assert(Obs.getObservation(own.id) !== null, "mismatched mem_delete leaves the ro
 assert(call("mem_update", { id: own.id, title: "Renamed", expected_project: "ownproj" }).updated === true, "mem_update with matching expected_project succeeds")
 assert(Obs.getObservation(own.id)!.title === "Renamed", "matching mem_update applied")
 assert(call("mem_delete", { id: own.id, expected_project: "ownproj" }).deleted === true, "mem_delete with matching expected_project succeeds")
+
+// expected_project defaults to the current project; "*" opts out
+const m1 = call("mem_save", { title: "Cwd obs", content: "current project" }) as any
+assert(call("mem_update", { id: m1.id, title: "Cwd renamed" }).updated === true, "mem_update same project, no expected_project, succeeds")
+assert(call("mem_delete", { id: m1.id }).deleted === true, "mem_delete same project, no expected_project, succeeds")
+const f1 = call("mem_save", { title: "Foreign obs", content: "elsewhere", project: "zz-other-project" }) as any
+assert(call("mem_update", { id: f1.id, title: "Hijack" }).updated === false, "mem_update other project, no expected_project, fails")
+const um = call("mem_update", { id: f1.id, title: "Hijack" }) as any
+assert(um.reason === "project mismatch" && um.row_project === "zz-other-project", "mem_update other project reports reason + row_project")
+const dm = call("mem_delete", { id: f1.id }) as any
+assert(dm.deleted === false && dm.reason === "project mismatch" && dm.row_project === "zz-other-project", "mem_delete other project reports reason + row_project")
+assert(Obs.getObservation(f1.id)!.title === "Foreign obs", "default-guarded mem_update leaves the row unchanged")
+assert(call("mem_delete", { id: f1.id }).deleted === false, "mem_delete other project, no expected_project, fails")
+const noop = call("mem_update", { id: f1.id, expected_project: "*" }) as any
+assert(noop.updated === false && !("reason" in noop), "mem_update '*' failing for no fields carries no reason")
+const m2 = call("mem_save", { title: "Cwd obs 2", content: "current project" }) as any
+const idOnly = call("mem_update", { id: m2.id }) as any
+assert(idOnly.updated === false && !("reason" in idOnly), "mem_update with only an id on an own-project row carries no reason")
+assert(call("mem_update", { id: f1.id, title: "Cross edit", expected_project: "*" }).updated === true, "mem_update expected_project '*' succeeds cross-project")
+assert(call("mem_delete", { id: f1.id, expected_project: "*" }).deleted === true, "mem_delete expected_project '*' succeeds cross-project")
 
 console.log(`✓ tools: ${registry.length} tools, all assertions passed`)

@@ -19462,24 +19462,83 @@ class StdioServerTransport {
 
 // db.ts
 import { Database } from "bun:sqlite";
-import { existsSync, copyFileSync, mkdirSync } from "fs";
+import { existsSync, copyFileSync, mkdirSync, renameSync, statSync } from "fs";
 import { join } from "path";
 import { homedir } from "os";
 var DATA_DIR = process.env.ECOMONO_DATA_DIR || join(homedir(), ".ecomono");
 var DB_PATH = join(DATA_DIR, "memory.db");
 var ENGRAM_DB = process.env.ECOMONO_LEGACY_DB || join(homedir(), ".engram", "engram.db");
 var db = null;
+var dbIdent = null;
+var SIDES = [DB_PATH + "-wal", DB_PATH + "-shm"];
+var sideIdent = ["", ""];
+var fileIdent = (p) => {
+  try {
+    const s = statSync(p);
+    return `${s.dev}:${s.ino}`;
+  } catch (e) {
+    return e?.code === "ENOENT" ? "" : null;
+  }
+};
+var identWarned = false;
+var renameWarned = false;
+var identOf = () => {
+  const id = fileIdent(DB_PATH);
+  if (id === null && !identWarned) {
+    identWarned = true;
+    console.error(`[ecomono-memory] stat ${DB_PATH} failed; keeping the open handle`);
+  }
+  return id;
+};
+var recordSides = () => {
+  sideIdent = SIDES.map((p, i) => fileIdent(p) ?? sideIdent[i]);
+};
 function getDb() {
-  if (db)
-    return db;
+  if (db) {
+    const ident = identOf();
+    if (dbIdent === null && ident)
+      dbIdent = ident;
+    if (ident === null || dbIdent === null || ident === dbIdent) {
+      if (ident !== null && ident === dbIdent)
+        recordSides();
+      return db;
+    }
+    const stale = [];
+    const ts = Date.now();
+    try {
+      SIDES.forEach((side, i) => {
+        if (sideIdent[i] && fileIdent(side) === sideIdent[i]) {
+          renameSync(side, `${side}.stale-${ts}`);
+          stale.push(`${side}.stale-${ts}`);
+        }
+      });
+    } catch (e) {
+      if (!renameWarned) {
+        renameWarned = true;
+        console.error(`[ecomono-memory] moving stale sidecars of ${DB_PATH} aside failed (${e?.code ?? e}); keeping the open handle`);
+      }
+      return db;
+    }
+    renameWarned = false;
+    try {
+      db.close();
+    } catch {} finally {
+      db = null;
+    }
+    console.error(`[ecomono-memory] ${DB_PATH} ${ident === "" ? "vanished; recreating an empty store" : "was replaced on disk; reopening"}` + (stale.length ? `, moved stale sidecars aside: ${stale.join(", ")}` : ""));
+  }
   mkdirSync(DATA_DIR, { recursive: true });
   const d = new Database(DB_PATH);
+  dbIdent = identOf() || null;
+  sideIdent = ["", ""];
   d.run("PRAGMA busy_timeout = 5000");
   d.run("PRAGMA journal_mode=WAL");
   d.run("PRAGMA foreign_keys=ON");
   initSchema(d);
   migrateFromEngram(d);
   db = d;
+  if (dbIdent !== null && identOf() === dbIdent)
+    recordSides();
   return db;
 }
 function initSchema(d) {
@@ -20011,6 +20070,13 @@ function mergeProjects(from, into) {
 
 // tools.ts
 var proj = (p) => p || currentProject().project;
+var guard = (p) => p === "*" ? undefined : proj(p);
+var mismatch = (id, ok, g) => {
+  if (ok || g === undefined)
+    return {};
+  const row = getDb().query("SELECT id, project_id FROM observations WHERE id = ?").get(id);
+  return row && row.project_id !== g ? { reason: "project mismatch", row_project: row.project_id, hint: 'pass expected_project: "*" to edit across projects' } : {};
+};
 var clock = () => Date.now();
 var totalCalls = 0;
 var totalSaves = 0;
@@ -20097,7 +20163,7 @@ var rawRegistry = [
   },
   {
     name: "mem_update",
-    description: "Update fields of an existing observation by id; pass expected_project to require that it belongs to that project (updated=false on mismatch or missing id).",
+    description: 'Update fields of an existing observation by id; expected_project defaults to the current project (updated=false on mismatch, missing id or no fields; a project mismatch adds reason, row_project and hint); pass expected_project "*" to edit across projects.',
     args: {
       id: number2(),
       expected_project: string2().optional(),
@@ -20112,14 +20178,20 @@ var rawRegistry = [
       if (fields.review_after === "")
         fields.review_after = null;
       const clean = Object.fromEntries(Object.entries(fields).filter(([, v]) => v !== undefined));
-      return { updated: update(id, clean, expected_project) };
+      const g = guard(expected_project);
+      const updated = update(id, clean, g);
+      return { updated, ...mismatch(id, updated, g) };
     }
   },
   {
     name: "mem_delete",
-    description: "Delete an observation by id; pass expected_project to require that it belongs to that project (deleted=false on mismatch or missing id).",
+    description: 'Delete an observation by id; expected_project defaults to the current project (deleted=false on mismatch or missing id; a project mismatch adds reason, row_project and hint); pass expected_project "*" to delete across projects.',
     args: { id: number2(), expected_project: string2().optional() },
-    handler: (a) => ({ deleted: del(a.id, a.expected_project) })
+    handler: (a) => {
+      const g = guard(a.expected_project);
+      const deleted = del(a.id, g);
+      return { deleted, ...mismatch(a.id, deleted, g) };
+    }
   },
   {
     name: "mem_suggest_topic_key",

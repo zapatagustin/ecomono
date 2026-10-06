@@ -6,7 +6,7 @@
  */
 
 import { Database } from "bun:sqlite"
-import { existsSync, copyFileSync, mkdirSync } from "fs"
+import { existsSync, copyFileSync, mkdirSync, renameSync, statSync } from "fs"
 import { join } from "path"
 import { homedir } from "os"
 
@@ -16,11 +16,77 @@ const DB_PATH = join(DATA_DIR, "memory.db")
 const ENGRAM_DB = process.env.ECOMONO_LEGACY_DB || join(homedir(), ".engram", "engram.db")
 
 let db: Database | null = null
+// Generation fence (engram #1646): identity of the file the cached handle opened.
+// null = unknown (never ""): the fence does not fire, and each call tries to learn it.
+let dbIdent: string | null = null
+const SIDES = [DB_PATH + "-wal", DB_PATH + "-shm"]
+// Latest identity seen at each sidecar path while the main file was unchanged —
+// i.e. the sidecars THIS process's handle uses. "" = none seen.
+let sideIdent: string[] = ["", ""]
+// "" = file gone (ENOENT only); null = stat failed otherwise (EACCES, EIO...).
+const fileIdent = (p: string): string | null => {
+  try { const s = statSync(p); return `${s.dev}:${s.ino}` } catch (e: any) { return e?.code === "ENOENT" ? "" : null }
+}
+let identWarned = false
+let renameWarned = false
+const identOf = (): string | null => {
+  const id = fileIdent(DB_PATH)
+  if (id === null && !identWarned) { identWarned = true; console.error(`[ecomono-memory] stat ${DB_PATH} failed; keeping the open handle`) }
+  return id
+}
+const recordSides = () => { sideIdent = SIDES.map((p, i) => fileIdent(p) ?? sideIdent[i]) }
 
 export function getDb(): Database {
-  if (db) return db
+  if (db) {
+    // One statSync per call. If the path now points at another inode (restore,
+    // `mv` of a rebuilt file) or is gone, writes would land in the unlinked old
+    // inode — drop the handle and reopen.
+    // ecomono: checks only on getDb(); an in-flight statement keeps the old handle.
+    // Upgrade path: also compare on a timer / SQLITE_READONLY_DBMOVED.
+    const ident = identOf()
+    if (dbIdent === null && ident) dbIdent = ident
+    if (ident === null || dbIdent === null || ident === dbIdent) {
+      if (ident !== null && ident === dbIdent) recordSides()
+      return db
+    }
+    // The old handle cannot checkpoint into a replaced file, and memory.db-wal /
+    // -shm are bound by PATH: reopening would replay the old WAL frames onto the
+    // new file. Move them aside (never delete: a restore that shipped its own
+    // uncheckpointed WAL stays recoverable by hand) — but only a sidecar whose
+    // identity is still the one this handle used. A different one means another
+    // process already handled the swap and owns those as LIVE sidecars: leave
+    // them, and the reopen shares them. Renamed before close (POSIX allows it),
+    // so a failed rename keeps the old handle and the next call retries.
+    // ecomono: assumes restores are checkpointed (shipped without sidecars).
+    // Ceiling: a microsecond TOCTOU window between the re-stat and the rename,
+    // and a process that never saw a sidecar cannot tell stale from live, so it
+    // never renames. Also uncovered: a peer that starts AFTER the swap finds the
+    // stale sidecars at the path, cannot tell them from live ones, replays them
+    // and then owns those inodes; a fenced process that recorded them earlier
+    // would rename the peer's live sidecars. Safe for one process, or several
+    // that all observed the swap; operators stop servers (or checkpoint and
+    // remove sidecars) before restoring. Upgrade path: an exclusive lock file
+    // around swap handling — serializes observers, still cannot age a stale file.
+    const stale: string[] = []
+    const ts = Date.now()
+    try {
+      SIDES.forEach((side, i) => {
+        if (sideIdent[i] && fileIdent(side) === sideIdent[i]) { renameSync(side, `${side}.stale-${ts}`); stale.push(`${side}.stale-${ts}`) }
+      })
+    } catch (e: any) {
+      if (!renameWarned) { renameWarned = true; console.error(`[ecomono-memory] moving stale sidecars of ${DB_PATH} aside failed (${e?.code ?? e}); keeping the open handle`) }
+      return db
+    }
+    renameWarned = false
+    try { db.close() } catch {} finally { db = null }
+    console.error(`[ecomono-memory] ${DB_PATH} ${ident === "" ? "vanished; recreating an empty store" : "was replaced on disk; reopening"}` + (stale.length ? `, moved stale sidecars aside: ${stale.join(", ")}` : ""))
+  }
   mkdirSync(DATA_DIR, { recursive: true })
   const d = new Database(DB_PATH)
+  // Identity of the file THIS handle opened — captured before initSchema so a
+  // swap during init cannot pin the wrong inode.
+  dbIdent = identOf() || null
+  sideIdent = ["", ""]
   // busy_timeout FIRST, before anything that takes a lock (engram #613).
   // `PRAGMA journal_mode=WAL` needs a brief exclusive lock on the db file, and
   // with no busy_timeout in force yet a contended cold start — two MCP server
@@ -39,6 +105,7 @@ export function getDb(): Database {
   // half-built db that every later caller gets back from the `if (db)` above,
   // turning the root cause into confusing "no such table" errors.
   db = d
+  if (dbIdent !== null && identOf() === dbIdent) recordSides()
   return db
 }
 

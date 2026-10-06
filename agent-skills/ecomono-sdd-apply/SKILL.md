@@ -131,7 +131,7 @@ reason.
 
 Mandatory. Section C, artifact `apply-progress`, topic key
 `sdd/{change-name}/apply-progress`. Also mark the completed tasks `[x]` in the tasks
-artifact via `mem_update(id: {tasks-observation-id}, …)`.
+artifact via `mem_update(id: {tasks-observation-id}, …)` (guarded to the current project; pass `expected_project: "*"` only when deliberately editing a row saved from another project).
 
 **Merge, never overwrite.** Your saved artifact must carry every previously completed
 task — status and evidence — plus your own, as one cumulative record across all

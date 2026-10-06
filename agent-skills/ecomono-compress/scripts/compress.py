@@ -531,6 +531,23 @@ def _auth_file() -> Path:
 DEFAULT_MODEL = "glm-5.3-flash"
 API_BASE = "https://opencode.ai/zen/go/v1"
 
+# Model limits: models.dev cache (~/.cache/opencode/models.json),
+# opencode-go -> glm-5.3-flash -> limit.output, read 2026-10-06 (limit.context was 1000000).
+# Not read at runtime; refresh by hand if DEFAULT_MODEL changes.
+OUTPUT_CAP = 131072
+# Socket timeout is a per-read idle timeout and a non-streaming server sends nothing
+# until the whole completion is ready, so it must cover generation time.
+# Base + per-token allowance: full cap = 30 + 131072 * 0.002 ~= 292 s (~5 min).
+TIMEOUT_BASE_S = 30
+TIMEOUT_PER_TOKEN_S = 0.002
+
+def request_limits(text: str) -> tuple[int, int]:
+    """(max_tokens, timeout_s) sized from input. bytes/3 is a generous bound on the
+    compressed output for text where tokens ~ bytes/3; the 8192 floor covers small
+    files, a short fence/preamble and any reasoning tokens spent inside max_tokens."""
+    max_tokens = min(OUTPUT_CAP, max(8192, len(text.encode("utf-8")) // 3))
+    return max_tokens, int(TIMEOUT_BASE_S + max_tokens * TIMEOUT_PER_TOKEN_S)
+
 
 def call_semantic_api(text: str, model: str = DEFAULT_MODEL) -> str:
     """Send text to cheap model for semantic compression refinement."""
@@ -554,14 +571,13 @@ Input:
 {text}
 """
 
+    max_tokens, timeout_s = request_limits(text)
     data = {
         "model": model,
         "messages": [{"role": "user", "content": prompt}],
-        # Output ceiling. Kept generous so the whole compressed file fits — a
-        # low cap would truncate the response, dropping content and failing
-        # validation. Files whose compressed form still exceeds this are caught
-        # via a truncated-response check below.
-        "max_tokens": 8192,
+        # Sized from input (request_limits), capped at the model's output limit.
+        # A truncated response is caught via the finish_reason check below.
+        "max_tokens": max_tokens,
         "temperature": 0.1,
     }
 
@@ -587,7 +603,14 @@ Input:
                 },
                 method="POST",
             )
-            with urllib.request.urlopen(req, timeout=30) as resp:
+            # ecomono: two ceilings. (1) non-streaming — a response over OUTPUT_CAP or
+            # slower than timeout_s falls back to the rule-based pass; upgrade: SSE
+            # ("stream": true, parse "data:" lines, accumulate deltas), as upstream caveman
+            # did. (2) urllib has no separate connect timeout, so a blackholed endpoint
+            # waits up to the scaled timeout (~292 s at the cap) before the fallback,
+            # versus 30 s before this change — accepted.
+            t0 = time.monotonic()
+            with urllib.request.urlopen(req, timeout=timeout_s) as resp:
                 result = json.loads(resp.read())
             choice = result["choices"][0]
             if choice.get("finish_reason") == "length":
@@ -600,7 +623,8 @@ Input:
             # 429 (rate limit) and 5xx (transient server) are worth retrying with
             # backoff. 413 (payload too large) is not — the same request fails
             # again; raise so the caller falls back to the rule-based result.
-            if e.code in (429, 500, 502, 503) and attempt < 2:
+            slow = time.monotonic() - t0 > TIMEOUT_BASE_S  # gateway answered only after a long wait
+            if e.code in (429, 500, 502, 503) and attempt < 2 and not slow:
                 wait = 5 * (attempt + 1)
                 print(f"⚠️  HTTP {e.code}, retrying in {wait}s...", file=sys.stderr)
                 time.sleep(wait)

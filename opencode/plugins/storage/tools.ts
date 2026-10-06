@@ -22,6 +22,17 @@ export interface MemTool {
 
 // Resolve an explicit project or fall back to the cwd's git project.
 const proj = (p?: string) => p || Obs.currentProject().project
+// mem_update/mem_delete guard: omitted -> current project; "*" -> no guard.
+// Personal-scope rows store project_id like any other (the saving project), so
+// they get no special case: editing one from another project needs "*".
+const guard = (p?: string) => (p === "*" ? undefined : proj(p))
+// On a false guarded result, tell "other project" apart from "no such id" or
+// "nothing to update": reason only when a guard applied and the row sits elsewhere.
+const mismatch = (id: number, ok: boolean, g: string | undefined) => {
+  if (ok || g === undefined) return {}
+  const row = getDb().query("SELECT id, project_id FROM observations WHERE id = ?").get(id) as { project_id: string } | null
+  return row && row.project_id !== g ? { reason: "project mismatch", row_project: row.project_id, hint: 'pass expected_project: "*" to edit across projects' } : {}
+}
 
 // --- session inactivity nudge (engram #178) ---------------------------------
 // Catches "agent forgot to mem_save": if mem_search/mem_context get called a
@@ -140,11 +151,12 @@ const rawRegistry: MemTool[] = [
   },
   {
     name: "mem_update",
-    description: "Update fields of an existing observation by id; pass expected_project to require that it belongs to that project (updated=false on mismatch or missing id).",
+    description: "Update fields of an existing observation by id; expected_project defaults to the current project (updated=false on mismatch, missing id or no fields; a project mismatch adds reason, row_project and hint); pass expected_project \"*\" to edit across projects.",
     args: {
       id: z.number(),
-      // ecomono: optional so existing callers (agent prompts pass only id) keep
-      // working; upstream makes it required. Make it required once every caller passes it.
+      // ecomono: upstream requires it; here omitted = current project (cwd) and
+      // "*" opts out for a deliberate cross-project edit. Upgrade path: make it
+      // required (drop the default) if callers should always name the project.
       expected_project: z.string().optional(),
       title: z.string().optional(),
       content: z.string().optional(),
@@ -162,15 +174,17 @@ const rawRegistry: MemTool[] = [
       // (real clear) instead of storing the empty string.
       if (fields.review_after === "") fields.review_after = null
       const clean = Object.fromEntries(Object.entries(fields).filter(([, v]) => v !== undefined))
-      return { updated: Obs.update(id, clean, expected_project) }
+      const g = guard(expected_project)
+      const updated = Obs.update(id, clean, g)
+      return { updated, ...mismatch(id, updated, g) }
     },
   },
   {
     name: "mem_delete",
-    description: "Delete an observation by id; pass expected_project to require that it belongs to that project (deleted=false on mismatch or missing id).",
-    // ecomono: expected_project optional for the same reason as mem_update; make it required once every caller passes it.
+    description: "Delete an observation by id; expected_project defaults to the current project (deleted=false on mismatch or missing id; a project mismatch adds reason, row_project and hint); pass expected_project \"*\" to delete across projects.",
+    // ecomono: same default/opt-out as mem_update.
     args: { id: z.number(), expected_project: z.string().optional() },
-    handler: (a) => ({ deleted: Obs.del(a.id, a.expected_project) }),
+    handler: (a) => { const g = guard(a.expected_project); const deleted = Obs.del(a.id, g); return { deleted, ...mismatch(a.id, deleted, g) } },
   },
   {
     name: "mem_suggest_topic_key",

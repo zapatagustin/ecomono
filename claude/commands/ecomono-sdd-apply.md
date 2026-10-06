@@ -33,7 +33,7 @@ STEP B — RETRIEVE FULL CONTENT (mandatory):
   mem_get_observation(id: tasks_id) → full tasks (keep tasks_id for updates)
   IF progress_id exists: mem_get_observation(id: progress_id) → read previous progress, skip completed tasks, MERGE when saving
 Update tasks as you complete them:
-  mem_update(id: {tasks-observation-id}, content: "{updated tasks with [x] marks}")
+  mem_update(id: {tasks-observation-id}, content: "{updated tasks with [x] marks}")  # guarded to current project; expected_project: "*" only for a row saved from another project
 Save progress:
   mem_save(title: "sdd/{change-name}/apply-progress", topic_key: "sdd/{change-name}/apply-progress", type: "architecture", project: "{project}", content: "{progress report}")
 

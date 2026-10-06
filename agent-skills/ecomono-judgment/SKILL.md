@@ -44,7 +44,8 @@ A verdict is bound to exact bytes, never to a branch or an intent. This skill is
 place the subject hash gets computed — nothing downstream, the orchestrator included,
 re-derives it or forwards anything but this skill's own reported string. The forwarded value
 is the hash of the round that produced the terminal verdict: a re-freeze after any fix
-replaces it, drift never does — drift discards the round (step 4).
+replaces it, drift never does — drift discards the round (step 4) — except after a guard
+refusal (step 7).
 
 One shape only:
 
@@ -164,9 +165,10 @@ converge, which is information about the finding, not about the judge.
 3. Launch Judge A and Judge B concurrently.
 4. Re-compute the subject hash. Changed from the hash this round's judges saw → **drift**:
    write nothing under either hash, discard the round, re-run step 1's freeze, re-launch from
-   step 3 with the discarded round's scope, and say why. A discarded round does not count in
-   `rounds:`. A receipt is never written under bytes no judge pair saw. Every pre-write
-   re-verification (step 9) applies the same rule.
+   step 3 with the discarded round's scope, and say why. List answers already recorded stay
+   recorded; unanswered items stay open on the list for the re-launched round. A discarded
+   round does not count in `rounds:`. A receipt is never written under bytes no judge pair
+   saw. Every pre-write re-verification (step 9) applies the same rule.
 5. Synthesize into confirmed / suspect / contradiction / INFO.
 6. Triage. INFO is any WARNING (theoretical) and any SUGGESTION both judges raise; a
    SUGGESTION one judge raises is a suspect. INFO is recorded in the memory copy's body; it
@@ -177,11 +179,12 @@ converge, which is information about the finding, not about the judge.
    the Gates row asks for. A confirmed CRITICAL or real WARNING is a **blocker**, open until
    a re-judge stops reporting it or the review ends. Round 1 → step 7. First confirmed in
    round 2 or later → never auto-fixed, onto the list.
-7. Ask before fixing the round-1 blockers. The FIRST time a round waits on the user — at
-   this ask or at list return (step 8) — write the ESCALATED receipt under the current hash
-   before the question is put; later writes under that hash only refresh `rounds:` or
-   rewrite it to the terminal verdict (step 9). This decision, and on approval its loop, is
-   settled first; the round's list is returned after, at once on decline.
+7. Ask before fixing the round-1 blockers. The first wait under a given hash — at
+   this ask or at list return — write the ESCALATED receipt under it before the question is
+   put; later writes under that hash only refresh `rounds:` or rewrite it to the terminal
+   verdict (step 9). No answer at the ask leaves that ESCALATED standing. This decision, and
+   on approval its loop, is settled first; the round's list is returned after, at once on
+   decline.
    - **Approve** → one batch covering all of them, by a **separate** fix agent — the judges
      do not fix what they found. Then the **re-freeze**: re-run step 1 in full (hash,
      changed-line count, empty-diff and untracked-file guards); its hash is the next
@@ -194,9 +197,9 @@ converge, which is information about the finding, not about the judge.
      items, `fix` not offered: their answers, `accept` or `stop`, are recorded and change
      nothing.
    - **Re-freeze guard refusal** (the fix agent added an untracked file, or reverted
-     everything to an empty diff) → there is no new hash, so nothing is written or
-     rewritten: the ESCALATED written at the wait that approved the fix stands as the
-     verdict on `stop`, no answer or session end here. Untracked files: name them; the user
+     everything to an empty diff) → there is no new hash, so nothing is written under
+     the refused re-freeze: the verdict, on `stop`, no answer or session end here, is the
+     ESCALATED under the last hash that carries one. Untracked files: name them; the user
      stages them with a full `git add` (not `git add -N`) or adds them to `.gitignore`, then
      the re-freeze is re-run — nothing is committed before the re-judge. An emptied diff:
      the user restores the change or stops.
@@ -219,7 +222,9 @@ converge, which is information about the finding, not about the judge.
    unanswered), no list item unanswered, and the hash verified unchanged since the last
    round's judges saw it — plus, over 400 changed lines, the round's coverage statement;
    without it the candidate is ESCALATED. Anything else is ESCALATED. Write the terminal
-   verdict under the hash of the round that produced it: that hash already carries an
+   verdict under the hash of the round that produced it. After a guard refusal there is no
+   such hash: the verdict is the ESCALATED under the last hash that carries one (step 7).
+   If the hash the verdict is written under already carries an
    ESCALATED (written at the round's first wait, no re-freeze since) → rewrite both copies
    in place, the only case a receipt can change verdict under one hash; otherwise write
    new. Every earlier ESCALATED under an earlier hash stays, certifying bytes that no longer
