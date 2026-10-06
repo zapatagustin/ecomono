@@ -182,7 +182,13 @@ only in your own notes sends verify looking for work that was never recorded.
 
 ### Status
 {N}/{total} complete. {Ready for next batch | Ready for verify | Blocked by X}
+
+Risk: <item> (<reason>)  {one line per risky item, or `Risk: none`}
 ```
+
+The envelope ends with the `Risk:` line. Before writing `none`, check whether the diff
+touches a shared helper, parser, or utility that unrequested behavior depends on — if so,
+that is a Risk item.
 
 ## Rules
 

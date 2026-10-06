@@ -283,6 +283,27 @@ check("validate", "inline code skips indented fence (leaked markers)",
       V.extract_inline_codes("a `x` b\n\n ```\n `hidden`\n ```\n\nc `y` d"),
       ["x", "y"])
 
+# CommonMark pairs a code span by backtick-run length: an opening run of N closes
+# only with a run of exactly N. A stray mid-line "```" has no closing run, so it
+# is not a span; a single-backtick pairing used to bind one of its backticks to
+# the next real span's opener, shifting every later span on the line.
+STRAY = "inside a ```diff fence, then run `the basically utilize cmd` now"
+SPAN = "`the basically utilize cmd`"
+check("validate", "inline code ignores stray triple-backtick run",
+      V.extract_inline_codes(STRAY), ["the basically utilize cmd"])
+_masked, _stash = C.protect(STRAY)
+check("compress", "stray triple-backtick run: real span masked whole", _stash, [SPAN])
+check("compress", "stray triple-backtick run: span survives rule_compress byte-identical",
+      C.restore(C.rule_compress(_masked), _stash).count(SPAN), 1)
+check("compress", "stray triple-backtick run: pipeline output keeps span",
+      SPAN in C.rule_compress(STRAY), True)
+check("validate", "inline code: double-backtick span holding a single backtick",
+      V.extract_inline_codes("use ``a ` b`` here"), ["a ` b"])
+check("validate", "inline code: two ordinary spans still pair",
+      V.extract_inline_codes("run `a` then `b` now"), ["a", "b"])
+check("compress", "two ordinary spans both masked",
+      C.protect("run `a` then `b` now")[1], ["`a`", "`b`"])
+
 # ===========================================================================
 # 5. Validators — accept AND reject, and error vs warning severity
 # ===========================================================================

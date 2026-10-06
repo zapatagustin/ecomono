@@ -100,6 +100,9 @@ shorter MODIFIED block. Report the accounting either way — `{capability} / {re
    what the code appears to do.
 9. Persist and return, naming every dimension you skipped.
 
+Run every probe, scratch script, or runtime experiment in a `mktemp -d` copy (or another
+disposable location), never in the workspace. Verification leaves no files behind in the repo.
+
 Report what you ran and what it printed. A verdict without command output is an
 opinion.
 

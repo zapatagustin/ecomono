@@ -140,6 +140,17 @@ function initSchema(d: Database) {
       created_at TEXT NOT NULL DEFAULT (datetime('now'))
     )
   `)
+  sweepOrphanedLinks(d)
+}
+
+// One-time-effective sweep of judgments/memory_relations rows whose observation
+// was hard-deleted before Obs.del() started cleaning them up (engram #1472).
+// Idempotent: after the first run it matches nothing.
+// ecomono: no real FOREIGN KEYs — adding them means a table rebuild plus a
+// per-connection PRAGMA. Upgrade path: rebuild both tables with ON DELETE CASCADE.
+function sweepOrphanedLinks(d: Database) {
+  d.run("DELETE FROM judgments WHERE new_id NOT IN (SELECT id FROM observations) OR candidate_id NOT IN (SELECT id FROM observations)")
+  d.run("DELETE FROM memory_relations WHERE from_id NOT IN (SELECT id FROM observations) OR to_id NOT IN (SELECT id FROM observations)")
 }
 
 // Add a column only if it isn't already present (idempotent migration for DBs

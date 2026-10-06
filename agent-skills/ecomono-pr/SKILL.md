@@ -42,7 +42,7 @@ Four sections, in this order. A reviewer reads top-down and stops once they have
 {One or two sentences. What changed, not how.}
 
 ## Why
-{The problem this solves. `Closes #N` when an issue exists.}
+{The problem this solves. `Closes #N` when an issue exists; `Refs #N` when related but it must not close.}
 
 ## How to verify
 {A command, a flow, or a test name. Something the reviewer can run.}
@@ -82,7 +82,10 @@ and ask for an explicit size exception. Do not open a 2,000-line PR and hope.
 ## Project gates: detect, do not assume
 
 Some repos enforce issue linkage, required labels, or CI checks. Read `.github/` for a PR
-template and workflows, and check the real label list, before requiring any of it.
+template, and check the real label list, before requiring any of it. Required CI checks
+come from branch protection or rulesets (`gh api repos/{owner}/{repo}/rulesets`,
+`gh api repos/{owner}/{repo}/branches/{branch}/protection`), not workflow files; a pending
+check that is optional does not make the PR merge-ready.
 
 Present → follow exactly. Absent → do not invent ceremony the project does not have.
 Demanding a label that does not exist produces instructions nobody can follow.

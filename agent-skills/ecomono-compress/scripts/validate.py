@@ -3,6 +3,11 @@ import re
 from collections import Counter
 from pathlib import Path
 
+try:
+    from .compress import INLINE_CODE_REGEX
+except ImportError:  # run as a plain script, not as part of the package
+    from compress import INLINE_CODE_REGEX
+
 URL_REGEX = re.compile(r"https?://[^\s)]+")
 FENCE_OPEN_REGEX = re.compile(r"^(\s{0,3})(`{3,}|~{3,})(.*)$")
 # Any indent, unlike FENCE_OPEN_REGEX above — used only to blank stray fence-marker
@@ -270,7 +275,7 @@ def extract_inline_codes(text):
     text_without_fences = "\n".join(
         "" if FENCE_MARKER_LINE_REGEX.match(line) else line for line in lines
     )
-    return re.findall(r"`([^`]+)`", text_without_fences)
+    return [m.group(2) for m in INLINE_CODE_REGEX.finditer(text_without_fences)]
 
 
 # ---------- Validators ----------

@@ -269,5 +269,29 @@ const conflictStep = firstStep(Conf.FTS_CANDIDATE_SQL, ['"planword3"', "planproj
 assert(/^SCAN .*\bobservations_fts\b/.test(conflictStep),
   `findCandidates() must drive from the FTS table, not from observations; got: ${conflictStep}`)
 
+// --- hard delete cleans judgments/relations; startup sweeps pre-existing orphans (engram #1472) ---
+{
+  const d = getDb()
+  const mk = (t: string) => Obs.save({ title: t, content: t + " body", project: "orphproj" })!.id
+  const [a, b, c] = [mk("orph a"), mk("orph b"), mk("orph c")]
+  const j = (id: string, n: number, cand: number) =>
+    d.run("INSERT INTO judgments (id, new_id, candidate_id, project_id) VALUES (?, ?, ?, 'orphproj')", [id, n, cand])
+  const r = (f: number, t: number) => d.run("INSERT INTO memory_relations (from_id, to_id, relation) VALUES (?, ?, 'related')", [f, t])
+  j("j-ab", a, b); j("j-ba", b, a); j("j-bc", b, c)
+  r(a, b); r(b, a); r(b, c)
+  assert(Obs.del(a) === true, "del existing returns true")
+  const left = (t: string) => (d.query(`SELECT COUNT(*) n FROM ${t}`).get() as any).n
+  assert(d.query("SELECT id FROM judgments").all().map((x: any) => x.id).join() === "j-bc", "del removes judgments in both directions, keeps unrelated")
+  assert(left("memory_relations") === 1 && (d.query("SELECT from_id f FROM memory_relations").get() as any).f === b, "del removes relations in both directions, keeps unrelated")
+
+  // sweep: orphans inserted by raw SQL are removed on the next startup
+  j("j-orphan", 424242, b); r(515151, b)
+  closeDb()
+  const d2 = getDb()
+  assert((d2.query("SELECT COUNT(*) n FROM judgments WHERE id='j-orphan'").get() as any).n === 0, "startup sweep removes orphan judgment")
+  assert((d2.query("SELECT COUNT(*) n FROM memory_relations WHERE from_id=515151").get() as any).n === 0, "startup sweep removes orphan relation")
+  assert((d2.query("SELECT COUNT(*) n FROM judgments WHERE id='j-bc'").get() as any).n === 1, "sweep keeps live judgment")
+}
+
 closeDb()
 console.log("✓ storage: all assertions passed")

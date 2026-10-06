@@ -248,7 +248,12 @@ REDUNDANT_VERBS = [
 # masking and validation agree on exactly what a code block is.
 
 FENCE_OPEN_REGEX = re.compile(r"^(\s{0,3})(`{3,}|~{3,})(.*)$")
-INLINE_CODE_REGEX = re.compile(r"`[^`\n]+`")
+# CommonMark code span: an opening run of N backticks closes only with a run of
+# exactly N, so the lookarounds force both runs to be maximal. A stray run with
+# no matching closer (e.g. "```" mid-prose) is not a span. Group 2 is the span
+# content. Single-line (no DOTALL): rule_compress is line-oriented. Shared with
+# validate.extract_inline_codes so masker and validator pair identically.
+INLINE_CODE_REGEX = re.compile(r"(?<!`)(`+)(?!`)(.+?)(?<!`)\1(?!`)")
 URL_REGEX = re.compile(r"https?://[^\s)]+")
 # ATX heading lines. Masked whole (marker + text) so a filler word in a heading
 # ("# Just Getting Started") can't be rewritten: validate.validate_headings

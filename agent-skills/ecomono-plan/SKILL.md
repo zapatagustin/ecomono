@@ -17,6 +17,9 @@ Each task MUST be executable by an agent that has never seen this conversation.
 That is the whole test.
 
 - Name exact file paths, not "the auth module".
+- Name the exact signatures a task creates or changes (name, parameters, return type) and
+  any values the spec fixes. Code shared across tasks goes through an interface declared
+  in the plan (an "Interfaces" block), never left for the implementer to guess.
 - State the expected end condition, not "make it work".
 - No "as we discussed", "the approach above", "same as the previous task".
 - Carry context via files on disk, not via prose pasted into a dispatch prompt —

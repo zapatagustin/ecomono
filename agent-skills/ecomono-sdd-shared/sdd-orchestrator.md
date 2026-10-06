@@ -273,6 +273,10 @@ twice for one answer.
 **Pre-flight, every call:** identify the phase key (or `default`), look up the alias,
 include `model`. No alias resolved → do not send the call.
 
+**Edit roots:** before launching a writer, derive its allowed edit roots from the tasks
+artifact and pass them in the sub-agent prompt. Cannot derive them unambiguously → present
+the proposed path list to the user for approve/decline before launching.
+
 **Skills:** resolve once per session per [skill-resolver.md](skill-resolver.md), cache
 the index, and inject matching `SKILL.md` **paths** — never generated summaries — as
 `## Skills to load before work`.

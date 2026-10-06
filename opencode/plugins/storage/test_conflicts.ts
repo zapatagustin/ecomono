@@ -71,4 +71,31 @@ const mv = C.mergeProjects("q", "p")
 assert(mv.moved_observations >= 2, `merge moved observations (got ${mv.moved_observations})`)
 assert(Obs.stats("q").observations === 0, "source project emptied")
 
+// judge() after the candidate was hard-deleted: resolved, stale, no relation, no state flip (engram #1472)
+{
+  const old = C.saveWithJudgment({ title: "Stale cand old", content: "legacy plan alpha", project: "s", topic_key: "arch/stale" })!
+  const neu = C.saveWithJudgment({ title: "Stale cand new", content: "fresh plan beta", project: "s", topic_key: "arch/stale" })!
+  const jid = neu.candidates.find((c) => c.observation_id === old.id)!.judgment_id
+  const rawDb = (await import("./db")).getDb()
+  // simulate a delete that bypassed Obs.del's cleanup (pre-existing orphan)
+  rawDb.run("DELETE FROM observations WHERE id=?", [old.id])
+  const res: any = C.judge(jid, "supersedes")
+  assert(res.resolved === true && res.stale === true, "judge on a gone candidate resolves as stale")
+  assert(C.relationsOf(neu.id).length === 0, "no relation written for a gone candidate")
+  assert(Obs.getObservation(neu.id)!.state === "active", "new observation state untouched")
+  assert((rawDb.query("SELECT resolved FROM judgments WHERE id=?").get(jid) as any).resolved === 1, "judgment marked resolved")
+}
+
+// non-retiring relation against a candidate superseded in the meantime: still recorded, not stale
+{
+  const old = C.saveWithJudgment({ title: "Late rel old", content: "legacy plan gamma", project: "s2", topic_key: "arch/late" })!
+  const neu = C.saveWithJudgment({ title: "Late rel new", content: "fresh plan delta", project: "s2", topic_key: "arch/late" })!
+  const jid = neu.candidates.find((c) => c.observation_id === old.id)!.judgment_id
+  const rawDb = (await import("./db")).getDb()
+  rawDb.run("UPDATE observations SET state='superseded' WHERE id=?", [old.id])
+  const res: any = C.judge(jid, "related")
+  assert(res.resolved === true && !res.stale, "related against a superseded candidate is not stale")
+  assert(C.relationsOf(neu.id).some((rel: any) => rel.relation === "related" && rel.to_id === old.id), "related relation recorded for a superseded candidate")
+}
+
 console.log("✓ conflicts: candidates, supersede, judge relations, compare, merge all pass")

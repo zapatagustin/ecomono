@@ -19578,6 +19578,11 @@ function initSchema(d) {
       created_at TEXT NOT NULL DEFAULT (datetime('now'))
     )
   `);
+  sweepOrphanedLinks(d);
+}
+function sweepOrphanedLinks(d) {
+  d.run("DELETE FROM judgments WHERE new_id NOT IN (SELECT id FROM observations) OR candidate_id NOT IN (SELECT id FROM observations)");
+  d.run("DELETE FROM memory_relations WHERE from_id NOT IN (SELECT id FROM observations) OR to_id NOT IN (SELECT id FROM observations)");
 }
 function addColumn(d, table, col, type) {
   const cols = d.query(`PRAGMA table_info(${table})`).all().map((r) => r.name);
@@ -19722,7 +19727,7 @@ function getObservation(id) {
   return row || null;
 }
 var UPDATABLE_COLUMNS = new Set(["title", "type", "scope", "content", "topic_key", "state", "review_after"]);
-function update(id, fields) {
+function update(id, fields, expectedProject) {
   if ("title" in fields && (!fields.title || !String(fields.title).trim())) {
     throw new Error("observation title is required");
   }
@@ -19752,13 +19757,23 @@ function update(id, fields) {
   }
   sets.push("updated_at = datetime('now')");
   params.push(id);
-  db.run(`UPDATE observations SET ${sets.join(", ")} WHERE id = ?`, params);
-  return true;
+  let where = "id = ?";
+  if (expectedProject !== undefined) {
+    where += " AND project_id = ?";
+    params.push(expectedProject);
+  }
+  return Number(db.run(`UPDATE observations SET ${sets.join(", ")} WHERE ${where}`, params).changes) > 0;
 }
-function del(id) {
+function del(id, expectedProject) {
   const db = getDb();
-  db.run("DELETE FROM observations WHERE id = ?", [id]);
-  return true;
+  return db.transaction(() => {
+    const r = expectedProject === undefined ? db.run("DELETE FROM observations WHERE id = ?", [id]) : db.run("DELETE FROM observations WHERE id = ? AND project_id = ?", [id, expectedProject]);
+    if (Number(r.changes) === 0)
+      return false;
+    db.run("DELETE FROM judgments WHERE new_id = ? OR candidate_id = ?", [id, id]);
+    db.run("DELETE FROM memory_relations WHERE from_id = ? OR to_id = ?", [id, id]);
+    return true;
+  })();
 }
 function timeline(project, limit) {
   const db = getDb();
@@ -19948,6 +19963,12 @@ function judge(judgmentId, relation, note) {
     return { resolved: false, error: "judgment not found" };
   if (j.resolved)
     return { resolved: true, relation };
+  const candState = relation === "supersedes" ? " AND state='active'" : "";
+  const both = db.query(`SELECT (SELECT COUNT(*) FROM observations WHERE id=?) + (SELECT COUNT(*) FROM observations WHERE id=?${candState}) n`).get(j.new_id, j.candidate_id);
+  if (both.n < 2) {
+    db.run("UPDATE judgments SET resolved=1 WHERE id=?", [judgmentId]);
+    return { resolved: true, stale: true };
+  }
   if (relation === "supersedes") {
     db.run("UPDATE observations SET state='superseded', superseded_by=? WHERE id=?", [j.new_id, j.candidate_id]);
     recordRelation(j.new_id, j.candidate_id, "supersedes", note);
@@ -20076,9 +20097,10 @@ var rawRegistry = [
   },
   {
     name: "mem_update",
-    description: "Update fields of an existing observation by id.",
+    description: "Update fields of an existing observation by id; pass expected_project to require that it belongs to that project (updated=false on mismatch or missing id).",
     args: {
       id: number2(),
+      expected_project: string2().optional(),
       title: string2().optional(),
       content: string2().optional(),
       type: _enum(["decision", "architecture", "bugfix", "pattern", "config", "discovery", "learning", "manual"]).optional(),
@@ -20086,18 +20108,18 @@ var rawRegistry = [
       review_after: string2().nullable().optional().describe("null (or empty string) clears the review debt; a datetime string re-schedules it; omitted on a type change lets the new type's TTL re-stamp")
     },
     handler: (a) => {
-      const { id, ...fields } = a;
+      const { id, expected_project, ...fields } = a;
       if (fields.review_after === "")
         fields.review_after = null;
       const clean = Object.fromEntries(Object.entries(fields).filter(([, v]) => v !== undefined));
-      return { updated: update(id, clean) };
+      return { updated: update(id, clean, expected_project) };
     }
   },
   {
     name: "mem_delete",
-    description: "Delete an observation by id.",
-    args: { id: number2() },
-    handler: (a) => ({ deleted: del(a.id) })
+    description: "Delete an observation by id; pass expected_project to require that it belongs to that project (deleted=false on mismatch or missing id).",
+    args: { id: number2(), expected_project: string2().optional() },
+    handler: (a) => ({ deleted: del(a.id, a.expected_project) })
   },
   {
     name: "mem_suggest_topic_key",

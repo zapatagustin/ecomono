@@ -140,9 +140,12 @@ const rawRegistry: MemTool[] = [
   },
   {
     name: "mem_update",
-    description: "Update fields of an existing observation by id.",
+    description: "Update fields of an existing observation by id; pass expected_project to require that it belongs to that project (updated=false on mismatch or missing id).",
     args: {
       id: z.number(),
+      // ecomono: optional so existing callers (agent prompts pass only id) keep
+      // working; upstream makes it required. Make it required once every caller passes it.
+      expected_project: z.string().optional(),
       title: z.string().optional(),
       content: z.string().optional(),
       type: z.enum(["decision", "architecture", "bugfix", "pattern", "config", "discovery", "learning", "manual"]).optional(),
@@ -153,20 +156,21 @@ const rawRegistry: MemTool[] = [
       review_after: z.string().nullable().optional().describe("null (or empty string) clears the review debt; a datetime string re-schedules it; omitted on a type change lets the new type's TTL re-stamp"),
     },
     handler: (a) => {
-      const { id, ...fields } = a
+      const { id, expected_project, ...fields } = a
       // "" is a natural clear attempt too, but stored as-is it sorts before
       // datetime('now') and reads as immediately past-due. Normalize to null
       // (real clear) instead of storing the empty string.
       if (fields.review_after === "") fields.review_after = null
       const clean = Object.fromEntries(Object.entries(fields).filter(([, v]) => v !== undefined))
-      return { updated: Obs.update(id, clean) }
+      return { updated: Obs.update(id, clean, expected_project) }
     },
   },
   {
     name: "mem_delete",
-    description: "Delete an observation by id.",
-    args: { id: z.number() },
-    handler: (a) => ({ deleted: Obs.del(a.id) }),
+    description: "Delete an observation by id; pass expected_project to require that it belongs to that project (deleted=false on mismatch or missing id).",
+    // ecomono: expected_project optional for the same reason as mem_update; make it required once every caller passes it.
+    args: { id: z.number(), expected_project: z.string().optional() },
+    handler: (a) => ({ deleted: Obs.del(a.id, a.expected_project) }),
   },
   {
     name: "mem_suggest_topic_key",

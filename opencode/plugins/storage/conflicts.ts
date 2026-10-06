@@ -121,12 +121,22 @@ export function saveWithJudgment(opts: Parameters<typeof Obs.save>[0]): SaveResu
   return { ...base, judgment_required: candidates.length > 0, candidates }
 }
 
-export function judge(judgmentId: string, relation: Relation, note?: string): { resolved: boolean; relation?: Relation; error?: string } {
+export function judge(judgmentId: string, relation: Relation, note?: string): { resolved: boolean; relation?: Relation; error?: string; stale?: boolean } {
   if (!RELATIONS.includes(relation)) return { resolved: false, error: `unknown relation '${relation}'` }
   const db = getDb()
   const j = db.query("SELECT * FROM judgments WHERE id=?").get(judgmentId) as any
   if (!j) return { resolved: false, error: "judgment not found" }
   if (j.resolved) return { resolved: true, relation }
+
+  // Either side may have been hard-deleted since the judgment was parked: resolve without
+  // writing a relation (engram #1472). Only `supersedes` also needs the candidate still
+  // active; a non-retiring relation against an already-superseded candidate stays valid.
+  const candState = relation === "supersedes" ? " AND state='active'" : ""
+  const both = db.query(`SELECT (SELECT COUNT(*) FROM observations WHERE id=?) + (SELECT COUNT(*) FROM observations WHERE id=?${candState}) n`).get(j.new_id, j.candidate_id) as any
+  if (both.n < 2) {
+    db.run("UPDATE judgments SET resolved=1 WHERE id=?", [judgmentId])
+    return { resolved: true, stale: true }
+  }
 
   if (relation === "supersedes") {
     // the new observation replaces the candidate

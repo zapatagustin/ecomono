@@ -137,4 +137,16 @@ const summary = Sess.getSession("sess-tools").summary as string
 assert(/calls_vs_saves: \d+\/\d+/.test(summary), "session summary records the calls-vs-saves ratio")
 assert(summary.includes("Accomplished: stuff"), "session summary keeps the agent-authored content")
 
+// --- missing id / expected_project guard (engram #1575) ---
+assert(call("mem_update", { id: 999999, title: "x" }).updated === false, "mem_update on a missing id reports false")
+assert(call("mem_delete", { id: 999999 }).deleted === false, "mem_delete on a missing id reports false")
+const own = call("mem_save", { title: "Owned obs", content: "belongs to ownproj", project: "ownproj" }) as any
+assert(call("mem_update", { id: own.id, title: "Hijacked", expected_project: "other" }).updated === false, "mem_update with wrong expected_project reports false")
+assert(Obs.getObservation(own.id)!.title === "Owned obs", "mismatched mem_update leaves the row unchanged")
+assert(call("mem_delete", { id: own.id, expected_project: "other" }).deleted === false, "mem_delete with wrong expected_project reports false")
+assert(Obs.getObservation(own.id) !== null, "mismatched mem_delete leaves the row")
+assert(call("mem_update", { id: own.id, title: "Renamed", expected_project: "ownproj" }).updated === true, "mem_update with matching expected_project succeeds")
+assert(Obs.getObservation(own.id)!.title === "Renamed", "matching mem_update applied")
+assert(call("mem_delete", { id: own.id, expected_project: "ownproj" }).deleted === true, "mem_delete with matching expected_project succeeds")
+
 console.log(`✓ tools: ${registry.length} tools, all assertions passed`)

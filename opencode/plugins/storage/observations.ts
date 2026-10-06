@@ -154,7 +154,7 @@ export function getObservation(id: number): Observation | null {
 // mem_update's Zod-shaped args, which already strip unknown keys.
 const UPDATABLE_COLUMNS = new Set(["title", "type", "scope", "content", "topic_key", "state", "review_after"])
 
-export function update(id: number, fields: Partial<Observation>): boolean {
+export function update(id: number, fields: Partial<Observation>, expectedProject?: string): boolean {
   // Same admission boundary as save(): an explicit blank/whitespace-only title
   // is rejected before any UPDATE runs. `"title" in fields` (not truthiness)
   // so an update that doesn't touch title at all is unaffected.
@@ -194,14 +194,25 @@ export function update(id: number, fields: Partial<Observation>): boolean {
   }
   sets.push("updated_at = datetime('now')")
   params.push(id)
-  db.run(`UPDATE observations SET ${sets.join(", ")} WHERE id = ?`, params)
-  return true
+  let where = "id = ?"
+  if (expectedProject !== undefined) { where += " AND project_id = ?"; params.push(expectedProject) }
+  // changes === 0: no such id, or it belongs to another project (engram #1575).
+  return Number(db.run(`UPDATE observations SET ${sets.join(", ")} WHERE ${where}`, params).changes) > 0
 }
 
-export function del(id: number): boolean {
+export function del(id: number, expectedProject?: string): boolean {
   const db = getDb()
-  db.run("DELETE FROM observations WHERE id = ?", [id])
-  return true
+  // judgments/memory_relations have no FKs, so a hard delete would orphan their
+  // rows (engram #1472); remove them in the same transaction.
+  return db.transaction(() => {
+    const r = expectedProject === undefined
+      ? db.run("DELETE FROM observations WHERE id = ?", [id])
+      : db.run("DELETE FROM observations WHERE id = ? AND project_id = ?", [id, expectedProject])
+    if (Number(r.changes) === 0) return false
+    db.run("DELETE FROM judgments WHERE new_id = ? OR candidate_id = ?", [id, id])
+    db.run("DELETE FROM memory_relations WHERE from_id = ? OR to_id = ?", [id, id])
+    return true
+  })()
 }
 
 export function timeline(project?: string, limit?: number): { id: number; title: string; type: string; created_at: string }[] {

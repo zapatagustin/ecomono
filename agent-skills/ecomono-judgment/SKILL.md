@@ -59,7 +59,7 @@ shot.
 **Measure the candidate, not just name it.** The same diff answers how big it is:
 
 ```bash
-git diff --numstat "$(git merge-base HEAD {base-branch})" | awk '{a+=$1; d+=$2} END{print a+d+0}'
+git diff --numstat "$(git merge-base HEAD {base-branch})" | awk '{for(i=1;i<=2;i++)t+=$i} END{print t+0}'
 ```
 
 Report that count beside the hash, pass it to every judge, and record it in both copies of the
@@ -170,8 +170,11 @@ converge, which is information about the finding, not about the judge.
 5. Synthesize into confirmed / suspect / contradiction / INFO.
 6. Ask before round-1 fixes. Delegate a **separate** fix agent, for approved confirmed
    issues only — the judges do not fix what they found.
-7. Re-judge in parallel after fixes, from step 3. Repeat until approved, escalated, or
-   stopped. Every round runs its own step 4.
+7. Re-judge in parallel after fixes, from step 3. The correction loop is bounded: one
+   fix batch covers all confirmed blockers, and the re-judge is limited to those blockers.
+   A second fix round happens only if the SAME blocker still fails; anything else still
+   open goes to a "Needs your decision" list returned to the user, not another round.
+   Every round runs its own step 4.
 8. Re-verify the subject hash, then write both copies of the receipt — the file first, so a
    failing `mem_save` cannot leave a verdict with no durable record at all.
 9. Before any terminal action, confirm every open judgment reached a terminal state. A
