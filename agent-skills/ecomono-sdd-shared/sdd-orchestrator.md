@@ -192,10 +192,14 @@ How to run it, by cost:
 **PASS** → continue automatically. Auto stays auto on the happy path.
 
 **FAIL** → re-run that phase exactly once, with corrective feedback naming the
-specific failures, one model tier up (`haiku` → `sonnet` → `opus`; `opus` stays `opus`).
-The same model rarely fixes its own blind spot. Never blanket-retry. Re-gate the result. Still failing → STOP the
-chain and report the phase, what was caught, both attempts, and the recommended fix.
-Never advance to a dependent phase on a failed gate; a bad artifact compounds.
+specific failures, one model tier up (`haiku` → `sonnet` → `opus`). The starting tier is
+the phase's model in the model assignments table; pass the higher tier as an explicit
+`model` on the `Agent` call, since the agent's frontmatter pins its tier otherwise. The
+same model rarely fixes its own blind spot. Phases already on `opus` re-run on `opus`: a
+stated, accepted ceiling, not a fix for that blind spot. Never blanket-retry. Re-gate the
+result. Still failing → STOP the chain and report the phase, what was caught, both
+attempts, and the recommended fix. Never advance to a dependent phase on a failed gate;
+a bad artifact compounds.
 
 The gatekeeper adds to the hard gates and the review workload guard. It never relaxes
 them, and it never auto-marks anything reviewed.
@@ -256,7 +260,7 @@ model is Claude Code's business, not this table's.
 | `ecomono-sdd-design` | opus | Architectural decisions |
 | `ecomono-sdd-tasks` | sonnet | Mechanical breakdown |
 | `ecomono-sdd-apply` | sonnet | Implementation |
-| `ecomono-sdd-verify` | opus | Last gate before archive; one call per change |
+| `ecomono-sdd-verify` | opus | Final validation before archive |
 | `ecomono-sdd-archive` | sonnet | Destructive merge into the baseline, behind four gates |
 | `ecomono-judge-a` | sonnet | Blind adversarial review |
 | `ecomono-judge-b` | sonnet | Blind adversarial review |

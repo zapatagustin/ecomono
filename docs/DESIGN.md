@@ -321,8 +321,14 @@ the `.ts` source. It used 2-3x the tokens (52-76k vs 20-30k) and 3x the wall tim
 output feeds every later decision, so a confident "none exists" compounds. Revisit only with a
 prompt that forces "unverified" over "none".
 
-A gate FAIL now retries one tier up (`haiku` → `sonnet` → `opus`), and `ecomono-sdd-verify`
-runs on Opus as the last gate before archive.
+### Decision: gate retries escalate, verify runs on Opus
+
+A same-model retry repeats its own blind spot, so a gate FAIL re-runs the phase one tier up
+(`haiku` → `sonnet` → `opus`) via an explicit `model` on the `Agent` call. Phases already on
+Opus are the ceiling and re-run on Opus. `ecomono-sdd-verify` runs on Opus as final validation
+before archive. Opus costs about 1.7x Sonnet at list price (see "Model tier is 5x, not 60x"; its 5x is Opus vs Haiku), accepted because verify
+runs per change or attempt, not per file. Claude Code only: OpenCode pins its own map in
+`opencode/opencode.json`.
 
 ### What saves tokens: context isolation
 
