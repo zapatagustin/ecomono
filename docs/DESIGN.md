@@ -326,9 +326,9 @@ prompt that forces "unverified" over "none".
 A same-model retry repeats its own blind spot, so a gate FAIL re-runs the phase one tier up
 (`haiku` → `sonnet` → `opus`) via an explicit `model` on the `Agent` call. Phases already on
 Opus are the ceiling and re-run on Opus. `ecomono-sdd-verify` runs on Opus as final validation
-before archive. Opus costs about 1.7x Sonnet at list price (see "Model tier is 5x, not 60x"; its 5x is Opus vs Haiku), accepted because verify
-runs per change or attempt, not per file. Claude Code only: OpenCode pins its own map in
-`opencode/opencode.json`.
+before archive. Opus costs about 1.7x Sonnet at list price (see "Model tier is 5x, not 60x";
+its 5x is Opus vs Haiku), accepted because verify runs per change or attempt, not per file.
+Claude Code only: OpenCode pins its own map in `opencode/opencode.json`.
 
 ### What saves tokens: context isolation
 
