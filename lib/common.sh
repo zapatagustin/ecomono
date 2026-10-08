@@ -26,7 +26,7 @@ detect_os() {
     OS_ID="${ID:-unknown}"
     OS_LIKE="${ID_LIKE:-}"
   fi
-  [ -e /etc/NIXOS ] && OS_ID=nixos
+  if [ -e /etc/NIXOS ]; then OS_ID=nixos; fi
 }
 
 # ---- filesystem linking (idempotent, non-destructive) -----------------------
