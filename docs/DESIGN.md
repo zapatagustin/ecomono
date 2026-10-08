@@ -310,6 +310,20 @@ that is load-bearing. The context-ceiling rule the routing depended on requires 
 predict a task's cost before starting it; measured compliance on Haiku was **1 of 4** runs where
 the rule applied. The 242k-token payload below also exceeds Haiku's 200k context window outright.
 
+### Decision: exploration stays on Sonnet
+
+Haiku 5.5 was A/B-tested as `ecomono-explore` against Sonnet on three real tasks: model-routing
+map, hook wiring, and the `mem_save` → `mem_judge` trace. In two of the three, Haiku stated a
+false negative as fact. It reported "no model gating validation" although
+`agent-model-gate.sh` exists, and "no integration test" after missing
+`opencode/plugins/storage/test_conflicts.ts`. It also cited the nix-store bundle instead of
+the `.ts` source. It used 2-3x the tokens (52-76k vs 20-30k) and 3x the wall time. Exploration
+output feeds every later decision, so a confident "none exists" compounds. Revisit only with a
+prompt that forces "unverified" over "none".
+
+A gate FAIL now retries one tier up (`haiku` → `sonnet` → `opus`), and `ecomono-sdd-verify`
+runs on Opus as the last gate before archive.
+
 ### What saves tokens: context isolation
 
 Delegation pays through keeping bulk out of the main thread's permanent context, not through
