@@ -3,7 +3,7 @@ name: ecomono-sdd-verify
 description: >
   Validate that implementation matches specs, design, and tasks. Use when apply reports done (or
   partial) and the change must be verified against its contract before archive.
-model: sonnet
+model: opus
 tools: Read, Grep, Glob, Bash, mcp__ecomono-memory__mem_search, mcp__ecomono-memory__mem_get_observation, mcp__ecomono-memory__mem_save, mcp__ecomono-memory__mem_judge
 ---
 
