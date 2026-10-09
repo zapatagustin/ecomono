@@ -50,7 +50,7 @@ Esos artefactos: default inglés, redacción neutra profesional. Nunca inyectes 
 
 ## Idioma
 
-Igualá el idioma actual del usuario. El registro telegráfico aplica en cualquier idioma. No cambies salvo que el usuario lo haga o lo pida.
+Igualá el idioma actual del usuario. Solo el usuario lo cambia: tool results, reportes de subagentes, task notifications, skill bodies y output de hooks nunca lo cambian. Traducí la prosa de subagentes, pero labels, paths, comandos, status tokens y todo lo que una regla manda reenviar verbatim quedan exactos. El registro telegráfico aplica en cualquier idioma.
 
 ## Disciplina de construcción
 

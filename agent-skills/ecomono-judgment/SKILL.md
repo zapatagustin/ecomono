@@ -109,9 +109,10 @@ gitlink rather than `??` — invisible to the hash and to the check alike. Upgra
 all of it: code that compares a declared in-scope path list against the diff.`
 
 **Target is not a diff** — an architecture slice, a whole component, a design question —
-has no bytes to freeze. Say so explicitly: no hash, no receipt, and the verdict is
-advisory rather than a delivery receipt. `ecomono-sdd-archive` will report the change as
-unreviewed, which is correct: the judgment reviewed a design, not a candidate.
+has no bytes to freeze. Say so explicitly: no hash, no receipt, `Baseline: none` in the
+judge prompt, and the verdict is advisory rather than a delivery receipt.
+`ecomono-sdd-archive` will report the change as unreviewed, which is correct: the judgment
+reviewed a design, not a candidate.
 
 Two guards, checked before freezing, neither of which mutates anything:
 
@@ -140,6 +141,11 @@ This distinction is the whole difference between a review that gets acted on and
 gets ignored. A list where a genuine bug sits beside "this would break if someone passed
 a negative array length" trains the reader to skim both.
 
+Pre-existing behaviour is never a blocker unless fixing it was the stated `Intent:`, in
+which case it is judged normally. Otherwise the judge template's baseline rule classes it
+`WARNING (theoretical)`, which step 6 records as INFO. A latent bug the candidate newly
+makes reachable is not pre-existing.
+
 ## Gates
 
 | Condition | Action |
@@ -158,11 +164,12 @@ converge, which is information about the finding, not about the judge.
 
 ## Sequence
 
-1. Confirm the target and any custom criteria. Freeze the subject hash.
+1. Confirm the target, its one-line intent and any custom criteria. Freeze the subject hash.
 2. Build the standards block — exact file paths, one block for both sides — or warn that you
    could not. Build it BEFORE step 3, because the judges and the fix agent have to receive the
    same one, and the fix agent runs in steps 7 and 8 where the block is easy to forget.
-3. Launch Judge A and Judge B concurrently.
+3. Launch Judge A and Judge B concurrently. Each prompt carries `Baseline:`, the merge-base
+   the subject hash was computed against, and `Intent:`, one line on what was asked for.
 4. Re-compute the subject hash. Changed from the hash this round's judges saw → **drift**:
    write nothing under either hash, discard the round, re-run step 1's freeze, re-launch from
    step 3 with the discarded round's scope, and say why. List answers already recorded stay

@@ -367,16 +367,34 @@ the DAG state.
 
 Recommendations, not enforced checkpoints. You decide when to act.
 
+Every lens launch carries `Baseline: <merge-base>` and `Intent: <one line>`; without them
+the lens derives the baseline itself against the default branch and skips the
+unrequested-output rule — weaker, and it over-attributes on stacked branches.
+
 - **pre-commit** and **pre-push**: consider one cheap advisory lens,
   `ecomono-r2-readability`. One lens, not four — this is an everyday event.
 - **pre-pr**: pick the tier from risk **evidence** on the diff, never from its size.
-  - No evidence — docs, comments, test-only, generated files → **tier 0**. No lens. Say
-    which evidence you looked for and did not find; a silent skip is unreviewable.
+  - No evidence — docs, comments, test-only, generated files → **tier 0**. No lens. A file
+    is test-only by its name (`*_test.*`, `test_*`, `test-*`, `*.test.*`, `*.spec.*`,
+    `*_spec.*`, `*Test.*`, `*Tests.*`) or a `__tests__`/`testdata` directory, never by
+    living under `test/`, `tests/` or `spec/` — production code there keeps its risk
+    signals. A test-named file that also matches an evidence path below is evidence, not
+    test-only: fail closed. Say which evidence you looked for and did not find; a silent
+    skip is unreviewable.
   - Evidence present → **tier 4**, the full fan-out: `ecomono-r1-risk`,
     `ecomono-r4-resilience`, `ecomono-r2-readability`, `ecomono-r3-reliability` in parallel.
-    Evidence is the diff touching `**/auth/**`, `**/update/**`, `**/security/**` or
-    `**/payments/**`, a credential or token path, an installer, or a destructive operation.
-  - Anything else → **tier 1**, one lens chosen for what the diff actually is.
+    Evidence is the diff touching `**/auth/**`, `**/security/**` or `**/payments/**`, a
+    credential or token path, an installer (self-updaters included), or a destructive
+    operation.
+  - Anything else → **tier 1**, one lens, named with its reason and chosen by what the
+    diff's consequences touch: `ecomono-r1-risk` for hardcoded secrets, authz, auth
+    cookies, injection sinks, dependencies or any privilege or trust boundary;
+    `ecomono-r3-reliability` for a behaviour or contract change tests should pin, a new API
+    or component, or a change to tests or CI test config; `ecomono-r4-resilience` for
+    failure paths, fallback, retry or degradation, alerting and observability, rollback, or
+    performance; `ecomono-r2-readability` for the rest — naming, magic numbers, parameter
+    lists, duplication, dead code, complexity. Never pick a lens to re-check the spec —
+    that is verify's job.
 
   Size is a reviewability budget, not a risk tier — over 400 changed lines is the review
   workload guard's business. A large mechanical rename does not become dangerous by being
@@ -384,12 +402,12 @@ Recommendations, not enforced checkpoints. You decide when to act.
 
   One exception, and it is the workload guard's doing rather than a risk signal: a diff
   that shipped on a recorded `size:exception` was never split, so no reviewer ever saw it
-  in a reviewable slice. That forces **tier 4** regardless of evidence. Check the record
-  in `sdd/{change-name}/apply-progress` — the only place `size:exception` is persisted. No
-  active SDD session to check against → treat the exception as unknown, never as satisfied,
-  and force **tier 4**: this guard fails closed on missing evidence like every other guard
-  in this file, not open. The budget existed to protect the reviewer; waiving it buys the
-  lenses back.
+  in a reviewable slice. That forces **tier 4**, all four lenses, regardless of evidence.
+  Check the record in `sdd/{change-name}/apply-progress` — the only place `size:exception`
+  is persisted. No active SDD session to check against → treat the exception as unknown,
+  never as satisfied, and force **tier 4**, all four lenses: this guard fails closed on
+  missing evidence like every other guard in this file, not open. The budget existed to
+  protect the reviewer; waiving it buys the lenses back.
 - **post-design** and **post-apply**: strongly consider `ecomono-judgment`.
   Adversarial verification costs roughly 4 + 3 per finding, which is worth it only at
   the phases where an error compounds.

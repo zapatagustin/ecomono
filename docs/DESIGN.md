@@ -760,11 +760,11 @@ Fourteen skills under `skills/` were third-party work, not ours renamed: `licens
 under the `ecomono-` prefix, then **rewritten from scratch** — see `NOTICE.md` for what is
 and is not owed.
 
-The rewrite dropped `openspec` entirely. It was never our convention: it is the on-disk
-layout the `gentle-ai` binary read natively, and no project on this machine has an
-`openspec/` directory. With it went the four-mode persistence matrix, the whole Native SDD
-Dispatcher Guard, the `gentle-ai.sdd-status` schema, and every field that existed only
-because artifacts used to be files.
+The rewrite dropped `openspec` entirely. It is the on-disk layout the `gentle-ai` binary
+read natively; this repo adopted it for one cycle (port-engram) and dropped it in
+`375654e`, the day that cycle archived. With it went the four-mode persistence matrix, the
+whole Native SDD Dispatcher Guard, the `gentle-ai.sdd-status` schema, and every field that
+existed only because artifacts used to be files.
 
 Dropping it exposed a real gap: delta specs had nothing to be delta against, because
 `openspec/specs/` had been the main-spec store. So `spec/{capability}` is now the
@@ -783,6 +783,29 @@ pass.
 
 Measured result: 16,824 words of shared contracts and the two heaviest phases became
 10,380, and the whole `agent-skills/` tree carries no upstream expression.
+
+Upstream retired the family itself: gentle-ai v4.0.0 (2026-10-01,
+https://github.com/Gentleman-Programming/gentle-ai/releases/tag/v4.0.0) removed SDD and
+OpenSpec for ODD (Organic-Driven Development) — one tracker document per feature, work
+classified by whether it can be resumed from the request plus `git diff`, a commit per
+task, no archive. ecomono keeps SDD for now. Its use, by `~/.ecomono/memory.db` queried
+2026-10-09, splits by project. This repo completed one cycle: port-engram, started
+2026-07-24 and archived 2026-07-27 under the openspec layout the repo later dropped
+(start: memory obs 177; archive: obs 194, git `da96143`); no proposal, spec or
+apply-progress row for it reached memory. `sdd/explore/*` runs followed on 2026-08-19/20,
+and the dominant artifact since August is the `review/{hash}` judgment receipt. Across
+projects SDD is in real use: `crawlers` holds two archived cycles —
+`sdd/idealista-crawler-fix` (archive-report 2026-07-22) and `sdd/audit-round-1`
+(archive-report 2026-08-04; it merged seven baseline specs and shipped as chained PRs) —
+and `mono_editor` holds `sdd/org-cycle` through apply-progress. An ODD port would leave
+`claude/hooks/review-receipt-gate.sh` untouched, but would remove the receipt's other
+reader — the `ecomono-sdd-archive` gate — and the post-design/post-apply judgment
+triggers, which are SDD phases. Upstream's ODD prose kept changing after the release (lens
+selection in `c563e698`, review triggers in `4c69c0ef`), so a port today is a port of a
+draft. And commit-per-task cannot land: Claude Code's own git guidance commits only when
+the user asks. Revisit when an upstream release's docs agree with its routing code. Any
+replacement must keep spec accumulation through archive, which `crawlers` relies on, or
+drop it as a stated decision.
 
 ### The gentle-ai binary
 
@@ -830,7 +853,7 @@ that is portable. Ported as prose instead:
 | Candidate freeze | `ecomono-judgment` hashes the diff before launching judges, re-checks at each later checkpoint the skill defines, discards the round if the bytes moved |
 | Receipt | Written twice from one verdict: a file named by the hash under the git common directory, which is what a shell gate can read, and a `mem_save` at `review/{subject-hash}`, `type: decision`, which is what a later session can search |
 | Gate validates the receipt | Two readers of one receipt: one of archive's four gates, fed the hash by the orchestrator because the archive agent has no `Bash`, and `claude/hooks/review-receipt-gate.sh` on `git push` / `gh pr create`, which recomputes the hash and reads the file copy. The second runs on both harnesses — `opencode/plugins/review-receipt-gate.ts` shells out to the same script rather than porting it |
-| Tier by evidence, not size | The pre-pr trigger rule, rewritten. Size went back to being the review workload guard's problem |
+| Tier by evidence, not size | The pre-pr trigger rule, rewritten. Size went back to being the review workload guard's problem. `**/update/**` left the tier-4 evidence list on 2026-10-09 following upstream commit `c13d4b75`, which removed it (the pattern cost rounds and found nothing); self-updater code still trips the installer signal |
 
 Deliberately not taken: the seven audit ledgers, the 36-journey friction bench, shadow
 evaluation, the digest-pinned JSON contract mode, the v1/v2/v3 authority-root versioning,
@@ -844,10 +867,10 @@ who can decline *was* the kill switch. That reasoning expired the moment a hook 
 `git push`. It shipped as the `ecomono/review-mode` marker; see "What the port took, and what it
 declined".
 
-The upstream gap worth knowing: gentle-ai's own `sdd-archive` prose still hard-requires
-`reviewGate.result: allow` while its native gate already allows. Prose and code disagreeing
-is the failure this document keeps returning to. The gate ported here is the code's
-behaviour, not the prose's.
+The upstream gap worth knowing: gentle-ai's own `sdd-archive` prose still hard-required
+`reviewGate.result: allow` while its native gate already allowed (the upstream file was
+deleted with SDD at v4.0.0). Prose and code disagreeing is the failure this document keeps
+returning to. The gate ported here is the code's behaviour, not the prose's.
 
 ### Why there is no check for the Key Learnings convention
 

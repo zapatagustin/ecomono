@@ -14,7 +14,13 @@ artifact that proves the behavior was absent before and present after.
 ## Hard rules
 
 - The test MUST fail first, for the right reason. A test that passes before the
-  implementation tests nothing. Run it and read the failure.
+  implementation tests nothing. Run it and read the failure. One carve-out: a
+  characterization assertion pinning behaviour the change must not alter passes
+  first by design. Order it FIRST in the check — a check stops at its first
+  failing assertion, so a pin placed after the new one never runs — and see it
+  pass at step 3, before step 4 implements anything: a pin first run after the
+  change proves nothing about the previous behaviour. It guards the change, it
+  does not drive it.
 - Never weaken a test to make it pass. If the test is wrong, fix the test
   deliberately and say so; do not tune assertions until green.
 - Never claim passing without the command output. Evidence before assertions.
@@ -28,6 +34,7 @@ artifact that proves the behavior was absent before and present after.
 | Branch, loop, parser, money/security path | Required |
 | Trivial one-liner, pure rename, config value | None — YAGNI applies to tests too |
 | Bugfix | The reproduction becomes the regression test |
+| Change touches code an existing command, option or shared helper also uses | The SAME check also asserts that behaviour is unchanged — a characterization assertion, ordered before the new one. A trivial one-liner still gets None: that row wins |
 
 One `assert`-based `demo()`/`__main__` or one minimal `test_*.py`. No frameworks,
 no fixtures, no per-function suites unless asked. If the project already has a
@@ -40,7 +47,8 @@ test setup, match it — do not introduce a second one.
 2. **Write the assertion** at the boundary. Smallest input that distinguishes
    correct from incorrect.
 3. **Run it. Watch it fail.** Confirm the failure message names the missing
-   behavior, not a typo or an import error.
+   behavior, not a typo or an import error. With a characterization assertion,
+   the pin passes and the new assertion after it is the one that fails.
 4. **Implement the minimum** that turns it green. Not the general case, not the
    configurable version.
 5. **Run it. Watch it pass.** Show the output.
