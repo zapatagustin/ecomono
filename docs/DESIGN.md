@@ -334,9 +334,11 @@ which that script already documents as intended. Cost was not compared: Claude C
 `unrecognized_model` on stderr and reports `costBasis: "unknown"` in `modelUsage`, so its
 cost figure for the model is unreliable.
 
-Exploration stays on Sonnet until the `haiku` alias resolves to Haiku 5.5. Setting
-`model: haiku` before then deploys Haiku 4.5, the model that failed. Confirm the served model
-from the transcript's `model` field, never from the alias.
+Exploration stays on Sonnet. While `model: haiku` dispatches show
+`claude-haiku-4-5-20251001` in the transcript's `model` field, setting it deploys the model
+that failed. Once they show `claude-haiku-5-5`, that permits a like-for-like re-test through
+the `Agent` tool, not a switch; the re-test's tasks, ground truth and cost basis are set when
+it is designed. Read the served model from the transcript, never from the alias.
 
 ### Decision: gate retries escalate, verify runs on Opus
 
