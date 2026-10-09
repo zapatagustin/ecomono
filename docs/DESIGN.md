@@ -312,14 +312,25 @@ the rule applied. The 242k-token payload below also exceeds Haiku's 200k context
 
 ### Decision: exploration stays on Sonnet
 
-Haiku 5.5 was A/B-tested as `ecomono-explore` against Sonnet on three real tasks: model-routing
-map, hook wiring, and the `mem_save` → `mem_judge` trace. In two of the three, Haiku stated a
-false negative as fact. It reported "no model gating validation" although
-`agent-model-gate.sh` exists, and "no integration test" after missing
+`ecomono-explore` was A/B-tested against Sonnet 5.5 on three real tasks: model-routing map,
+hook wiring, and the `mem_save` → `mem_judge` trace.
+
+Haiku 4.5 (`claude-haiku-4-5-20251001`, what the `haiku` alias resolves to in Claude Code
+2.1.289) stated a false negative as fact in two of the three. It reported "no model gating
+validation" although `agent-model-gate.sh` exists, and "no integration test" after missing
 `opencode/plugins/storage/test_conflicts.ts`. It also cited the nix-store bundle instead of
-the `.ts` source. It used 2-3x the tokens (52-76k vs 20-30k) and 3x the wall time. Exploration
-output feeds every later decision, so a confident "none exists" compounds. Revisit only with a
-prompt that forces "unverified" over "none".
+the `.ts` source. Exploration output feeds every later decision, so a confident "none exists"
+compounds.
+
+Haiku 5.5 (`claude-haiku-5-5`) made no factual error found in any of the three, marked what it
+could not check as unverified, and surfaced two correct findings Sonnet missed. It ran through
+`claude -p --agent ecomono-explore --model claude-haiku-5-5`, because the `Agent` tool's
+`model` accepts only aliases. Cost was not compared: Claude Code reports the model as
+unrecognized, so its cost figure for it is unreliable.
+
+Exploration stays on Sonnet until the `haiku` alias resolves to Haiku 5.5. Setting
+`model: haiku` before then deploys Haiku 4.5, the model that failed. Confirm the served model
+from the transcript's `model` field, never from the alias.
 
 ### Decision: gate retries escalate, verify runs on Opus
 
