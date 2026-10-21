@@ -14,7 +14,7 @@ into place. No external binary: everything it needs is in this repo.
 agent-skills/    Every skill (ecomono*, find-skills, proxy-manager) → ~/.claude/skills,
                  ~/.agents/skills, and ~/.config/opencode/skills. One tree; see
                  NOTICE.md for forked work.
-claude/          CLAUDE.md, agents/, commands/, hooks/, output-styles/, themes/,
+claude/          CLAUDE.md, agents/, commands/, hooks/, output-styles/, plugins/, themes/,
                  settings.template.json
 opencode/        AGENTS.md, opencode.json, tui.json, commands/, plugins/, tui-plugins/
 lib/common.sh    installer helpers

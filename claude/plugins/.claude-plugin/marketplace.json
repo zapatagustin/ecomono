@@ -1,0 +1,7 @@
+{
+  "name": "ecomono",
+  "owner": { "name": "ecomono" },
+  "plugins": [
+    { "name": "org-todo", "source": "./org-todo", "description": "Pending todos from ~/work/org and <cwd>/docs in a pane" }
+  ]
+}

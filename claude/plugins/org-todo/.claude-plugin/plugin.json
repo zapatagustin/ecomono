@@ -1,0 +1,6 @@
+{
+  "name": "org-todo",
+  "version": "0.1.0",
+  "description": "Pending todos from ~/work/org (*.org) and <cwd>/docs (*.md) in a pane, with one-key completion",
+  "types": "./types/index.d.ts"
+}

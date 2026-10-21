@@ -148,6 +148,18 @@ elif have claude; then
   else
     warn "skipping ecomono-memory mcp — bun not found (install bun, then: claude mcp add --scope user ecomono-memory -- bun $MEMORY_MCP)"
   fi
+
+  # org-todo: the todo pane mod. claude/plugins is a folder marketplace whose
+  # entry is a relative path, so Claude reads the mod live from the checkout:
+  # edit, then /reload-plugins. Nothing copied, nothing to go stale.
+  if ! claude plugin marketplace list 2>/dev/null | grep -q '❯ ecomono$'; then
+    claude plugin marketplace add "$REPO/claude/plugins" >/dev/null 2>&1 \
+      || warn "could not add the ecomono marketplace (retry: claude plugin marketplace add $REPO/claude/plugins)"
+  fi
+  if ! claude plugin list 2>/dev/null | grep -q '❯ org-todo@ecomono$'; then
+    claude plugin install org-todo@ecomono --scope user >/dev/null 2>&1 \
+      || warn "could not install org-todo (retry: claude plugin install org-todo@ecomono)"
+  fi
 else
   info "claude not on PATH — skipping plugin/mcp registration"
 fi
