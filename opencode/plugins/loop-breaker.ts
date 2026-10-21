@@ -8,12 +8,26 @@
  * identical result three times will ignore it forty times.
  *
  * Rule: once a given tool + identical arguments has produced the identical
- * output LIMIT times in a row within a session, the next identical call is
+ * output LIMIT times IN A ROW within a session, the next identical call is
  * rejected before it runs. The rejection text goes back to the model as the
  * tool error, which is the only channel `tool.execute.before` has.
  *
- * Polling is not a loop: a status check whose output changes (progress %,
- * new log lines) resets the counter, so only no-op repetition is cut.
+ * "In a row" is literal: only the LAST call of each session is remembered. Any
+ * other call in between (a different tool, different arguments) forgets it, so
+ * an idempotent probe interleaved with real work (`git status` between an edit
+ * and a commit, a `sleep` between log checks) is never counted. A call that
+ * returns different output also resets the counter, so polling a status whose
+ * output changes (progress %, new log lines) is not a loop either; only
+ * back-to-back no-op repetition is cut.
+ *
+ * A rejection is lifted in two ways. (1) The next call that differs from the
+ * rejected one, even if that call then fails and never reaches
+ * `tool.execute.after`: the block is dropped in the before hook, not on a
+ * successful result. (2) A new user message in the session (`chat.message`):
+ * the model was told to stop and ask the user, the user fixed the environment
+ * and said "retry", so the identical call is no longer a blind repeat. Either
+ * way the count starts again from 1. Retrying the rejected call immediately,
+ * with neither, is still rejected, and the rejection text says what lifts it.
  *
  * Only `tool.execute.before` may block, and only by throwing. The output is
  * visible only in `tool.execute.after`, so state is carried from the after
@@ -29,50 +43,50 @@ import { createHash } from "node:crypto"
 /** Identical results tolerated before the next identical call is rejected. */
 const LIMIT = 3
 
-// ecomono: entries per session are capped by clearing the whole session map
-// past this size, not by LRU; a session that legitimately issues more than
-// this many distinct calls just loses its history once.
-const MAX_ENTRIES_PER_SESSION = 2000
-
-type Entry = { digest: string; repeats: number }
+type Last = { key: string; digest: string; repeats: number }
 
 const digest = (s: string) => createHash("sha1").update(s).digest("hex")
 
 // ecomono: JSON.stringify without key sorting. A verbatim repeat serialises
 // identically; semantically-equal calls with reordered keys are not the
 // failure mode this guards against.
-const keyOf = (tool: string, args: unknown) => `${tool}\u0000${JSON.stringify(args ?? null)}`
+const keyOf = (tool: string, args: unknown) => digest(`${tool}\u0000${JSON.stringify(args ?? null)}`)
 
 export const LoopBreaker: Plugin = async () => {
-  const sessions = new Map<string, Map<string, Entry>>()
-
-  const bucket = (sessionID: string) => {
-    let m = sessions.get(sessionID)
-    if (!m) {
-      m = new Map()
-      sessions.set(sessionID, m)
-    }
-    if (m.size > MAX_ENTRIES_PER_SESSION) m.clear()
-    return m
-  }
+  // One slot per session: the last call only. Hashing the key keeps a large
+  // argument (a whole file passed to `write`) out of memory.
+  const last = new Map<string, Last>()
 
   return {
     "tool.execute.before": async (input, output) => {
-      const entry = bucket(input.sessionID).get(keyOf(input.tool, output.args))
-      if (!entry || entry.repeats < LIMIT) return
+      const prev = last.get(input.sessionID)
+      if (!prev) return
+      if (prev.key !== keyOf(input.tool, output.args)) {
+        last.delete(input.sessionID)
+        return
+      }
+      if (prev.repeats < LIMIT) return
       throw new Error(
-        `loop-breaker: \`${input.tool}\` was called ${entry.repeats} times with identical arguments ` +
-          `and returned the identical result every time. Calling it again will not change the outcome. ` +
-          `Change approach, or stop and ask the user.`,
+        `loop-breaker: \`${input.tool}\` was called ${prev.repeats} times with identical arguments ` +
+          `and returned the identical result every time. Repeating it is rejected until you make a ` +
+          `different call or the user sends a new message. Change approach, or stop and ask the user.`,
       )
     },
 
+    // A new user message is new information (the user may have fixed whatever
+    // made the call fail), so the identical call gets a fresh count.
+    "chat.message": async (input) => {
+      last.delete(input.sessionID)
+    },
+
     "tool.execute.after": async (input, output) => {
-      const m = bucket(input.sessionID)
       const key = keyOf(input.tool, input.args)
       const d = digest(output.output ?? "")
-      const prev = m.get(key)
-      m.set(key, prev && prev.digest === d ? { digest: d, repeats: prev.repeats + 1 } : { digest: d, repeats: 1 })
+      const prev = last.get(input.sessionID)
+      last.set(
+        input.sessionID,
+        prev && prev.key === key && prev.digest === d ? { ...prev, repeats: prev.repeats + 1 } : { key, digest: d, repeats: 1 },
+      )
     },
   }
 }
