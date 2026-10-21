@@ -3,6 +3,12 @@
   "theme": "gruvbox",
   "plugin": [
     "opencode-subagent-statusline",
-    "/home/agustin/.config/opencode/tui-plugins/cyndaquill.tsx"
+    "/home/agustin/.config/opencode/tui-plugins/cyndaquill.tsx",
+    [
+      "/home/agustin/.config/opencode/tui-plugins/org-todo.tsx",
+      {
+        "orgDir": "/home/agustin/work/org"
+      }
+    ]
   ]
 }
