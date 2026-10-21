@@ -13,22 +13,38 @@ const MD = /^(\s*[-*] )\[ \] (.*)$/
 
 const todos = atom({ plugin: 'org-todo', key: 'todos' } as const, [] as Todo[])
 
+// The one rule for what a line means as a todo. parse() lists todos with it and
+// complete() re-checks the line with it, so the two cannot disagree.
+function classify(raw: string): Pick<Todo, 'text' | 'kind'> | null {
+  const org = ORG.exec(raw)
+  const md = org ? null : MD.exec(raw)
+  if (!org && !md) return null
+  const text = org ? (org[2] === 'BLOCKED' ? `BLOCKED: ${org[3]}` : org[3]) : md![2]
+  return { text: text.trim(), kind: org ? 'org' : 'md' }
+}
+
+// True only if `cur` (the line as it is on disk now) is still the todo `t`
+// that was listed. Line numbers alone are not identity: the list is up to
+// POLL_MS stale, and an insert or delete above shifts a neighbouring todo into
+// `t.line`.
+export function isSameTodo(cur: string, t: Pick<Todo, 'text' | 'kind'>): boolean {
+  const now = classify(cur)
+  return now !== null && now.kind === t.kind && now.text === t.text
+}
+
 export function parse(stdout: string, roots: readonly string[]): Todo[] {
   const out: Todo[] = []
   for (const line of stdout.split('\n')) {
     const m = /^(.+?):(\d+):(.*)$/.exec(line)
     if (!m) continue
     const [, file, n, raw] = m
-    const org = ORG.exec(raw)
-    const md = org ? null : MD.exec(raw)
-    if (!org && !md) continue
+    const c = classify(raw)
+    if (!c) continue
     const root = roots.find(r => file.startsWith(r + '/')) ?? ''
-    const text = org ? (org[2] === 'BLOCKED' ? `BLOCKED: ${org[3]}` : org[3]) : md![2]
     out.push({
       file,
       line: Number(n),
-      text: text.trim(),
-      kind: org ? 'org' : 'md',
+      ...c,
       src: root ? file.slice(root.length + 1) : file,
     })
   }
@@ -61,13 +77,12 @@ async function complete($: EngineInterface, t: Todo, cwd: string) {
   const text = await $.fs.read(t.file)
   const lines = text.split('\n')
   const cur = lines[t.line - 1] ?? ''
-  const done = t.kind === 'org' ? cur.replace(ORG, '$1 DONE $3') : cur.replace(MD, '$1[x] $2')
-  if (done === cur) {
-    // The file moved under us; never write a line we did not match.
+  if (!isSameTodo(cur, t)) {
+    // The file moved under us; never write a line that is not the todo listed.
     $.ui.toast('Todo changed on disk, rescanned')
     return refresh($, cwd)
   }
-  lines[t.line - 1] = done
+  lines[t.line - 1] = t.kind === 'org' ? cur.replace(ORG, '$1 DONE $3') : cur.replace(MD, '$1[x] $2')
   await $.fs.write(t.file, lines.join('\n'))
   return refresh($, cwd)
 }
