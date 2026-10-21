@@ -203,6 +203,45 @@
               ecomono_bun=${pkgs.bun}/bin/bun
               ecomono_mcp=${./opencode/plugins/storage/mcp-server.js}
               ensure_mcp ecomono-memory "$ecomono_bun" "$ecomono_mcp"
+
+              # org-todo: the todo pane mod. install.sh registers claude/plugins as a
+              # folder marketplace from the checkout, and exits early on NixOS, so
+              # without this the opencode sidebar ships and the Claude pane silently
+              # does not. Here the source is a store copy of claude/plugins, whose path
+              # changes whenever that tree does, so presence by name is not enough:
+              # reconcile on the path, or the marketplace keeps pointing at one a
+              # garbage collection removes.
+              #
+              # Measured on Claude Code 2.1.300: `marketplace add` of an existing name
+              # from a new path RE-POINTS it, and a folder plugin loads in place
+              # (`readFromFolder` in `plugin list --json`), so the re-point is the
+              # refresh. `plugin update` after it is a no-op there; it is for a Claude
+              # Code that copies the tree instead. Installing only when ABSENT is
+              # deliberate: `plugin install` re-enables a plugin the user disabled.
+              # Every failure warns. Nothing here may abort the activation, which
+              # runs under `set -eu`.
+              ecomono_jq=${pkgs.jq}/bin/jq
+              ecomono_market=${./claude/plugins}
+              ecomono_market_was="$("$claude" plugin marketplace list --json 2>/dev/null \
+                | "$ecomono_jq" -r '.[] | select(.name == "ecomono") | .path // ""' 2>/dev/null || true)"
+              ecomono_repointed=
+              if [ "$ecomono_market_was" != "$ecomono_market" ]; then
+                if "$claude" plugin marketplace add "$ecomono_market" >/dev/null 2>&1; then
+                  ecomono_repointed=1
+                else
+                  echo "warning: could not add the ecomono marketplace (retry: claude plugin marketplace add $ecomono_market)" >&2
+                fi
+              fi
+              if "$claude" plugin list --json 2>/dev/null \
+                | "$ecomono_jq" -e 'any(.[]; .id == "org-todo@ecomono" and .scope == "user")' >/dev/null 2>&1; then
+                if [ -n "$ecomono_repointed" ]; then
+                  "$claude" plugin update org-todo@ecomono --scope user >/dev/null 2>&1 \
+                    || echo "warning: could not refresh org-todo (retry: claude plugin update org-todo@ecomono)" >&2
+                fi
+              else
+                "$claude" plugin install org-todo@ecomono --scope user >/dev/null 2>&1 \
+                  || echo "warning: could not install org-todo (retry: claude plugin install org-todo@ecomono)" >&2
+              fi
             fi
           '';
         };
