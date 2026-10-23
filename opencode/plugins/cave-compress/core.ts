@@ -1,8 +1,9 @@
 // Pure compression helpers for ../cave-compress.ts (ported from caveman-code, MIT).
 // Ported from @juliusbrussee/caveman-code (dist/core/cave-tool-compression.js),
 // MIT licensed, Copyright (c) Julius Brussee.
-// They live in a subdirectory because opencode calls EVERY export of a top-level
-// plugin file as a plugin factory, so pure helpers must not be exported from cave-compress.ts.
+// They live in a subdirectory because opencode loads EVERY top-level .ts file in
+// plugins/ as a plugin, while a subdirectory with no index.* or server.* entry is
+// skipped. Never add one here, or this directory becomes a plugin.
 
 interface ToolBudget {
   maxLines: number

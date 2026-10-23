@@ -1,31 +1,54 @@
 /**
- * cave-compress — tool-output token compression for opencode.
+ * cave-compress — tool-output token compression for opencode (v2 plugin API).
  *
  * Replicates caveman-code's tool-output compression layer inside opencode via
- * the `tool.execute.after` hook: opencode runs this hook AFTER a tool executes
- * and BEFORE the result is returned to the model, mutating `output.output` in
- * place. Every large tool result (bash/read/grep/…) is trimmed before it ever
- * costs context tokens — the single highest-impact layer of caveman-code's
- * ~50% savings, brought to opencode without leaving your host runtime.
+ * the tool `execute.after` hook: opencode runs this hook AFTER a tool executes
+ * and BEFORE the result is returned to the model, and the hook rewrites
+ * `event.result.content` in place. Every large tool result (shell/read/grep/…)
+ * is trimmed before it ever costs context tokens — the single highest-impact
+ * layer of caveman-code's ~50% savings, brought to opencode without leaving
+ * your host runtime.
  *
  * Layers implemented here:
  *   1. Per-tool head+tail budget truncation
- *   2. Structured (JSON/XML) semantic compression for bash output
+ *   2. Structured (JSON/XML) semantic compression for shell output
  *   3. ANSI stripping + blank-line collapse + hard line-count truncation
  *   4. Read deduplication (re-reading an unchanged file returns a stub)
  *
- * Compaction: handled natively by opencode's `compaction` config (auto +
- * prune drops old tool outputs). This plugin only styles the compaction
- * summary terse via the `experimental.session.compacting` hook below.
+ * v2 tool names: `shell` is aliased to `bash` at the hook boundary, so the
+ * budgets, markers and stats records keep their v1 names. A `read` of a
+ * directory gets the old `list` budget and is never deduplicated. `skill`
+ * results pass through whole. There is no `multiedit`; `patch` invalidates the
+ * files it names.
  *
- * Not ported: the messages-transform layer (experimental.chat.messages.transform).
- * Redundant here — tool outputs are already compressed on entry by the
- * tool.execute.after hook, and native prune drops old ones at compaction, so a
- * per-turn re-transform would cost latency for marginal gain.
+ * Not reachable in v2 (accepted gaps):
+ *   - Output that arrives as a synthetic session message never fires
+ *     `execute.after`: background shells, shells the user moved to the
+ *     background, user `!` commands and background subagent results
+ *     (packages/core/src/tool/plugin/shell.ts:157-189,254-266). It reaches the
+ *     model uncompressed.
+ *   - Code Mode: MCP tools and the other `codemode` tools run inside one
+ *     `execute` call, and each inner call fires the hooks with the outer call's
+ *     sessionID and id. Inner results are skipped; the outer `execute` result is
+ *     compressed once.
+ *   - ECOMONO_COMPRESS and ECOMONO_COMPRESS_STATS are read from the managed
+ *     background service's environment, frozen when it was spawned. A per-run
+ *     `ECOMONO_COMPRESS=off opencode` only works with `--standalone`; otherwise
+ *     export the variable and run `opencode service restart` from a login shell.
+ *
+ * Compaction: handled natively by opencode. This plugin only asks for a terse
+ * summary style through the session `compaction` hook below, and drops the
+ * session's read cache there.
+ *
+ * Not ported: the messages-transform layer (v1 experimental.chat.messages.transform,
+ * v2 session `context` hook). Redundant here — tool outputs are already
+ * compressed on entry by the `execute.after` hook, and native compaction drops
+ * old ones, so a per-turn re-transform would cost latency for marginal gain.
  *
  * The pure helpers (budget truncation, blank collapse, char cap) live in
- * ./cave-compress/core.ts: opencode calls every export of this file as a plugin,
- * so CaveCompress must stay the ONLY export here. They are ported from
+ * ./cave-compress/core.ts: opencode loads every top-level `.ts` file in
+ * plugins/ as a plugin, while a subdirectory with no index/server entry is
+ * skipped. The default export is the only plugin contract. They are ported from
  * @juliusbrussee/caveman-code (dist/core/cave-tool-compression.js and
  * cave-structured-compression.js), MIT licensed, © Julius Brussee. They are
  * self-contained (zero dependencies), so this plugin does NOT require
@@ -35,8 +58,9 @@
  * reduce the structured pass to a no-op on exactly the large outputs where
  * it matters most.
  */
-import type { Plugin } from "@opencode-ai/plugin"
 import { appendFile, mkdir } from "node:fs/promises"
+import { homedir } from "node:os"
+import { join, resolve } from "node:path"
 import { truncateWithToolBudget, collapseBlankLines, truncateLongOutput, truncateByChars } from "./cave-compress/core"
 
 // ── Compression logic (ported from caveman-code, MIT) ───────────────────────
@@ -259,25 +283,28 @@ function fingerprint(text: string): string {
   return `${text.length}:${text.slice(0, 256)}`
 }
 
-// Session-scoped read cache keyed by `${sessionID}:${path}`. When the model
-// re-reads an unchanged file, the full content is replaced with a one-line
-// stub. Invalidated when the same path is edited or written.
-const readCache = new Map<string, { fingerprint: string; readIndex: number }>()
-let readCount = 0
-
+// The session-scoped read cache itself lives in the plugin's setup closure,
+// keyed by `${sessionID}:${absolute path}`. When the model re-reads an
+// unchanged file, the full content is replaced with a one-line stub.
+// Invalidated when the same path is edited, written or patched.
 // ecomono: hard cap with oldest-entry eviction (Map preserves insertion order).
 // Upgrade path if this ever shows pressure on a long-running server: real LRU
 // (bump-to-recent on access) or a per-session TTL sweep.
 const READ_CACHE_CAP = 500
+// Same FIFO cap for the in-flight Code Mode `execute` call ids.
+// ecomono: an `execute` that a later plugin's before hook rejects (loop-breaker
+// sorts after this file), or that is interrupted, never fires `execute.after`,
+// so its key stays until FIFO eviction. Harmless while call ids are unique: no
+// later call in the session reuses it. Upgrade path: drop a session's keys on
+// `session.prompt`; that adds a hook, so update test 1's registration set too.
+const INNER_CAP = 500
 
 const READ_TOOLS = new Set(["read"])
-const WRITE_TOOLS = new Set(["edit", "write", "patch", "multiedit"])
+const WRITE_TOOLS = new Set(["edit", "write", "patch"])
 
-function argPath(args: unknown): string | undefined {
-  const a = args as Record<string, unknown> | undefined
-  const p = a?.filePath ?? a?.path ?? a?.file
-  return typeof p === "string" ? p : undefined
-}
+// File headers of a patch's text, used when the patch failed and reported no
+// `applied` list: a failed patch may still have written some of its files.
+const PATCH_FILE_RE = /^\*\*\* (?:Add|Update|Delete) File: (.+)$/gm
 
 // ── Savings metrics (on by default, opt-out) ────────────────────────────────
 
@@ -362,68 +389,132 @@ async function logStats(tool: string, beforeText: string, afterText: string): Pr
 
 // ── Plugin ───────────────────────────────────────────────────────────────────
 
-export const CaveCompress: Plugin = async () => ({
-  // Compaction summaries persist for the rest of the session and are re-sent
-  // every turn, so compressing their *style* pays off on every subsequent
-  // request. We only tighten style — substance (decisions, active files, task
-  // state, identifiers) must survive verbatim or session continuity breaks.
-  // Additive via output.context; we deliberately do NOT replace output.prompt,
-  // which would drop opencode's built-in preservation instructions.
-  "experimental.session.compacting": async (_input, output) => {
-    if (process.env.ECOMONO_COMPRESS === "off") return
-    output.context.push(
-      "Write the summary in compressed ecomono style: drop articles, filler, and " +
-        "hedging; fragments are fine; use short synonyms. Preserve ALL substance " +
-        "verbatim — decisions made, files being worked on, task state, open problems, " +
-        "and exact identifiers/paths/error strings. Compress the prose, never the facts.",
-    )
+// Compaction summaries persist for the rest of the session and are re-sent
+// every turn, so compressing their *style* pays off on every subsequent
+// request. We only tighten style — substance (decisions, active files, task
+// state, identifiers) must survive verbatim or session continuity breaks.
+// v2 has no slot in the summary prompt itself (opencode appends it after the
+// hooks run, packages/core/src/session/compaction.ts:283-292), so this goes in
+// as a system part ahead of the transcript and weighs less than v1's prompt
+// context did. It is additive: setting `event.result` instead would replace
+// the native summary and its required section template.
+const STYLE =
+  "Write the summary in compressed ecomono style: drop articles, filler, and " +
+  "hedging; fragments are fine; use short synonyms. Preserve ALL substance " +
+  "verbatim — decisions made, files being worked on, task state, open problems, " +
+  "and exact identifiers/paths/error strings. Compress the prose, never the facts. " +
+  "Keep the required section headings unchanged."
+
+export default {
+  id: "cave-compress",
+  async setup(ctx: any) {
+    // Per-instance state: v2 runs one setup per opened location.
+    const readCache = new Map<string, { fingerprint: string; readIndex: number }>()
+    let readCount = 0
+    // In-flight Code Mode `execute` calls. Their inner tool calls fire the
+    // hooks with the outer call's sessionID and id.
+    const inner = new Set<string>()
+    const k = (e: any) => `${e.sessionID}\0${e.id}`
+    const base: string = ctx.location.directory
+    // ecomono: mirrors resolvePath in packages/core/src/file-access.ts:67-77 for
+    // `~` and `~/` only, without its Windows path normalization. Upgrade path:
+    // import the host helper if @opencode/plugin ever exports it.
+    const abs = (p: string) =>
+      resolve(base, p === "~" ? homedir() : p.startsWith("~/") ? join(homedir(), p.slice(2)) : p)
+    const forget = (sessionID: string, p: unknown) => {
+      if (typeof p === "string" && p !== "") readCache.delete(`${sessionID}:${abs(p)}`)
+    }
+
+    await ctx.tool.hook("execute.before", (e: any) => {
+      if (e.tool !== "execute") return
+      inner.add(k(e))
+      if (inner.size > INNER_CAP) inner.delete(inner.values().next().value)
+    })
+
+    await ctx.tool.hook("execute.after", (e: any) => {
+      // A throw here fails the tool call ("unexpected tool defect"), so
+      // compression errors are swallowed and the result passes through.
+      try {
+        if (e.tool === "execute") inner.delete(k(e))
+        else if (inner.has(k(e))) return // compressed once, as part of the outer `execute` result
+        if (process.env.ECOMONO_COMPRESS === "off") return
+
+        let tool = String(e.tool).toLowerCase()
+        if (tool === "shell") tool = "bash"
+
+        // Editing/writing/patching a file invalidates its cached read, on any
+        // status: a failed patch may still have written some of its files.
+        if (WRITE_TOOLS.has(tool)) {
+          if (tool !== "patch") forget(e.sessionID, e.input?.path)
+          for (const a of e.result?.output?.applied ?? []) forget(e.sessionID, a?.target)
+          if (e.status === "error" && typeof e.input?.patchText === "string")
+            for (const m of e.input.patchText.matchAll(PATCH_FILE_RE)) forget(e.sessionID, m[1].trim())
+          return
+        }
+        if (e.status !== "completed" || tool === "skill") return
+
+        const content = e.result?.content
+        if (!Array.isArray(content)) return
+        const nonText = content.filter((p: any) => p?.type !== "text")
+        const originalText = content
+          .filter((p: any) => p?.type === "text")
+          .map((p: any) => p.text)
+          .join("\n")
+        if (originalText.length === 0) return
+        const rewrite = (text: string) => {
+          e.result.content = [{ type: "text", text }, ...nonText]
+          void logStats(tool, originalText, text)
+        }
+
+        // v2 `read` also reads directories: give those the old `list` budget
+        // and never deduplicate them.
+        if (tool === "read" && originalText.startsWith("Read directory ")) tool = "list"
+
+        // Re-reading an unchanged file → replace content with a stub. Only
+        // text-only results: an image or PDF read keeps its file part. The key
+        // is the absolute path so any spelling of it invalidates, while the
+        // fingerprint covers the read header, which embeds the path as given:
+        // a relative and an absolute read of one file never stub each other.
+        const path = e.input?.path
+        if (READ_TOOLS.has(tool) && typeof path === "string" && nonText.length === 0) {
+          const key = `${e.sessionID}:${abs(path)}`
+          const fp = fingerprint(originalText)
+          const prev = readCache.get(key)
+          if (prev && prev.fingerprint === fp) {
+            rewrite(
+              `[File unchanged since read #${prev.readIndex}. Content identical to a prior read this session — reference that context.]`,
+            )
+            return
+          }
+          readCount++
+          if (!readCache.has(key) && readCache.size >= READ_CACHE_CAP) {
+            const oldest = readCache.keys().next().value
+            if (oldest !== undefined) readCache.delete(oldest)
+          }
+          readCache.set(key, { fingerprint: fp, readIndex: readCount })
+        }
+
+        // Structured (JSON/XML) semantic compression first — it needs the intact
+        // output to parse — then per-tool budget truncation, then the general
+        // compression pipeline.
+        const command = e.input?.command
+        const structured = compressStructuredOutput(
+          originalText,
+          tool,
+          typeof command === "string" ? command : undefined,
+        )
+        const compressed = compressCaveToolOutput(truncateWithToolBudget(structured, tool))
+        if (compressed !== originalText) rewrite(compressed)
+      } catch {}
+    })
+
+    await ctx.session.hook("compaction", (ev: any) => {
+      try {
+        // The summary replaces the earlier reads, so a stub would point at
+        // context the model no longer has.
+        for (const key of readCache.keys()) if (key.startsWith(`${ev.sessionID}:`)) readCache.delete(key)
+        if (process.env.ECOMONO_COMPRESS !== "off") ev.system.push({ type: "text", text: STYLE })
+      } catch {}
+    })
   },
-
-  "tool.execute.after": async (input, output) => {
-    if (process.env.ECOMONO_COMPRESS === "off") return
-    if (typeof output.output !== "string" || output.output.length === 0) return
-
-    const tool = input.tool.toLowerCase()
-    const path = argPath(input.args)
-    const originalText = output.output
-
-    // Editing/writing a file invalidates its cached read.
-    if (WRITE_TOOLS.has(tool) && path) {
-      readCache.delete(`${input.sessionID}:${path}`)
-      return
-    }
-
-    // Re-reading an unchanged file → replace content with a stub.
-    if (READ_TOOLS.has(tool) && path) {
-      const key = `${input.sessionID}:${path}`
-      const fp = fingerprint(output.output)
-      const prev = readCache.get(key)
-      if (prev && prev.fingerprint === fp) {
-        output.output = `[File unchanged since read #${prev.readIndex}. Content identical to a prior read this session — reference that context.]`
-        await logStats(tool, originalText, output.output)
-        return
-      }
-      readCount++
-      if (!readCache.has(key) && readCache.size >= READ_CACHE_CAP) {
-        const oldest = readCache.keys().next().value
-        if (oldest !== undefined) readCache.delete(oldest)
-      }
-      readCache.set(key, { fingerprint: fp, readIndex: readCount })
-    }
-
-    // Structured (JSON/XML) semantic compression first — it needs the intact
-    // output to parse — then per-tool budget truncation, then the general
-    // compression pipeline.
-    const command = (input.args as Record<string, unknown> | undefined)?.command
-    const structured = compressStructuredOutput(
-      output.output,
-      tool,
-      typeof command === "string" ? command : undefined,
-    )
-    const compressed = compressCaveToolOutput(truncateWithToolBudget(structured, tool))
-    if (compressed !== output.output) {
-      output.output = compressed
-      await logStats(tool, originalText, output.output)
-    }
-  },
-})
+}

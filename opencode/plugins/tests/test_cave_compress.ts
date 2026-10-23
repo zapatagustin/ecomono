@@ -88,26 +88,30 @@ assert.ok(
 
 // ── HTML routing (drives the plugin hook) ────────────────────────────────────
 // detectOutputFormat lives in ../cave-compress.ts, whose only export is the
-// plugin (opencode calls every export as one), so this goes through the hook.
+// plugin (v2 loads each top-level plugins/*.ts as one), so this goes through the hook.
 // HTML must never reach compressXml: a lowercase doctype or a bare <html> page
 // keeps every row instead of collapsing them as repeated XML siblings, while a
 // <htmlReport> root (no tag boundary after "html") is still XML.
 
 process.env.ECOMONO_COMPRESS_STATS = "off" // read at import time; keep tests off the user's stats file
-const { CaveCompress } = await import("../cave-compress")
-const hooks = await CaveCompress({} as never)
+delete process.env.ECOMONO_COMPRESS // "off" would skip the hook and fail the <htmlReport> check
+const { default: plugin } = await import("../cave-compress")
+const { fakeCtx, fire } = await import("./fake-ctx")
+const f = fakeCtx()
+await plugin.setup(f.ctx)
+f.assertAwaited()
 const rows = Array.from({ length: 60 }, (_, i) => `<li><a href="/item/${i}">Item ${i}</a></li>`).join("\n")
-const runBash = async (text: string) => {
-  const output = { title: "", output: text, metadata: {} }
-  await hooks["tool.execute.after"]!({ tool: "bash", sessionID: "s", callID: "c", args: {} } as never, output as never)
-  return output.output
+const runShell = async (text: string) => {
+  const ev = { tool: "shell", sessionID: "s", agent: "build", messageID: "m", id: "c", input: {}, status: "completed", result: { content: [{ type: "text", text }] } }
+  await fire(f.hooks, "tool.execute.after", ev)
+  return ev.result.content.map((p: any) => p.text).join("\n")
 }
 for (const head of ["<!doctype html>", '<html lang="en">', "\uFEFF<HTML>"]) {
   const page = `${head}\n<body>\n<ul>\n${rows}\n</ul>\n</body>\n</html>\n`
-  assert.ok((await runBash(page)).includes("Item 30"), `${JSON.stringify(head)} page must not be XML-compressed`)
+  assert.ok((await runShell(page)).includes("Item 30"), `${JSON.stringify(head)} page must not be XML-compressed`)
 }
 assert.ok(
-  !(await runBash(`<htmlReport>\n${rows}\n</htmlReport>\n`)).includes("Item 30"),
+  !(await runShell(`<htmlReport>\n${rows}\n</htmlReport>\n`)).includes("Item 30"),
   "<htmlReport> is not an <html> tag: it stays on the XML path",
 )
 
