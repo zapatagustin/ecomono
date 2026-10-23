@@ -64,6 +64,9 @@ and a skimmed approval is worse than a slow one because it looks identical.
 
 Over budget → split along **deliverable** units, never along line counts. Each slice needs
 a clear start, a clear finish, its own verification, and a sane rollback.
+Give a high-risk unit — one carrying pre-pr tier-4 evidence: auth, security or payments
+code, a credential or token path, an installer, a destructive operation — its own slice,
+so it gets the tier-4 review, all four lenses, without dragging the rest into tier 4.
 
 Shrink by removing scope, never by reformatting. Collapsing whitespace or compacting code
 to duck under the line count games the gate — the reviewer still reads the same change.

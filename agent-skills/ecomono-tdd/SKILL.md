@@ -40,6 +40,13 @@ One `assert`-based `demo()`/`__main__` or one minimal `test_*.py`. No frameworks
 no fixtures, no per-function suites unless asked. If the project already has a
 test setup, match it — do not introduce a second one.
 
+Change touches code that sibling commands or options also run → before reporting
+done, run a differential probe: each sibling with the new input, against a
+`mktemp -d` copy of the base commit and against your change, comparing stdout,
+stderr and exit code. A difference nobody asked for is a regression: fix it and
+pin it as a characterization assertion in the same check. The probe is never
+committed; the check stays one.
+
 ## Sequence
 
 1. **Name the behavior** in one line. Cannot name it → not ready to test it;

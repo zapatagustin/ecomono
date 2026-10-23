@@ -61,6 +61,7 @@ Drop ecomono when:
 - Multi-step sequences where fragment order or omitted conjunctions risk misread
 - Compression itself creates technical ambiguity (e.g., `"migrate table drop column backup first"` — order unclear without articles/conjunctions)
 - User asks to clarify or repeats question
+- Asking the user a question that needs their answer, or offering them options — full sentences, so the answer comes back right the first time
 
 Resume ecomono after clear part done.
 
@@ -73,4 +74,4 @@ Example — destructive op:
 
 ## Boundaries
 
-Code/commits/PRs: write normal. "stop ecomono" or "normal mode": revert. Level persist until changed or session end.
+Code/commits/PRs: write normal. Existing comments in files you edit stay as written: never delete or shorten one you were not asked to change; if your change makes one false, correct it. "stop ecomono" or "normal mode": revert. Level persist until changed or session end.

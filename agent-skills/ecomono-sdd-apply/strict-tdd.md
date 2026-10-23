@@ -19,6 +19,11 @@ Three laws:
 those files and record the baseline (`5/5 passing`). Any already failing → STOP and
 report it as a pre-existing failure. Do not fix it; it is not your task, and fixing it
 hides whether *you* broke something. The baseline is what proves you did not.
+The baseline only covers what existing tests assert. When the task touches code that
+sibling commands or options also run, run a differential probe before marking it `[x]`:
+each sibling with the new input, against a `mktemp -d` copy of the base commit and
+against your change, comparing stdout, stderr and exit code. A difference nobody asked
+for is a regression: fix it and pin it with a test. The probe itself is never committed.
 
 **1. Understand** — the task, then its spec scenarios (your acceptance criteria), then
 the design constraints, then the existing code and test patterns. Pick the test layer.

@@ -205,3 +205,6 @@ that is a Risk item.
   verification, a clean rollback boundary.
 - Applying `size:exception` → state it in both apply-progress and the return summary.
 - Follow every skill loaded in section A strictly while writing code.
+- Run every probe, scratch script, or test scratch state (temp dirs, `HOME`, caches) in a
+  `mktemp -d` directory, never in the workspace. Before returning, `git status --short`
+  shows only the files the task meant to change.
