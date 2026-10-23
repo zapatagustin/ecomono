@@ -2,7 +2,7 @@
  * review-receipt-gate (opencode)
  *
  * The opencode half of the RDD delivery gate: refuse a `git push` / `gh pr create`
- * issued through the `bash` tool unless a review receipt exists for the exact bytes
+ * issued through the `shell` tool unless a review receipt exists for the exact bytes
  * being delivered. Claude Code gets this from a `PreToolUse` hook registered in
  * `claude/settings.template.json`; until this file existed, a push from opencode was
  * ungated even in a repository with review mode armed.
@@ -23,28 +23,49 @@
  * `flake.nix` sets `".claude/hooks".source`. `skill-registry.ts` locates its generator
  * the same way, for the same reason.
  *
+ * This is a v2 plugin (opencode 2.x): a default `{ id, setup }` whose `setup` registers
+ * one `ctx.tool.hook("execute.before")`. v2 runs it inside the managed background
+ * service, one instance per opened location, so `process.env` and stderr belong to that
+ * service, not to the terminal that started opencode — both matter below.
+ *
  * ecomono: AN `ask` DECISION BECOMES A REFUSAL HERE. The script has three outcomes and
- * `tool.execute.before` has two — throw or return, with throwing the documented way to
- * block. `permission.ask` carries a ternary status but only fires when the tool requests
- * a permission, so a ruleset that allows `bash` outright would switch the gate off
- * silently. Stricter beats absent; see `docs/DESIGN.md` for the full call.
+ * `execute.before` has two — throw or return, with throwing the only way to block.
+ * v1's `permission.ask` was rejected because it only fires when the tool requests a
+ * permission, so a ruleset that allows the shell outright would switch the gate off
+ * silently. v2's `ctx.permission.hook("evaluate")` lacks that hole (it runs on every
+ * `shell` call whose command parses, `allow` included) and could prompt, but its event
+ * carries no `workdir`, so it would gate the wrong repository (see the workdir note
+ * below). Stricter beats wrong; see `docs/DESIGN.md` for the full call.
  *
  * ecomono: this fails OPEN on a missing script, a spawn failure, a timeout, or output
  * that is not the JSON the script promises — the same convention as the script's own
  * header, for the same reason: a review gate that fails closed on a broken environment
  * leaves the operator unable to push the fix for the gate. The enforcement lost is
- * nominal, since anything that can hide the script can also set
+ * nominal, since anything that can hide the script can also prefix the command with
  * ECOMONO_ALLOW_UNREVIEWED_PUSH=1. Deleting the script is the cheaper bypass of the two
- * and it is silent and lasts the session, which the env var does not — named here
+ * and it is silent and lasts the session, which the prefix does not — named here
  * because a reviewer looked for it and found only the implication.
  *
- * Every fail-open path says so on stderr. Without that line the operator cannot tell
- * "the gate ran and allowed" from "the gate could not run", and those are the two states
- * this whole mechanism exists to keep apart — the Claude hook distinguishes them with an
- * `ask`, which opencode has no way to express.
+ * Every fail-open path says so, on stderr AND in
+ * `${XDG_STATE_HOME:-$HOME/.local/state}/ecomono/review-receipt-gate.log`. Without that
+ * line the operator cannot tell "the gate ran and allowed" from "the gate could not
+ * run", and those are the two states this whole mechanism exists to keep apart — the
+ * Claude hook distinguishes them with an `ask`, which opencode has no way to express.
+ * The file is the line that survives: the managed service discards its stderr once it
+ * has started, `--standalone` does too unless `--print-logs` is passed, and the v2 ctx
+ * has no log API.
  *
- * ecomono: the ceiling is the `bash` tool. A command the user runs themselves through
- * opencode's `!` shell path does not go through `tool.execute.before` at all — it is
+ * ecomono: THE RELEASE VALVE IS PREFIX-ONLY HERE. The script also honours an exported
+ * ECOMONO_ALLOW_UNREVIEWED_PUSH=1, and under v2 the script runs with the SERVICE's env —
+ * frozen when whichever CLI first started it spawned it — while the command itself runs
+ * with the session's. A valve exported into that one shell would open the gate for
+ * every session until the service restarts: a silent allow. So `runGate` strips it, and
+ * only the per-command prefix still stands the gate down. Upgrade path, if the exported
+ * form is ever wanted back: read it from the session env instead, which the hook event
+ * does not carry today.
+ *
+ * ecomono: the ceiling is the `shell` tool. A command the user runs themselves through
+ * opencode's `!` shell path does not go through `execute.before` at all — it is
  * dispatched by the session's own shell handler — so it is ungated. That is the same
  * boundary as the user running `git push` in a terminal: this gates the agent, and the
  * override already belongs to the user. Everything the script cannot see in a command
@@ -53,11 +74,13 @@
  * does not control the environment.
  *
  * The other half of that ceiling, and a different risk class: an MCP tool that can
- * deliver. `hook.tool !== "bash"` returns early, so a hypothetical
+ * deliver. `e.tool !== "shell"` returns early, so a hypothetical
  * `mcp__github__create_pull_request` is invisible here — and to the Claude hook too,
- * whose matcher is the equally narrow `Bash`. The distinction from the `!` path is that
- * the user initiates that one and already owns the override, while an MCP call is the
- * agent's, which is exactly who this gates.
+ * whose matcher is the equally narrow `Bash`. (Under v2 such a call runs inside a Code
+ * Mode `execute` script, whose inner calls fire this hook under their own names, so it
+ * would still reach here and still be skipped.) The distinction from the `!` path is
+ * that the user initiates that one and already owns the override, while an MCP call is
+ * the agent's, which is exactly who this gates.
  *
  * Not built, and the reason is not just that no such server is configured today
  * (`context7` and `ecomono-memory`, neither of which executes anything). It is that the
@@ -69,13 +92,18 @@
  * set of tools to refuse is knowable at that moment, which is the thing that makes
  * deny-by-name workable then and impossible now.
  *
- * Subagent `bash` calls ARE covered — verified from the shipped binary, not reasoned
- * about: `SessionTools.resolve` wraps every tool's `execute`, bash included, with
- * `i.trigger("tool.execute.before", ...)`, for a top-level session and a subagent
- * session alike, and `SessionPrompt.handleSubtask` fires that same trigger itself
- * before resolving the subagent's tools through that path. Two reviewers previously
- * raised this as unsettled from a read-only pass; it is now settled in the
- * affirmative.
+ * ecomono: three more v2 ceilings, none of them reachable today, so none has code.
+ * (a) A location with a `workspaceID` runs the shell remotely while this gate runs on
+ * the host, against a local path that is the wrong repository or none (fail-open on
+ * ENOENT). (b) Another plugin's `shell` `create.before` hook runs after this one and can
+ * rewrite the command the gate already judged. (c) A `context` hook that renames the
+ * shell tool's key makes this hook see the advertised name, not `shell`. Upgrade paths,
+ * in order: remote-workspace handling, a gate in `create.before` (which cannot block
+ * and sees no session, so not instead of this one), and a `bash` alias.
+ *
+ * Subagent `shell` calls ARE covered: the `execute.before` trigger lives in the tool
+ * registry's `execute` (opencode core `tool.ts`, `beforeExecute`), which every session's
+ * tool calls go through, a subagent's child session included.
  *
  * ecomono: a timeout kills the direct child, not its process group, so a `git diff` the
  * script spawned outlives it as an orphan. Bounded — one per timed-out call, and it
@@ -85,8 +113,8 @@
  * `process.kill(-pid)`.
  */
 
-import type { Plugin } from "@opencode-ai/plugin"
 import { execFile } from "node:child_process"
+import { appendFileSync, mkdirSync } from "node:fs"
 import { homedir } from "node:os"
 import { join, resolve } from "node:path"
 
@@ -99,18 +127,30 @@ const TIMEOUT_MS = 30_000
 // The script prints one small JSON object. Sized well past that so an ordinary run never
 // gets near the limit. Exceeding it does NOT truncate-and-continue: Node and Bun both
 // kill the child and deliver ERR_CHILD_PROCESS_STDIO_MAXBUFFER. The captured bytes DO
-// reach the callback's `stdout` argument — measured, exactly `maxBuffer` of them, on
-// Node 24 and Bun 1.3.13 — and the branch below deliberately does not read them: a
-// truncated JSON object is not a decision, so this is a fail-open like any other.
+// reach the callback's `stdout` argument — measured: exactly `maxBuffer` of them on
+// Node 24 and Bun 1.3.13; Bun 1.4.2 delivers at least that many and often more, up to
+// 176 KiB over in the runs measured. The branch below deliberately does not read them:
+// a truncated JSON object is not a decision, so this is a fail-open like any other.
 const MAX_STDOUT_BYTES = 4 * 1024 * 1024
 
 /**
- * Say on stderr that the gate did not run. Every caller treats "" as allow, and without
- * this line an allow because the gate passed and an allow because the gate broke are the
- * same observation. opencode captures plugin stderr in its logs.
+ * Say that the gate did not run. Every caller treats "" as allow, and without this line
+ * an allow because the gate passed and an allow because the gate broke are the same
+ * observation. stderr is kept for `--print-logs`, but under the managed service nothing
+ * reads it, so the line is also appended to a state file. A failure to write that file
+ * is swallowed, because an allow must stay an allow. Thrown from the hook body it would
+ * refuse; thrown from the execFile callback it would skip `settle` and leave the shell
+ * call pending forever, since opencode only logs an uncaught exception.
  */
 function failedOpen(why: string) {
-  console.error(`[review-receipt-gate] failing open: ${why} — this delivery was NOT checked`)
+  const line = `[review-receipt-gate] failing open: ${why} — this delivery was NOT checked`
+  console.error(line)
+  try {
+    // `||`, not `??`: an empty XDG_STATE_HOME means unset, as `${XDG_STATE_HOME:-...}` does.
+    const dir = join(process.env.XDG_STATE_HOME || join(process.env.HOME || homedir(), ".local", "state"), "ecomono")
+    mkdirSync(dir, { recursive: true })
+    appendFileSync(join(dir, "review-receipt-gate.log"), `${new Date().toISOString()} ${line}\n`)
+  } catch {}
 }
 
 /**
@@ -119,18 +159,21 @@ function failedOpen(why: string) {
  * broken environment into a blocked push.
  */
 function runGate(script: string, payload: string, cwd: string): Promise<string> {
+  // The service env minus the exported valve — see the header. Filtered rather than set
+  // to `undefined`, which a child env can receive as the literal string "undefined".
+  const env = Object.fromEntries(Object.entries(process.env).filter(([k]) => k !== "ECOMONO_ALLOW_UNREVIEWED_PUSH"))
   return new Promise((settle) => {
     let child
     try {
       child = execFile(
         script,
         [],
-        { cwd, timeout: TIMEOUT_MS, maxBuffer: MAX_STDOUT_BYTES },
+        { cwd, env, timeout: TIMEOUT_MS, maxBuffer: MAX_STDOUT_BYTES },
         (err: any, stdout) => {
           if (!err) return settle(stdout)
           // Ordered most specific first, which is the only reason `maxBuffer` comes
           // before `killed`. There is no collision to disambiguate: measured on Node 24
-          // and Bun 1.3.13, an overrun sets `code: ERR_CHILD_PROCESS_STDIO_MAXBUFFER`
+          // and Bun 1.3.13 and 1.4.2, an overrun sets `code: ERR_CHILD_PROCESS_STDIO_MAXBUFFER`
           // with `killed: undefined`, so `killed` is true only for a real timeout. An
           // earlier version of this comment claimed the two collided — one judge
           // asserted it, another measured it, and the measurement won. Named separately
@@ -174,39 +217,47 @@ function runGate(script: string, payload: string, cwd: string): Promise<string> 
   })
 }
 
-export const ReviewReceiptGatePlugin: Plugin = async (input) => {
-  // `$HOME` before `homedir()`, which is the order Node documents for `homedir()`
-  // itself on POSIX. Bun does not follow it — measured: it resolves HOME once at
-  // process start and ignores later assignment — so reading the variable directly is
-  // what makes the plugin honour the HOME its session actually runs under, and is
-  // what lets a test point at a fixture. Resolved per instance, not at module load,
-  // for the same reason.
-  const script = join(process.env.HOME || homedir(), ".claude", "hooks", "review-receipt-gate.sh")
+export default {
+  id: "review-receipt-gate",
+  async setup(ctx: any) {
+    // `$HOME` before `homedir()`, which is the order Node documents for `homedir()`
+    // itself on POSIX. Bun does not follow it — measured: it resolves HOME once at
+    // process start and ignores later assignment — so reading the variable directly is
+    // what makes the plugin honour the HOME it actually runs under, and is what lets a
+    // test point at a fixture. Resolved per instance, not at module load, for the same
+    // reason.
+    const script = join(process.env.HOME || homedir(), ".claude", "hooks", "review-receipt-gate.sh")
+    // `location.directory`, not `location.project.directory`: the project directory is
+    // the VCS root, and the shell tool runs in the location directory.
+    const base: string = ctx.location.directory
 
-  return {
-    "tool.execute.before": async (hook, output) => {
-      if (hook.tool !== "bash") return
+    await ctx.tool.hook("execute.before", async (e: any) => {
+      if (e.tool !== "shell") return
 
-      const command = output?.args?.command
+      const command = e.input?.command
       if (typeof command !== "string" || command === "") return
 
       // The script resolves the repository from its own cwd, exactly as the Claude
-      // hook does. But opencode's `bash` tool takes an optional `workdir` and RUNS THE
-      // COMMAND THERE — verified against the shipped binary (opencode 1.18.11): the
-      // tool's schema is `workdir: p.optional(p.String)`, its cwd is computed as
-      // `w.workdir ? resolve(w.workdir, U.directory) : U.directory`, and the tool's own
-      // description tells the model to prefer `workdir` over an embedded `cd <dir> &&`.
-      // Reading only `input.directory`/`input.worktree` evaluated the wrong repository
-      // whenever a call set `workdir`: a silent allow when the session directory was
-      // unarmed and the workdir target was armed, and a wrong approval the other way
-      // round. So `output.args.workdir` is resolved the same way the tool resolves it —
-      // relative to the session directory, an absolute path left untouched — and only
-      // the fallback chain below is used when it is absent. Claude Code's Bash tool has
-      // no per-call cwd override, which is why the shell hook this plugin shells out to
-      // needs no equivalent.
-      const sessionDir = input.directory || input.worktree || process.cwd()
-      const workdir = output?.args?.workdir
-      const cwd = typeof workdir === "string" && workdir !== "" ? resolve(sessionDir, workdir) : sessionDir
+      // hook does. But opencode's `shell` tool takes an optional `workdir` and RUNS THE
+      // COMMAND THERE: its schema has `workdir: Schema.optionalKey(Schema.String)`, and
+      // the cwd it runs in is `FileAccess.resolvePath(location.directory, workdir)` —
+      // a leading `~` or `~/` expanded against opencode's home, then a lexical resolve
+      // against the location directory, an absolute path left untouched. Gating only
+      // the location directory evaluated the wrong repository whenever a call set
+      // `workdir`: a silent allow when the location was unarmed and the workdir target
+      // was armed, and a wrong approval the other way round. So the workdir is resolved
+      // the same way here. Claude Code's Bash tool has no per-call cwd override, which
+      // is why the shell hook this plugin shells out to needs no equivalent.
+      //
+      // ecomono: a copy of `resolvePath` (opencode core `file-access.ts`), minus its
+      // Windows path normalisation. `OPENCODE_TEST_HOME ?? homedir()` is opencode's own
+      // home (util `global.ts`) — read from the same in-process env, so it agrees.
+      // Upgrade path if the two drift: a test against the host's resolver.
+      const w = e.input?.workdir
+      const home = process.env.OPENCODE_TEST_HOME ?? homedir()
+      const t =
+        typeof w === "string" && w !== "" ? (w === "~" ? home : w.startsWith("~/") ? join(home, w.slice(2)) : w) : ""
+      const cwd = t ? resolve(base, t) : base
 
       const stdout = await runGate(script, JSON.stringify({ tool_input: { command } }), cwd)
       if (stdout.trim() === "") return // allow: the script prints nothing to permit
@@ -232,9 +283,9 @@ export const ReviewReceiptGatePlugin: Plugin = async (input) => {
         parsed?.hookSpecificOutput?.permissionDecisionReason ||
         parsed?.systemMessage ||
         "Review receipt gate refused this delivery."
+      // The only hook that may throw: the host turns this into a failed `shell` call
+      // with `reason` as its message, and the model continues.
       throw new Error(reason)
-    },
-  }
+    })
+  },
 }
-
-export default ReviewReceiptGatePlugin

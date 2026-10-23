@@ -24,14 +24,17 @@ import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, rmSync
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 
-import { ReviewReceiptGatePlugin } from "../review-receipt-gate"
+import * as mod from "../review-receipt-gate"
+import plugin from "../review-receipt-gate"
+import { fakeCtx, fire } from "./fake-ctx"
 
 const roots: string[] = []
-const realHome = process.env.HOME
-const realXdgConfigHome = process.env.XDG_CONFIG_HOME
-const realGitConfigGlobal = process.env.GIT_CONFIG_GLOBAL
-const realGitConfigSystem = process.env.GIT_CONFIG_SYSTEM
-const realGitConfigNosystem = process.env.GIT_CONFIG_NOSYSTEM
+
+// --- the v2 module contract ---------------------------------------------------------
+
+assert.deepStrictEqual(Object.keys(mod), ["default"], "the module must export only the v2 default definition")
+assert.strictEqual(plugin.id, "review-receipt-gate")
+assert.strictEqual(typeof plugin.setup, "function")
 
 /** A fixture HOME whose gate script is `body`. Omit `body` to leave it absent. */
 function fixture(body?: string) {
@@ -47,46 +50,60 @@ function fixture(body?: string) {
   return { root, home, repo }
 }
 
-/** Build the plugin against a fixture and run its hook on one command. */
-async function runHook(
-  fx: { home: string; repo: string },
-  args: any,
-  tool = "bash",
-): Promise<Error | null> {
-  process.env.HOME = fx.home
+type Fx = ReturnType<typeof fixture>
+
+/** A v2 `execute.before` event for one tool call. */
+const event = (input: any, tool = "shell") => ({ tool, sessionID: "s", agent: "build", messageID: "m", id: "c", input })
+
+/**
+ * Build the plugin against a fixture and fire its hook on one event. `env` is laid over
+ * the isolation below for this call only, and every variable it touches is restored.
+ */
+async function fireHook(fx: Fx, ev: any, env: Record<string, string> = {}): Promise<Error | null> {
   // Isolates the SCRIPT's own git calls, not just the ones made directly in this file.
-  // `runGate` spawns the script with `execFile(script, [], { cwd, ... })` — no `env` —
-  // so it inherits ambient `process.env`, where only `HOME` was mutated above. That left
-  // the script's own `git diff` / `git merge-base` / `git config` reading the operator's
-  // real global config. Verified: with `XDG_CONFIG_HOME` pointed at a config containing
-  // `[diff] noprefix = true`, the script computed a different subject hash than the one
-  // this file computes independently, and the suite failed on a wrong-reason assertion.
-  process.env.XDG_CONFIG_HOME = join(fx.home, ".config")
-  process.env.GIT_CONFIG_GLOBAL = "/dev/null"
-  process.env.GIT_CONFIG_SYSTEM = "/dev/null"
-  process.env.GIT_CONFIG_NOSYSTEM = "1"
+  // `runGate` spawns the script with `process.env` minus the release valve, so it sees
+  // exactly what is set here. Before these were set, the script's own `git diff` /
+  // `git merge-base` / `git config` read the operator's real global config. Verified:
+  // with `XDG_CONFIG_HOME` pointed at a config containing `[diff] noprefix = true`, the
+  // script computed a different subject hash than the one this file computes
+  // independently, and the suite failed on a wrong-reason assertion. `XDG_STATE_HOME`
+  // keeps every fail-open case below from appending to the operator's real state log.
+  const vars: Record<string, string> = {
+    HOME: fx.home,
+    XDG_CONFIG_HOME: join(fx.home, ".config"),
+    XDG_STATE_HOME: join(fx.root, "state"),
+    GIT_CONFIG_GLOBAL: "/dev/null",
+    GIT_CONFIG_SYSTEM: "/dev/null",
+    GIT_CONFIG_NOSYSTEM: "1",
+    ...env,
+  }
+  const saved = Object.keys(vars).map((k) => [k, process.env[k]] as const)
+  Object.assign(process.env, vars)
   try {
-    const hooks = await ReviewReceiptGatePlugin({ directory: fx.repo } as any)
-    const before = hooks["tool.execute.before"]!
+    // project.directory is deliberately NOT the location directory, so every cwd
+    // assertion below also proves the gate never runs in the project root.
+    const { ctx, hooks, assertAwaited } = fakeCtx({ directory: fx.repo, projectDirectory: fx.root })
+    assert.strictEqual(await plugin.setup(ctx), undefined, "setup must return nothing: there is nothing to clean up")
+    assertAwaited()
+    assert.deepStrictEqual(Object.keys(hooks), ["tool.execute.before"], "exactly one hook, execute.before")
+    assert.strictEqual(hooks["tool.execute.before"]!.length, 1, "registered once")
     try {
-      await before({ tool, sessionID: "s", callID: "c" } as any, { args })
+      await fire(hooks, "tool.execute.before", ev)
       return null
     } catch (err) {
       return err as Error
     }
   } finally {
-    if (realHome === undefined) delete process.env.HOME
-    else process.env.HOME = realHome
-    if (realXdgConfigHome === undefined) delete process.env.XDG_CONFIG_HOME
-    else process.env.XDG_CONFIG_HOME = realXdgConfigHome
-    if (realGitConfigGlobal === undefined) delete process.env.GIT_CONFIG_GLOBAL
-    else process.env.GIT_CONFIG_GLOBAL = realGitConfigGlobal
-    if (realGitConfigSystem === undefined) delete process.env.GIT_CONFIG_SYSTEM
-    else process.env.GIT_CONFIG_SYSTEM = realGitConfigSystem
-    if (realGitConfigNosystem === undefined) delete process.env.GIT_CONFIG_NOSYSTEM
-    else process.env.GIT_CONFIG_NOSYSTEM = realGitConfigNosystem
+    for (const [k, v] of saved) {
+      if (v === undefined) delete process.env[k]
+      else process.env[k] = v
+    }
   }
 }
+
+/** Run the hook on one call of `tool` (the `shell` tool unless named) with `input`. */
+const runHook = (fx: Fx, input: any, tool = "shell", env: Record<string, string> = {}) =>
+  fireHook(fx, event(input, tool), env)
 
 const DENY = (reason: string) =>
   `#!/usr/bin/env bash\ncat >/dev/null\ncat <<'JSON'\n${JSON.stringify({
@@ -144,24 +161,14 @@ const DENY = (reason: string) =>
 }
 
 {
-  // The cwd fallback: no `directory`, only `worktree`. Every other case supplies
-  // `directory`, so the rest of the chain was never exercised.
+  // (a) The location directory, not the project's: `project.directory` is the VCS root,
+  // and the shell tool runs in `location.directory`. `fireHook` sets them apart.
   const fx = fixture(`#!/usr/bin/env bash\ncat >/dev/null\npwd > "$(dirname "$0")/cwd.txt"\n`)
-  process.env.HOME = fx.home
-  try {
-    const hooks = await ReviewReceiptGatePlugin({ worktree: fx.repo } as any)
-    await hooks["tool.execute.before"]!(
-      { tool: "bash", sessionID: "s", callID: "c" } as any,
-      { args: { command: "git push" } },
-    )
-  } finally {
-    if (realHome === undefined) delete process.env.HOME
-    else process.env.HOME = realHome
-  }
+  assert.strictEqual(await runHook(fx, { command: "git push" }), null)
   assert.strictEqual(
     readFileSync(join(fx.home, ".claude", "hooks", "cwd.txt"), "utf8").trim(),
     fx.repo,
-    "with no directory, the gate must run in the worktree",
+    "with no workdir, the gate must run in location.directory, not project.directory",
   )
 }
 
@@ -182,14 +189,14 @@ const DENY = (reason: string) =>
   assert.strictEqual(
     readFileSync(join(hooksDir, "cwd.txt"), "utf8").trim(),
     fx.repo,
-    "the script must run in the session directory, since it resolves the repo from cwd",
+    "the script must run in the location directory, since it resolves the repo from cwd",
   )
 }
 
-// --- output.args.workdir overrides the session directory ---------------------------
+// --- input.workdir overrides the location directory --------------------------------
 //
-// opencode's `bash` tool runs the command in `workdir` when the call sets one, not in
-// the session directory — see the comment beside `cwd` in review-receipt-gate.ts.
+// opencode's `shell` tool runs the command in `workdir` when the call sets one, not in
+// the location directory — see the comment beside `cwd` in review-receipt-gate.ts.
 
 {
   const fx = fixture(`#!/usr/bin/env bash\ncat >/dev/null\npwd > "$(dirname "$0")/cwd.txt"\n`)
@@ -199,7 +206,7 @@ const DENY = (reason: string) =>
   assert.strictEqual(
     readFileSync(join(fx.home, ".claude", "hooks", "cwd.txt"), "utf8").trim(),
     target,
-    "an absolute workdir must be used verbatim, not the session directory",
+    "an absolute workdir must be used verbatim, not the location directory",
   )
 }
 
@@ -211,8 +218,22 @@ const DENY = (reason: string) =>
   assert.strictEqual(
     readFileSync(join(fx.home, ".claude", "hooks", "cwd.txt"), "utf8").trim(),
     join(fx.repo, "sub"),
-    "a relative workdir must resolve against the session directory, not the process cwd",
+    "a relative workdir must resolve against the location directory, not the process cwd",
   )
+}
+
+{
+  // (b) and (c): a leading `~` is opencode's home — `OPENCODE_TEST_HOME` when set, which
+  // is how opencode's own tests point it — and NOT `$HOME`, which `fireHook` sets to
+  // `fx.home`, a different directory, so reading the wrong one fails here.
+  const fx = fixture(`#!/usr/bin/env bash\ncat >/dev/null\npwd > "$(dirname "$0")/cwd.txt"\n`)
+  const cwdFile = join(fx.home, ".claude", "hooks", "cwd.txt")
+  const home = { OPENCODE_TEST_HOME: fx.root }
+  mkdirSync(join(fx.root, "sub"))
+  assert.strictEqual(await runHook(fx, { command: "git push", workdir: "~/sub" }, "shell", home), null)
+  assert.strictEqual(readFileSync(cwdFile, "utf8").trim(), join(fx.root, "sub"), "~/sub must expand against home")
+  assert.strictEqual(await runHook(fx, { command: "git push", workdir: "~" }, "shell", home), null)
+  assert.strictEqual(readFileSync(cwdFile, "utf8").trim(), fx.root, "~ must be home itself")
 }
 
 // --- what must never reach the script ---------------------------------------------
@@ -222,16 +243,89 @@ const DENY = (reason: string) =>
   const ran = join(fx.home, ".claude", "hooks", "ran")
 
   assert.strictEqual(await runHook(fx, { command: "git push" }, "read"), null)
-  assert.ok(!existsSync(ran), "a non-bash tool must not spawn the gate")
+  assert.ok(!existsSync(ran), "a non-shell tool must not spawn the gate")
+
+  // v1's name for the tool. v2 has no `bash` tool, so a call by that name runs nothing.
+  assert.strictEqual(await runHook(fx, { command: "git push" }, "bash"), null)
+  assert.ok(!existsSync(ran), "a `bash` call must not spawn the gate")
 
   assert.strictEqual(await runHook(fx, { command: "" }), null)
   assert.ok(!existsSync(ran), "an empty command must not spawn the gate")
 
   assert.strictEqual(await runHook(fx, {}), null)
-  assert.ok(!existsSync(ran), "a bash call with no command must not spawn the gate")
+  assert.ok(!existsSync(ran), "a shell call with no command must not spawn the gate")
 
   assert.strictEqual(await runHook(fx, undefined), null)
-  assert.ok(!existsSync(ran), "absent args must not spawn the gate")
+  assert.ok(!existsSync(ran), "absent input must not spawn the gate")
+}
+
+// --- the hook is read-only ----------------------------------------------------------
+//
+// The host runs the call with the post-hook `e.input` and routes it by the post-hook
+// `e.tool`, so a gate that wrote back, say, its resolved cwd would change what runs.
+
+for (const [body, refused] of [
+  [`#!/usr/bin/env bash\ncat >/dev/null\n`, false],
+  [DENY("no receipt"), true],
+] as const) {
+  const fx = fixture(body)
+  mkdirSync(join(fx.repo, "sub"))
+  const ev = event({ command: "git push", workdir: "sub" })
+  const snapshot = structuredClone(ev)
+  assert.strictEqual(!!(await fireHook(fx, ev)), refused, "the case must actually allow or refuse")
+  assert.deepStrictEqual(ev, snapshot, `the event must be unchanged after ${refused ? "a refusal" : "an allow"}`)
+}
+
+// --- the gate's environment --------------------------------------------------------
+
+{
+  // The exported release valve must not reach the script (see the header of
+  // review-receipt-gate.ts): under the managed service it would hold the gate open for
+  // every session. Everything else in the env must still reach it.
+  const fx = fixture(`#!/usr/bin/env bash\ncat >/dev/null\nenv > "$(dirname "$0")/env.txt"\n`)
+  const err = await runHook(fx, { command: "git push" }, "shell", {
+    ECOMONO_ALLOW_UNREVIEWED_PUSH: "1",
+    RRG_PROBE: "kept",
+  })
+  assert.strictEqual(err, null)
+  const env = readFileSync(join(fx.home, ".claude", "hooks", "env.txt"), "utf8").split("\n")
+  assert.ok(env.includes("RRG_PROBE=kept"), "the rest of the env must still reach the gate")
+  assert.ok(!env.some((l) => l.startsWith("ECOMONO_ALLOW_UNREVIEWED_PUSH=")), "the exported valve must be stripped")
+  assert.ok(!existsSync(join(fx.root, "state")), "an allow must not write a fail-open line")
+}
+
+{
+  // Fail-open lines go to the state file too: the managed service discards stderr.
+  const fx = fixture(`#!/usr/bin/env bash\ncat >/dev/null\necho 'not json at all'\n`)
+  assert.strictEqual(await runHook(fx, { command: "git push" }), null)
+  const log = readFileSync(join(fx.root, "state", "ecomono", "review-receipt-gate.log"), "utf8")
+  assert.match(log, /^\S+ \[review-receipt-gate\] failing open: the gate printed something that is not JSON — /)
+  assert.strictEqual(log.split("\n").length, 2, "one line per fail-open, in $XDG_STATE_HOME/ecomono")
+  // An empty XDG_STATE_HOME counts as unset, as `${XDG_STATE_HOME:-...}` does.
+  assert.strictEqual(await runHook(fx, { command: "git push" }, "shell", { XDG_STATE_HOME: "" }), null)
+  assert.match(
+    readFileSync(join(fx.home, ".local", "state", "ecomono", "review-receipt-gate.log"), "utf8"),
+    /failing open/,
+    "with no XDG_STATE_HOME the line goes under $HOME/.local/state",
+  )
+}
+
+{
+  // A state log that cannot be written must not change the outcome. A path under a
+  // regular file makes the `mkdir` throw ENOTDIR, and the non-zero exit puts the
+  // fail-open inside the execFile callback, where an escaping throw would skip
+  // `settle("")` and leave the call pending forever, not refuse it. Raced against a
+  // timer because that regression hangs: without one this file never exits.
+  const fx = fixture(`#!/usr/bin/env bash\ncat >/dev/null\nexit 7\n`)
+  writeFileSync(join(fx.root, "afile"), "")
+  const env = { XDG_STATE_HOME: join(fx.root, "afile", "x") }
+  let timer: ReturnType<typeof setTimeout> | undefined
+  const outcome = await Promise.race([
+    runHook(fx, { command: "git push" }, "shell", env),
+    new Promise((r) => (timer = setTimeout(r, 5_000, "still pending after 5s"))),
+  ])
+  clearTimeout(timer)
+  assert.strictEqual(outcome, null, "an unwritable state log must still allow")
 }
 
 // --- every fail-open path ----------------------------------------------------------
@@ -295,9 +389,9 @@ const DENY = (reason: string) =>
   //
   // That isolation used to cover only the `git` calls made directly below, through
   // `gitEnv` and `execFileSync`. It did NOT cover the gate SCRIPT itself, spawned by
-  // `runHook` through the plugin's `runGate`, which passes no `env` to `execFile` and so
-  // inherited ambient `process.env` — where only `HOME` was mutated. `runHook` now
-  // mutates `GIT_CONFIG_GLOBAL`, `GIT_CONFIG_SYSTEM`, `GIT_CONFIG_NOSYSTEM` and
+  // `runHook` through the plugin's `runGate`, which builds the script's env from ambient
+  // `process.env` — where only `HOME` was mutated. `fireHook` now sets
+  // `GIT_CONFIG_GLOBAL`, `GIT_CONFIG_SYSTEM`, `GIT_CONFIG_NOSYSTEM` and
   // `XDG_CONFIG_HOME` on `process.env` itself, restoring them the way `HOME` already
   // was, so the spawned script gets the same isolation as the direct calls below.
   // Verified by reproducing the exact failure and confirming the fix removes it: with
@@ -363,6 +457,13 @@ const DENY = (reason: string) =>
     await runHook(fx, { command: "ECOMONO_ALLOW_UNREVIEWED_PUSH=1 git push origin master" }),
     null,
     "the documented override must stand the gate down",
+  )
+
+  // The exported form, end to end: the script honours it, so only the plugin's strip
+  // keeps a valve exported into the service env from holding the gate open.
+  assert.ok(
+    await runHook(fx, { command: "git push origin master" }, "shell", { ECOMONO_ALLOW_UNREVIEWED_PUSH: "1" }),
+    "an exported valve must not stand the gate down",
   )
 
   // A receipt for these exact bytes, written with the skill's formula.
