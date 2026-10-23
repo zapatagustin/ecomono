@@ -124,7 +124,7 @@ never overwritten, if you want prompts back everywhere, change `defaultMode` in
 bytes being delivered have a review receipt — written by `/ecomono-judgment` when it reaches
 `APPROVED`, and named by the same subject hash the review froze. It runs on both harnesses:
 Claude Code registers it as a `PreToolUse` hook, and on opencode
-`opencode/plugins/review-receipt-gate.ts` intercepts the `bash` tool and shells out to the
+`opencode/plugins/review-receipt-gate.ts` intercepts the `shell` tool and shells out to the
 same script. It is **off in every repository** until you arm that repository:
 
 ```bash

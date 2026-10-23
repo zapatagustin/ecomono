@@ -1449,7 +1449,7 @@ Between them, `pre-push` and `pre-pr` are the only two ways bytes leave this mac
 validate. The port is closed on this idea, not partially done.
 
 **The gate now runs on both harnesses, from one implementation.**
-`opencode/plugins/review-receipt-gate.ts` intercepts the `bash` tool and shells out to
+`opencode/plugins/review-receipt-gate.ts` intercepts the `shell` tool and shells out to
 `~/.claude/hooks/review-receipt-gate.sh` with the same `{"tool_input":{"command":…}}` payload
 Claude Code feeds it, then translates the one JSON object it prints. Until it existed, a push
 from opencode was ungated even in an armed repository.
@@ -1459,19 +1459,25 @@ derivations of one answer that can disagree is a defect this repo has already sh
 TypeScript rewrite would be a second copy of the hash formula, the base-branch candidate list,
 the token-level detector, the alias chase and the release valve — five things kept equal to a
 shell script by nothing but attention, and it would inherit six rounds of prose without the six
-rounds of fixes. The cost is one subprocess per `bash` call in **every** repository, not only
+rounds of fixes. The cost is one subprocess per `shell` call in **every** repository, not only
 an armed one — the plugin has no marker check of its own, and the cheap exit lives inside the
 script, past the spawn. Measured at 10–40 ms here. Two reviewers corrected an earlier version of
 this sentence that said "in an armed repository", which undercounted where the spawn happens.
 
-One behaviour deliberately differs. The script has three outcomes and opencode's
-`tool.execute.before` has two — throw or return; throwing is how opencode's own documentation
-blocks a tool call. So the two `ask` states, where the gate is armed but cannot compute a
-subject, refuse on opencode instead of prompting. `permission.ask` does carry a
-`"ask" | "deny" | "allow"` status, and it was rejected: it only fires when the tool actually
-requests a permission, so a ruleset that allows `bash` outright would make the gate silently
-stop existing — the failure this mechanism is entirely about. Stricter costs one retry after a
-`git config ecomono.reviewBase`; the alternative costs the delivery.
+One behaviour deliberately differs. The script has three outcomes and opencode v2's
+`ctx.tool.hook("execute.before")` has two — throw or return; throwing is the only way to block
+a tool call. (The v1 plugin API called this hook `tool.execute.before` and the tool `bash`.) So
+the two `ask` states, where the gate is armed but cannot compute a subject, refuse on opencode
+instead of prompting. v1's `permission.ask` did carry an `"ask" | "deny" | "allow"` status, and
+it was rejected: it only fired when the tool requested a permission, so a ruleset that allowed
+`bash` outright made the gate silently stop existing — the failure this mechanism is entirely
+about. Its v2 counterpart, `ctx.permission.hook("evaluate")`, has a mutable `effect` and not
+that hole: the `shell` tool asks on every call whose command parses, and the hook runs on
+`allow` too, skipped only when the config already denies. It could turn the `ask` states into a
+real prompt. It is not used because its event carries the parsed commands but not the
+`workdir` the call runs in, and gating the location directory instead evaluates the wrong
+repository whenever a call sets one. Stricter costs one retry after a
+`git config ecomono.reviewBase`; gating the wrong repository costs the delivery.
 
 The end-to-end test is the part worth keeping. Stubbing the script proves the translation and
 nothing about the port — it is the two halves fitting together that can break, so
@@ -1503,6 +1509,13 @@ it every run to catching it none. Even the file's header comment cost a run, whi
 prose lives here and a pointer lives there. It is not deterministic and a race never is, but a
 regression that survives one run in thirty does not survive being worked on.
 
+Those figures are from the v1 plugin on Bun 1.3.13. Re-measured after the v2 port on Bun 1.4.2,
+one run of the file caught the mutation 30 of 30 times, with 0 of 30 false positives. The
+`rmSync` restriction also turned out narrower than written above: cleanup *after* the awaited
+hook call sits outside the cold window, since the spawn has already happened, so the file now
+removes its fixture there. `tests/run-tests.sh` runs the file five times rather than once, and
+through the runner, with that cleanup in place, it measured 20 of 20 caught and 0 of 20 false.
+
 The judge's own explanation was wrong too, and checking it mattered: it attributed the 5/20 to a
 payload near the 64 KiB pipe buffer, when that measurement used 1 MB. A sweep at 64 KiB+1,
 100 KB, 200 KB, 500 KB and 1 MB reproduces at every size — the payload only has to clear the
@@ -1520,7 +1533,10 @@ direction. A judge reported that an `execFile` `maxBuffer` overrun sets `killed:
 callback. Both halves went into a comment. The next round's other judge measured them: the code
 is `ERR_CHILD_PROCESS_STDIO_MAXBUFFER`, `killed` is `undefined`, and the bytes *do* arrive in
 `stdout` — the branch simply declines to read them, since a truncated JSON object is not a
-decision. Re-measured here on Node 24 and Bun 1.3.13 before believing either judge. The branch
+decision. Re-measured here on Node 24 and Bun 1.3.13 before believing either judge, and again on
+Bun 1.4.2 after the v2 port: the same code, `killed` still `undefined`, but `stdout` now holds
+*at least* `maxBuffer` bytes rather than exactly that many, often more — 13 of 30 runs and, in a
+later set at three payload sizes, 38 of 90 came back longer, by up to 176 KiB. The branch
 order was right the whole time and its justification was wrong, which is the failure this
 document has now recorded three times in one change: **a confident claim from a reviewer is a
 hypothesis, and this repo's convention of writing measurements into comments only pays off if
@@ -1529,14 +1545,15 @@ the measurement is actually taken.**
 Three more things were found by building it. `os.homedir()` is documented to read `$HOME` on POSIX and
 bun does not — it resolves once at process start and ignores later assignment — so the plugin
 reads the variable first, which is both the documented semantics and what lets a test point at
-a fixture. And the tests live in a subdirectory because opencode auto-loads every `.ts`
-directly under `plugins/`: `opencode debug info` lists `cave-compress.ts` and
-`skill-registry.ts` as loaded although `opencode.json` names only `memory.ts`. A test file at
-that level would be loaded as a plugin on every session start. For the same reason the
-pure helpers live in `opencode/plugins/cave-compress/core.ts`: opencode treats every export of a
-top-level `plugins/*.ts` as a plugin factory; subdirectories are not scanned.
+a fixture. And the tests live in a subdirectory because opencode discovers every `.ts`/`.js`
+file directly under `plugins/` (v2: `packages/core/src/plugin/source-directory.ts`), whatever
+`opencode.json` names. A test file at that level would be loaded as a plugin on every session
+start. For the same reason the pure helpers live in `opencode/plugins/cave-compress/core.ts`:
+v1 treated every export of a top-level `plugins/*.ts` as a plugin factory, and v2 loads each
+top-level file as a plugin. Subdirectories are discovered too, but one without an
+`index`/`server` entry is skipped silently, so `tests/` and `cave-compress/` are safe.
 
-That auto-load also exposed a drift class rather than closing one. `install.sh` links every
+That discovery also exposed a drift class rather than closing one. `install.sh` links every
 child of `opencode/plugins/`; `flake.nix` listed them by hand, so a plugin added to the
 directory and forgotten in the flake ships on Arch and Debian and silently does not exist on
 NixOS — and the check that would catch it is a check for a list that should not have existed.
