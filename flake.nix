@@ -30,6 +30,24 @@
             mkdir -p $out
             cp -r ${./agent-skills}/. $out/
           '';
+
+          # The opencode plugin tree as ONE store path. opencode imports a plugin
+          # by its realpath, so `./storage/db` and `./cave-compress/core` resolve
+          # only if the siblings sit in the same store directory; a per-child
+          # `./opencode/plugins + "/${name}"` copied each child into a store path
+          # of its own and broke every relative import. storage/tools.ts also
+          # imports `zod`, and a store path has no node_modules above it, so zod
+          # ships beside the sources, pinned to bun.lock's version and integrity.
+          # ecomono: zod pinned by hand; bump it here when bun.lock moves.
+          opencodePlugins = pkgs.runCommand "ecomono-opencode-plugins" { } ''
+            cp -r ${./opencode/plugins} $out
+            chmod u+w $out
+            mkdir -p $out/node_modules/zod
+            tar -xzf ${pkgs.fetchurl {
+              url = "https://registry.npmjs.org/zod/-/zod-4.1.8.tgz";
+              hash = "sha512-5R1P+WwQqmmMIEACyzSvo4JXHY5WiAFHRMg+zBZKgKS+Q1viRa0C1hmUKtHltoIFKtIdki3pRxkmpP74jnNYHQ==";
+            }} -C $out/node_modules/zod --strip-components=1
+          '';
         in
         {
           # bun runs ecomono-memory (opencode plugin + the bundled
@@ -112,7 +130,7 @@
           # never reaches this filter to begin with.
           } // lib.mapAttrs' (name: _:
             lib.nameValuePair "opencode/plugins/${name}" {
-              source = ./opencode/plugins + "/${name}";
+              source = "${opencodePlugins}/${name}";
             }) (lib.filterAttrs (name: type:
                   (type == "regular" || type == "directory")
                   && name != "node_modules"

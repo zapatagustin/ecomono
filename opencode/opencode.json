@@ -5,7 +5,6 @@
   "small_model": "opencode-go/mimo-v2.6-flash",
   "compaction": {
     "auto": true,
-    "prune": true,
     "reserved": 10000
   },
   "agent": {
@@ -283,9 +282,6 @@
     },
     "skill": {}
   },
-  "plugin": [
-    "./plugins/memory.ts"
-  ],
   "provider": {
     "anthropic": {}
   },
