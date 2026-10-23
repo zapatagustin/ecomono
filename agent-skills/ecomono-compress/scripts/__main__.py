@@ -64,6 +64,7 @@ def main():
     staged_fd, staged_name = tempfile.mkstemp(dir=fp.parent, prefix=f".{fp.name}.")
     os.close(staged_fd)  # compress_file/atomic_write_text write their own temp file and replace onto this path
     staged = Path(staged_name)
+    original_bytes = None  # set once this run's compress_file has written the backup
 
     try:
         # --- First compression ---
@@ -74,6 +75,7 @@ def main():
         if result["status"] != "ok":
             print(f"❌ {result.get('reason', 'unknown error')}")
             sys.exit(1)
+        original_bytes = fp.read_bytes()  # compress_file wrote only `staged`: fp is still the original
 
         used_api = bool(result.get("used_api"))
         print(f"   {result['original_tokens']} → {result['compressed_tokens']} tokens "
@@ -114,7 +116,6 @@ def main():
                 # fp was never touched — every candidate was validated on `staged`
                 # first — so it is already byte-identical to the pre-run original.
                 print("   ❌ Validation failed. Original left untouched.")
-                backup.unlink(missing_ok=True)
                 sys.exit(1)
 
             print(f"   🔄 Recompressing (attempt {attempt + 2})...")
@@ -138,11 +139,22 @@ def main():
                 # the original — nothing worth staging for the next validation
                 # pass. Same "leave the original untouched" exit as above.
                 print("   ❌ Validation failed. Original left untouched.")
-                backup.unlink(missing_ok=True)
                 sys.exit(1)
             atomic_write_text(staged, compressed)  # re-validated at the top of the next iteration
     finally:
         staged.unlink(missing_ok=True)  # no-op once os.replace has consumed it
+        # Every exit that did not promote — a failed validation, Ctrl-C mid-retry —
+        # drops this run's backup, or every later run stops at "Backup exists"
+        # (upstream edd228e). Only while fp provably still holds the original:
+        # once a candidate is promoted, the backup is the sole copy.
+        # ecomono: an abort inside compress_file after its backup write (local
+        # I/O, no network) still leaves the backup. Upgrade path: compress_file
+        # cleans up its own backup on BaseException before the candidate write.
+        try:
+            if original_bytes is not None and fp.read_bytes() == original_bytes:
+                backup.unlink()
+        except OSError:
+            pass  # cannot prove fp unchanged: keep the backup
 
     # Done
     compressed_tokens = len(fp.read_text(encoding="utf-8", errors="ignore").split())

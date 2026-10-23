@@ -86,4 +86,29 @@ assert.ok(
     "where truncateByChars hardcoded a bare \\n\\n even into CRLF-dominant text",
 )
 
+// ── HTML routing (drives the plugin hook) ────────────────────────────────────
+// detectOutputFormat lives in ../cave-compress.ts, whose only export is the
+// plugin (opencode calls every export as one), so this goes through the hook.
+// HTML must never reach compressXml: a lowercase doctype or a bare <html> page
+// keeps every row instead of collapsing them as repeated XML siblings, while a
+// <htmlReport> root (no tag boundary after "html") is still XML.
+
+process.env.ECOMONO_COMPRESS_STATS = "off" // read at import time; keep tests off the user's stats file
+const { CaveCompress } = await import("../cave-compress")
+const hooks = await CaveCompress({} as never)
+const rows = Array.from({ length: 60 }, (_, i) => `<li><a href="/item/${i}">Item ${i}</a></li>`).join("\n")
+const runBash = async (text: string) => {
+  const output = { title: "", output: text, metadata: {} }
+  await hooks["tool.execute.after"]!({ tool: "bash", sessionID: "s", callID: "c", args: {} } as never, output as never)
+  return output.output
+}
+for (const head of ["<!doctype html>", '<html lang="en">', "\uFEFF<HTML>"]) {
+  const page = `${head}\n<body>\n<ul>\n${rows}\n</ul>\n</body>\n</html>\n`
+  assert.ok((await runBash(page)).includes("Item 30"), `${JSON.stringify(head)} page must not be XML-compressed`)
+}
+assert.ok(
+  !(await runBash(`<htmlReport>\n${rows}\n</htmlReport>\n`)).includes("Item 30"),
+  "<htmlReport> is not an <html> tag: it stays on the XML path",
+)
+
 console.log("test_cave_compress: all assertions passed")

@@ -210,7 +210,7 @@ INTENSIFIERS = re.compile(
     r"strongly|highly|greatly|really|very|quite|extremely|"
     r"definitely|certainly|absolutely|deeply|truly|sincerely|"
     r"rather|somewhat|pretty|fairly"
-    r")\s+(?=\w)",
+    r")[ \t]+(?=\w)",
     re.IGNORECASE,
 )
 
@@ -230,7 +230,7 @@ PASSIVE = [
 REDUNDANT_VERBS = [
     (re.compile(r"\b(helps?|allows?|enables?) (to|you)\b", re.IGNORECASE), ""),
     # "provides a way to", "offers the means to", etc. (single-spaced, optional article)
-    (re.compile(r"\b(provides?|offers?)\s+(?:a|an|the)\s+(way|means|method)\s+to\b", re.IGNORECASE), ""),
+    (re.compile(r"\b(provides?|offers?)[ \t]+(?:a|an|the)[ \t]+(way|means|method)[ \t]+to\b", re.IGNORECASE), ""),
 ]
 
 # ---------------------------------------------------------------------------
@@ -244,10 +244,17 @@ REDUNDANT_VERBS = [
 # verbatim. Placeholders use Private-Use Unicode delimiters (category Co, not
 # matched by \w or \s) around a plain integer index, so no rule can touch them.
 #
-# Fenced-block detection mirrors validate.extract_code_blocks line-for-line so
-# masking and validation agree on exactly what a code block is.
+# Code-block detection is fenced_spans + indented_spans below, called by both
+# this masker and validate.py, so the two cannot disagree on what code is.
 
-FENCE_OPEN_REGEX = re.compile(r"^(\s{0,3})(`{3,}|~{3,})(.*)$")
+# Any indent: _indent_width sorts 0-3 columns (top-level fence) from 4+ (a fence
+# nested in a list item), which fenced_spans closes differently.
+FENCE_OPEN_REGEX = re.compile(r"^(\s*)(`{3,}|~{3,})(.*)$")
+# YAML frontmatter: a `---` line opening the file, through the next `---` line.
+# Data a loader parses (SKILL.md name/description), so split off before either
+# compression pass and reattached verbatim (upstream 8e0e22b). An optional
+# leading BOM is part of the match, so it stays in the head byte-identical.
+FRONTMATTER_REGEX = re.compile(r"\A\ufeff?---[ \t]*\r?$.*?^---[ \t]*\r?$", re.DOTALL | re.MULTILINE)
 # CommonMark code span: an opening run of N backticks closes only with a run of
 # exactly N, so the lookarounds force both runs to be maximal. A stray run with
 # no matching closer (e.g. "```" mid-prose) is not a span. Group 2 is the span
@@ -304,102 +311,119 @@ def _placeholder(i: int, stash=None) -> str:
     return f"{getattr(stash, 'left', _PH_OPEN)}{i}{getattr(stash, 'right', _PH_CLOSE)}"
 
 
-def _mask_fenced_blocks(text: str, stash: list) -> str:
-    """Replace whole fenced code blocks with placeholders (line-based)."""
-    lines = text.split("\n")
-    out = []
-    n = len(lines)
-    i = 0
+def _indent_width(line: str) -> int:
+    """Leading indent in columns; a tab advances to the next multiple of 4 (CommonMark)."""
+    return len(line[: len(line) - len(line.lstrip(" \t"))].expandtabs(4))
+
+
+def _is_indented_code(line: str) -> bool:
+    return bool(line.strip()) and _indent_width(line) >= INDENTED_CODE_INDENT
+
+
+def split_frontmatter(text: str):
+    """(frontmatter plus the newlines after it, body); ("", text) when there is none."""
+    m = FRONTMATTER_REGEX.match(text)
+    if not m:
+        return "", text
+    body = text[m.end():].lstrip("\r\n")
+    return text[: len(text) - len(body)], body
+
+
+def fenced_spans(lines: list) -> list:
+    """(start, end) line spans, end exclusive, of every fenced code block.
+
+    Shared with validate.py: the masker and the validator must see the same
+    blocks, or a rewritten one validates clean.
+
+    A fence at 0-3 columns closes at a matching fence also at 0-3 columns. One at
+    4+ columns is nested in a list item: it closes at a matching fence also at 4+,
+    or ends just before the first line indented less than 4 — so a lone indented
+    marker over-masks the rest of its list item but never swallows forward to a
+    real fence. Unclosed, a block runs to EOF minus trailing blank lines:
+    malformed markdown is still code, and the prose rules must not rewrite it.
+
+    ecomono: ceiling — a nested fence whose body dedents below 4 columns (a
+    heredoc at column 0) ends there, as CommonMark's list item does; the rest is
+    prose. Upgrade path: track list context while walking.
+    """
+    spans = []
+    i, n = 0, len(lines)
     while i < n:
         m = FENCE_OPEN_REGEX.match(lines[i])
         if not m:
-            out.append(lines[i])
             i += 1
             continue
-        fence_char = m.group(2)[0]
-        fence_len = len(m.group(2))
-        block_lines = [lines[i]]
+        start, char, size = i, m.group(2)[0], len(m.group(2))
+        nested = _indent_width(lines[i]) >= INDENTED_CODE_INDENT
         i += 1
         closed = False
         while i < n:
             close_m = FENCE_OPEN_REGEX.match(lines[i])
             if (
                 close_m
-                and close_m.group(2)[0] == fence_char
-                and len(close_m.group(2)) >= fence_len
+                and close_m.group(2)[0] == char
+                and len(close_m.group(2)) >= size
                 and close_m.group(3).strip() == ""
+                and (_indent_width(lines[i]) >= INDENTED_CODE_INDENT) == nested
             ):
-                block_lines.append(lines[i])
                 closed = True
                 i += 1
                 break
-            block_lines.append(lines[i])
+            if nested and lines[i].strip() and _indent_width(lines[i]) < INDENTED_CODE_INDENT:
+                break
             i += 1
-        # Stash the block whether or not it closed. Malformed markdown is still
-        # code: emitting an unclosed fence verbatim let the prose rules rewrite
-        # its body, and nothing downstream complained.
-        trailing = []
         if not closed:
-            # An unclosed fence runs to EOF, so it would otherwise swallow the
-            # document's trailing blank lines. The closed path ends at its own
-            # fence and never does, and validate mirrors this trim.
-            while block_lines and not block_lines[-1].strip():
-                trailing.insert(0, block_lines.pop())
-        stash.append("\n".join(block_lines))
-        out.append(_placeholder(len(stash) - 1, stash))
-        out.extend(trailing)
-    return "\n".join(out)
+            while i > start + 1 and not lines[i - 1].strip():
+                i -= 1
+        spans.append((start, i))
+    return spans
 
 
-def _mask_indented_blocks(text: str, stash: list) -> str:
-    """Replace CommonMark indented code blocks (4+ spaces) with placeholders.
+def indented_spans(lines: list, fenced: list) -> list:
+    """(start, end) spans of indented code blocks (4+ columns) outside `fenced`.
 
-    Mirrors validate.extract_indented_blocks — test_compress.py feeds both the
-    same cases and asserts they agree, because a masker and a validator sharing a
-    blind spot is how a rewritten code block used to validate clean. Run this
-    AFTER fenced masking, so a fenced block is already one unindented placeholder
-    line and cannot be rescanned.
+    Shared with validate.py, like fenced_spans. A run counts only when a blank
+    line, a fenced block or the start of the document precedes it; blank lines
+    inside a run belong to it, trailing ones do not.
 
-    ecomono: a run counts only when a blank line precedes it. That is the
-    CommonMark rule but not all of it — a 4-space-indented continuation inside a
-    list item gets masked as code here. That error direction costs compression,
-    never content, so it is the safe one. Upgrade path if it starts mattering:
-    track list context while walking.
+    ecomono: that is the CommonMark rule but not all of it — a 4-space-indented
+    continuation inside a list item (or right after a nested fence) is masked as
+    code. That error direction costs compression, never content, so it is the
+    safe one. Upgrade path: track list context while walking.
     """
-    pad = " " * INDENTED_CODE_INDENT
-    lines = text.split("\n")
-    out = []
+    fence_end = dict(fenced)
+    spans = []
     i, n = 0, len(lines)
     prev_blank = True   # start of document is a boundary
     while i < n:
-        line = lines[i]
-        if prev_blank and line.startswith(pad) and line.strip():
-            run = []
-            while i < n:
-                cur = lines[i]
-                if cur.startswith(pad) and cur.strip():
-                    run.append(cur)
-                    i += 1
-                elif not cur.strip():
-                    # A blank line stays inside the run only if more code follows.
-                    j = i
-                    while j < n and not lines[j].strip():
-                        j += 1
-                    if j < n and lines[j].startswith(pad) and lines[j].strip():
-                        run.extend(lines[i:j])
-                        i = j
-                    else:
-                        break
-                else:
-                    break
-            stash.append("\n".join(run))
-            out.append(_placeholder(len(stash) - 1, stash))
-            prev_blank = False
+        if i in fence_end:
+            i, prev_blank = fence_end[i], True
             continue
-        out.append(line)
-        prev_blank = not line.strip()
+        if prev_blank and _is_indented_code(lines[i]):
+            start = end = i
+            while i < n and i not in fence_end and (_is_indented_code(lines[i]) or not lines[i].strip()):
+                if lines[i].strip():
+                    end = i + 1
+                i += 1
+            spans.append((start, end))
+            i, prev_blank = end, False
+            continue
+        prev_blank = not lines[i].strip()
         i += 1
-    return "\n".join(out)
+    return spans
+
+
+def _mask_code_blocks(text: str, stash: list) -> str:
+    """Replace every fenced and indented code block with a placeholder line."""
+    lines = text.split("\n")
+    fenced = fenced_spans(lines)
+    out, prev = [], 0
+    for start, end in sorted(fenced + indented_spans(lines, fenced)):
+        out += lines[prev:start]
+        stash.append("\n".join(lines[start:end]))
+        out.append(_placeholder(len(stash) - 1, stash))
+        prev = end
+    return "\n".join(out + lines[prev:])
 
 
 def _mask_regex(text: str, pattern: re.Pattern, stash: list) -> str:
@@ -413,8 +437,7 @@ def protect(text: str):
     """Mask code blocks, headings, inline code, and URLs. Returns (masked_text, stash)."""
     stash = _Stash()
     stash.left, stash.right = _sentinels(text)
-    text = _mask_fenced_blocks(text, stash)    # blocks first (may hold backticks/URLs)
-    text = _mask_indented_blocks(text, stash)  # then indented code, same reason
+    text = _mask_code_blocks(text, stash)  # blocks first (may hold backticks/URLs)
     text = _mask_regex(text, HEADING_LINE_REGEX, stash)
     text = _mask_regex(text, INLINE_CODE_REGEX, stash)
     text = _mask_regex(text, URL_REGEX, stash)
@@ -430,6 +453,7 @@ def restore(text: str, stash: list) -> str:
 
 def rule_compress(text: str) -> str:
     """Apply mechanical compression rules to prose only. Returns compressed text."""
+    head, text = split_frontmatter(text)
     text, stash = protect(text)
 
     # ---- Phase: phrase-level removals (before word-level to avoid partial matches) ----
@@ -483,8 +507,10 @@ def rule_compress(text: str) -> str:
     for old, new in WORD_REPLACE.items():
         text = re.sub(r"\b" + re.escape(old) + r"\b", new, text, flags=re.IGNORECASE)
 
-    # 14. Article removal — aggressive: remove all "the " (acceptable for compressed prose)
-    text = re.sub(r"\bthe\s+", "", text)
+    # 14. Article removal — aggressive: remove all "the " (acceptable for compressed prose).
+    #     Removals match `[ \t]+`, never `\s+`: eating the newline glues the next
+    #     line (a masked code placeholder) onto this one, and validation fails.
+    text = re.sub(r"\bthe[ \t]+", "", text)
 
     # 15. Per-line cleanup. A global `re.sub(" +", " ")` would flatten
     #     markdown-significant indentation (nested lists, indented code) that
@@ -509,7 +535,7 @@ def rule_compress(text: str) -> str:
     text = re.sub(r"\n{3,}", "\n\n", text)
     text = text.strip()
 
-    return restore(text, stash)
+    return head + restore(text, stash)
 
 
 # ---------------------------------------------------------------------------
@@ -554,6 +580,7 @@ def call_semantic_api(text: str, model: str = DEFAULT_MODEL) -> str:
     key = _read_api_key()
     if not key:
         raise RuntimeError("OpenCode API key not found")
+    head, text = split_frontmatter(text)  # never sent; reattached to the result verbatim
 
     prompt = f"""Compress this markdown into ecomono format: ultra-terse, zero filler, full technical accuracy.
 
@@ -596,13 +623,15 @@ Input:
                 f"{API_BASE}/chat/completions",
                 data=json.dumps(data).encode(),
                 headers={
-                    "Authorization": f"Bearer {key}",
                     "Content-Type": "application/json",
                     "User-Agent": "ecomono-compress/2.0",
                     "x-opencode-session": session_id,
                 },
                 method="POST",
             )
+            # Unredirected: urllib copies ordinary headers onto a 3xx hop, so a
+            # redirect to another host would receive the key (upstream 3ec6c5f).
+            req.add_unredirected_header("Authorization", f"Bearer {key}")
             # ecomono: two ceilings. (1) non-streaming — a response over OUTPUT_CAP or
             # slower than timeout_s falls back to the rule-based pass; upgrade: SSE
             # ("stream": true, parse "data:" lines, accumulate deltas), as upstream caveman
@@ -618,7 +647,7 @@ Input:
                 # the caller falls back to the rule-based result instead of
                 # writing a half-compressed file.
                 raise RuntimeError("Semantic output truncated (max_tokens) — falling back to rule-based")
-            return choice["message"]["content"].strip()
+            return head + choice["message"]["content"].strip()
         except urllib.error.HTTPError as e:
             # 429 (rate limit) and 5xx (transient server) are worth retrying with
             # backoff. 413 (payload too large) is not — the same request fails

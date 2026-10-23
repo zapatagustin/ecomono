@@ -3,20 +3,16 @@ import re
 from collections import Counter
 from pathlib import Path
 
+# Code-block detection is imported, not mirrored: a masker and a validator that
+# each keep their own copy drift, and a shared blind spot validates corruption.
 try:
-    from .compress import INLINE_CODE_REGEX
+    from .compress import FRONTMATTER_REGEX, INLINE_CODE_REGEX, fenced_spans, indented_spans
 except ImportError:  # run as a plain script, not as part of the package
-    from compress import INLINE_CODE_REGEX
+    from compress import FRONTMATTER_REGEX, INLINE_CODE_REGEX, fenced_spans, indented_spans
 
 URL_REGEX = re.compile(r"https?://[^\s)]+")
-FENCE_OPEN_REGEX = re.compile(r"^(\s{0,3})(`{3,}|~{3,})(.*)$")
-# Any indent, unlike FENCE_OPEN_REGEX above — used only to blank stray fence-marker
-# lines left over after real fence extraction (see extract_inline_codes), never to
-# extract blocks. Widening FENCE_OPEN_REGEX itself would make a lone indented ```
-# shown in prose swallow forward to the next real fence's close.
-FENCE_MARKER_LINE_REGEX = re.compile(r"^\s*(?:`{3,}|~{3,})[^`~]*$")
 # ecomono: ceiling — ATX headings only, tolerating the CommonMark 0-3 space
-# margin (same margin FENCE_OPEN_REGEX already tolerates). Two shapes are
+# margin (same margin a top-level fence tolerates). Two shapes are
 # still invisible to this regex AND to compress.HEADING_LINE_REGEX (the
 # masker), so the two sides still agree and no false validation error
 # results — but text inside either shape can be silently reworded by
@@ -105,143 +101,38 @@ def extract_headings(text):
     return [(level, title.strip()) for level, title in HEADING_REGEX.findall(text)]
 
 
-def extract_code_blocks(text, with_positions=False):
-    """Line-based fenced code block extractor.
+def _blocks(lines, spans, with_positions):
+    blocks = [(start, "\n".join(lines[start:end])) for start, end in spans]
+    return blocks if with_positions else [body for _, body in blocks]
 
-    Handles ``` and ~~~ fences with variable length (CommonMark: closing
-    fence must use same char and be at least as long as opening). Supports
-    nested fences (e.g. an outer 4-backtick block wrapping inner 3-backtick
-    content).
+
+def extract_code_blocks(text, with_positions=False):
+    """Fenced code blocks, as compress.fenced_spans finds them.
 
     `with_positions` returns (start_line, block_text) pairs instead of bare
     text, so a caller can merge fenced and indented blocks in document order
     — see _ordered_code_blocks.
     """
-    blocks = []
     lines = text.split("\n")
-    i = 0
-    n = len(lines)
-    while i < n:
-        m = FENCE_OPEN_REGEX.match(lines[i])
-        if not m:
-            i += 1
-            continue
-        start = i
-        fence_char = m.group(2)[0]
-        fence_len = len(m.group(2))
-        open_line = lines[i]
-        block_lines = [open_line]
-        i += 1
-        closed = False
-        while i < n:
-            close_m = FENCE_OPEN_REGEX.match(lines[i])
-            if (
-                close_m
-                and close_m.group(2)[0] == fence_char
-                and len(close_m.group(2)) >= fence_len
-                and close_m.group(3).strip() == ""
-            ):
-                block_lines.append(lines[i])
-                closed = True
-                i += 1
-                break
-            block_lines.append(lines[i])
-            i += 1
-        # An unclosed fence counts as code too. Skipping it used to be justified
-        # as avoiding false positives, but compress._mask_fenced_blocks now
-        # stashes it, so its body is preserved verbatim and the comparison agrees
-        # — while skipping it left exactly that corruption unchecked.
-        if not closed:
-            # Mirror the masker: an unclosed fence runs to EOF, so drop the
-            # document's trailing blank lines rather than counting them as code.
-            while block_lines and not block_lines[-1].strip():
-                block_lines.pop()
-        blocks.append((start, "\n".join(block_lines)))
-    return blocks if with_positions else [body for _, body in blocks]
-
-
-INDENTED_CODE_INDENT = 4
+    return _blocks(lines, fenced_spans(lines), with_positions)
 
 
 def _blank_fenced_regions(text):
-    """Return `text` as lines with every fenced region blanked out.
-
-    Line count is preserved so blank-line boundaries still line up, which is what
-    extract_indented_blocks needs: an indented line *inside* a fence is fence
-    content, not an indented code block.
-    """
+    """Return `text` as lines with every fenced region blanked out."""
     lines = text.split("\n")
-    out = list(lines)
-    i, n = 0, len(lines)
-    while i < n:
-        m = FENCE_OPEN_REGEX.match(lines[i])
-        if not m:
-            i += 1
-            continue
-        fence_char, fence_len = m.group(2)[0], len(m.group(2))
-        out[i] = ""
-        i += 1
-        while i < n:
-            close_m = FENCE_OPEN_REGEX.match(lines[i])
-            closed = (
-                close_m
-                and close_m.group(2)[0] == fence_char
-                and len(close_m.group(2)) >= fence_len
-                and close_m.group(3).strip() == ""
-            )
-            out[i] = ""
-            i += 1
-            if closed:
-                break
-    return out
+    for start, end in fenced_spans(lines):
+        lines[start:end] = [""] * (end - start)
+    return lines
 
 
 def extract_indented_blocks(text, with_positions=False):
-    """CommonMark indented code blocks — 4+ spaces, fenced regions excluded.
+    """Indented code blocks (4+ columns), as compress.indented_spans finds them.
 
     `with_positions` returns (start_line, block_text) pairs — see
     extract_code_blocks.
-
-    A run counts as code only when a blank line or the start of the document
-    precedes it; an indented line continuing the paragraph above is prose. Blank
-    lines interior to a run belong to it, trailing ones do not.
-
-    compress._mask_indented_blocks re-implements this walk. The two must agree —
-    a masker and a validator sharing a blind spot is exactly how a rewritten code
-    block used to validate clean.
     """
-    pad = " " * INDENTED_CODE_INDENT
-    lines = _blank_fenced_regions(text)
-    blocks = []
-    i, n = 0, len(lines)
-    prev_blank = True
-    while i < n:
-        line = lines[i]
-        if prev_blank and line.startswith(pad) and line.strip():
-            start = i
-            run = []
-            while i < n:
-                cur = lines[i]
-                if cur.startswith(pad) and cur.strip():
-                    run.append(cur)
-                    i += 1
-                elif not cur.strip():
-                    j = i
-                    while j < n and not lines[j].strip():
-                        j += 1
-                    if j < n and lines[j].startswith(pad) and lines[j].strip():
-                        run.extend(lines[i:j])
-                        i = j
-                    else:
-                        break
-                else:
-                    break
-            blocks.append((start, "\n".join(run)))
-            prev_blank = False
-            continue
-        prev_blank = not line.strip()
-        i += 1
-    return blocks if with_positions else [body for _, body in blocks]
+    lines = text.split("\n")
+    return _blocks(lines, indented_spans(lines, fenced_spans(lines)), with_positions)
 
 
 def extract_urls(text):
@@ -259,23 +150,16 @@ def count_bullets(text):
 def extract_inline_codes(text):
     """Inline code spans, with fenced regions blanked out first.
 
-    Reuses _blank_fenced_regions — the same CommonMark-correct fence matcher
-    extract_code_blocks relies on — instead of the standalone `^```...^````
-    regex this used to carry: that hardcoded pattern only matched an
-    unindented, exactly-tripled-backtick fence at column 0, so any indented
-    or tilde fence slipped through untouched and leaked its marker backticks
-    into the pairing below, corrupting counts for the rest of the document.
-    FENCE_MARKER_LINE_REGEX then blanks any fence-marker-shaped line still
-    left over (e.g. one indented past the 3-space CommonMark margin, so it
-    isn't a real fence at all) for the same reason — a stray marker line's
-    odd backtick count would otherwise re-pair with real inline code later
-    in the file.
+    Reuses _blank_fenced_regions — the same fence matcher extract_code_blocks
+    relies on — instead of the standalone `^```...^```` regex this used to
+    carry: that hardcoded pattern only matched an unindented, exactly-tripled-
+    backtick fence at column 0, so any indented or tilde fence slipped through
+    untouched and leaked its marker backticks into the pairing below,
+    corrupting counts for the rest of the document. Every fence-marker line is
+    inside some fenced span (a lone indented one is a span of its own), so no
+    stray marker is left to re-pair with real inline code.
     """
-    lines = _blank_fenced_regions(text)
-    text_without_fences = "\n".join(
-        "" if FENCE_MARKER_LINE_REGEX.match(line) else line for line in lines
-    )
-    return [m.group(2) for m in INLINE_CODE_REGEX.finditer(text_without_fences)]
+    return [m.group(2) for m in INLINE_CODE_REGEX.finditer("\n".join(_blank_fenced_regions(text)))]
 
 
 # ---------- Validators ----------
@@ -312,6 +196,18 @@ def _ordered_code_blocks(text):
     """
     merged = extract_code_blocks(text, with_positions=True) + extract_indented_blocks(text, with_positions=True)
     return [body for _, body in sorted(merged, key=lambda pair: pair[0])]
+
+
+def _frontmatter(text):
+    m = FRONTMATTER_REGEX.match(text)
+    return m and m.group(0)
+
+
+def validate_frontmatter(orig, comp, result):
+    # Compression never touches frontmatter (compress.split_frontmatter), and a
+    # loader acts on it, so any change at all is corruption.
+    if _frontmatter(orig) != _frontmatter(comp):
+        result.add_error("Frontmatter changed")
 
 
 def validate_code_blocks(orig, comp, result):
@@ -419,6 +315,7 @@ def validate(original_path: Path, compressed_path: Path) -> ValidationResult:
     orig = read_file(original_path)
     comp = read_file(compressed_path)
 
+    validate_frontmatter(orig, comp, result)
     validate_headings(orig, comp, result)
     validate_code_blocks(orig, comp, result)
     validate_urls(orig, comp, result)

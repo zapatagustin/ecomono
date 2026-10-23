@@ -151,7 +151,9 @@ function detectOutputFormat(text) {
       if (/^\s*[[{]/.test(trimmed) && /[}\]]\s*$/.test(text.trimEnd())) return "json";
     }
   }
-  if (trimmed.startsWith("<?xml") || (trimmed.startsWith("<") && !trimmed.startsWith("<!DOCTYPE html"))) {
+  // HTML never goes to compressXml: a doctype or <html> opening, any case, with
+  // a tag boundary so <htmlReport> stays XML (caveman 15ebd61).
+  if (trimmed.startsWith("<?xml") || (trimmed.startsWith("<") && !/^(<!doctype\s+html|<html[\s>/])/i.test(trimmed))) {
     if (trimmed.includes("</") || trimmed.includes("/>")) return "xml";
   }
   return "text";
@@ -590,6 +592,16 @@ function selftest() {
     measureOverheadChars(passedThrough) - measureOverheadChars(alreadyMarked),
   );
   assert.strictEqual(netNewOverhead, 0, "net-new overhead must be 0 when the marker was already in the input");
+
+  // HTML must never reach compressXml (caveman 15ebd61): a lowercase doctype or
+  // a bare <html> page keeps every row instead of collapsing them as repeated
+  // XML siblings, while <htmlReport> (no tag boundary after "html") stays XML.
+  const rows = Array.from({ length: 60 }, (_, i) => `<li><a href="/item/${i}">Item ${i}</a></li>`).join("\n");
+  for (const head of ["<!doctype html>", '<html lang="en">', "\uFEFF<HTML>"]) {
+    const page = `${head}\n<body>\n<ul>\n${rows}\n</ul>\n</body>\n</html>\n`;
+    assert.strictEqual(compressStructuredOutput(page, "bash"), page, `${JSON.stringify(head)} page must not be XML-compressed`);
+  }
+  assert.strictEqual(detectOutputFormat(`<htmlReport>\n${rows}\n</htmlReport>\n`), "xml", "<htmlReport> is not an <html> tag");
 
   // Parity guard: the JS hook and the TS opencode plugin carry independent
   // copies of OVERHEAD_PATTERNS with no shared source. A future edit to one

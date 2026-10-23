@@ -78,7 +78,9 @@ function detectOutputFormat(text: string): OutputFormat {
       if (/^\s*[[{]/.test(trimmed) && /[}\]]\s*$/.test(text.trimEnd())) return "json"
     }
   }
-  if (trimmed.startsWith("<?xml") || (trimmed.startsWith("<") && !trimmed.startsWith("<!DOCTYPE html"))) {
+  // HTML never goes to compressXml: a doctype or <html> opening, any case, with
+  // a tag boundary so <htmlReport> stays XML (caveman 15ebd61).
+  if (trimmed.startsWith("<?xml") || (trimmed.startsWith("<") && !/^(<!doctype\s+html|<html[\s>/])/i.test(trimmed))) {
     if (trimmed.includes("</") || trimmed.includes("/>")) return "xml"
   }
   return "text"

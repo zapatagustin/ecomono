@@ -7,8 +7,8 @@ Covers the parts where a mistake is silent rather than loud:
     only evidence is a diff nobody reads.
   * extract_code_blocks() — a hand-rolled CommonMark fence scanner with four
     off-by-one edges (fence length, indent depth, info string on the close,
-    unclosed fence at EOF). compress._mask_fenced_blocks is a second copy of the
-    same loop, so both are fed the same inputs and required to agree.
+    unclosed fence at EOF). compress._mask_code_blocks runs the same shared
+    scanner, so both are fed the same inputs and required to agree.
   * every validator on BOTH sides — a validator only ever shown valid input is
     untested, and half of these downgrade to a warning rather than an error.
   * detect_file_type() on each class it claims, plus one it must refuse to claim.
@@ -185,6 +185,45 @@ check("compress", "unclosed fence body survives verbatim",
       C.rule_compress("intro\n```py\nvalidate the utilize\n"),
       "intro\n```py\nvalidate the utilize")
 
+# --- Frontmatter is data, never prose (upstream 8e0e22b) -------------------
+# A loader parses it: the rules turned `name: just-the-basics` into
+# `name: -the-basics` and the CLI still printed "Valid".
+FM = "---\nname: just-the-basics\ndescription: You can use this skill when you really need to just deploy the service.\n---\n\n"
+FM_DOC = FM + "# Deploy\n\nYou should really just make sure to read the notes before you deploy the service.\n"
+check("compress", "frontmatter reattached byte-identical", C.rule_compress(FM_DOC)[:len(FM)], FM)
+truthy("compress", "body after frontmatter still compressed", len(C.rule_compress(FM_DOC)) < len(FM_DOC) - 20)
+# A UTF-8 BOM before `---` hid the frontmatter from both sides: the body rules
+# collapsed `name: x  y`, and the validator, seeing no frontmatter, passed it.
+BOM_DOC = "\ufeff---\nname: x  y\n---\nthe  prose really basically\n"
+check("compress", "BOM frontmatter reattached byte-identical", C.rule_compress(BOM_DOC), "\ufeff---\nname: x  y\n---\nprose")
+
+# --- A removal never crosses a newline --------------------------------------
+# `\bthe\s+` ate the newline before a masked fence placeholder and glued the
+# fence opener onto the prose line; validation rejected it, so a fence under a
+# prose line ending in a filler word could never be compressed.
+for _label, _src in [
+    ("list-nested fence", "a\n  - sub\n    code the\n    ```\n\nx"),
+    ("tab-indented fence", "a\n  - sub\n    code line the\n\t```\n\nx"),
+    ("top-level fence", "a the\n```\nx\n```"),
+]:
+    _out = C.rule_compress(_src)
+    check("compress", f"filler before {_label} keeps the line break", _out, _src)
+    check("compress", f"filler before {_label} validates clean", verdict(V.validate_code_blocks, _src, _out), (True, 0, 0))
+for _src in ["a really\nfoo", "x provides the\nway to go"]:
+    check("compress", f"removal keeps line count: {_src!r}", C.rule_compress(_src).count("\n"), 1)
+
+# --- A fence nested in a list item is code (4+ columns, no blank line before)
+# Neither the 0-3 space fence rule nor the blank-line-gated indented rule saw it,
+# so the body was rewritten as prose: `echo "   deploy"`.
+NESTED = ('# Deploy\n\nSome prose that is really just quite verbose here.\n\n1. Setup:\n   - Run this:\n'
+          '     ```bash\n     echo "you should basically make sure to deploy"\n     ```\n')
+truthy("compress", "list-nested fence body survives verbatim",
+       '     echo "you should basically make sure to deploy"\n' in C.rule_compress(NESTED) + "\n")
+
+# --- A tab indents code exactly like 4 spaces -------------------------------
+TAB_DOC = "# T\n\nSome prose that is really just quite verbose here.\n\n\techo the really basic thing\n"
+truthy("compress", "tab-indented code survives verbatim", "\techo the really basic thing" in C.rule_compress(TAB_DOC))
+
 # --- restore() no longer collides with a literal placeholder ---------------
 # protect() lengthens its delimiters until neither occurs in the input, so a
 # source that already contains a placeholder-shaped run cannot make a stashed
@@ -197,7 +236,7 @@ check("compress", "literal placeholder survives untouched",
 
 # ===========================================================================
 # 3. extract_code_blocks — fence scanner off-by-ones
-#    compress._mask_fenced_blocks re-implements this loop; the two must agree,
+#    compress._mask_code_blocks shares this scanner; the two must agree,
 #    because masking and validation disagreeing is exactly how a corrupted file
 #    passes validation.
 # ===========================================================================
@@ -213,7 +252,17 @@ FENCE_CASES = [
     ("info string on close is content", "```py\nx\n```py\ny\n```", ["```py\nx\n```py\ny\n```"]),
     # CommonMark allows up to 3 spaces of fence indent, 4 makes it indented code.
     ("3-space indent is a fence", "   ```\nx\n   ```", ["   ```\nx\n   ```"]),
-    ("4-space indent is not a fence", "    ```\nx\n    ```", []),
+    # 4+ columns is a fence nested in a list item: it closes at a matching fence
+    # also indented 4+, or just before the first line indented less than 4. A
+    # lone marker so only over-masks the rest of its list item, never swallows
+    # forward to a real fence. (CommonMark at top level reads this one as an
+    # indented line plus a paragraph; masking it is the safe error direction.)
+    ("4-space fence ends at the dedent after it", "    ```\nx\n    ```", ["    ```", "    ```"]),
+    ("list-nested fence, no blank line before", "1. Setup:\n     ```bash\n     echo hi\n     ```\n- next",
+     ["     ```bash\n     echo hi\n     ```"]),
+    ("tab-indented fence", "- a:\n\t```\n\tx the\n\t```\n", ["\t```\n\tx the\n\t```"]),
+    ("nested fence cannot close on a shallow one", "- a:\n    ```\n    x\n```\ny\n```",
+     ["    ```\n    x", "```\ny\n```"]),
     # Unclosed fence at EOF is dropped rather than reported as a block.
     # An unclosed fence is code, not something to skip: the masker stashes it so
     # the prose rules cannot rewrite its body, and the extractor must agree.
@@ -229,7 +278,7 @@ for label, src, want in FENCE_CASES:
     # Same input through the masker: every block the extractor found must have
     # been replaced by a placeholder, and nothing else may move.
     st = []
-    C._mask_fenced_blocks(src, st)
+    C._mask_code_blocks(src, st)
     check("validate", f"mask agrees on {label}", st, want)
 
 # The validator's blind spot is what made indented-code corruption silent: the
@@ -239,6 +288,18 @@ check("validate", "indented block extracted",
       V.extract_indented_blocks("P.\n\n    code the\n\nQ.\n"), ["    code the"])
 check("validate", "indented continuation is not a block",
       V.extract_indented_blocks("Lead in\n    not code\n"), [])
+check("validate", "tab-indented block extracted", V.extract_indented_blocks(TAB_DOC), ["\techo the really basic thing"])
+check("validate", "tab-indented block rewritten is an error",
+      verdict(V.validate_code_blocks, TAB_DOC, TAB_DOC.replace("the really basic ", "basic ")), (False, 1, 0))
+check("validate", "list-nested fence rewritten is an error",
+      verdict(V.validate_code_blocks, NESTED, NESTED.replace("you should basically make sure to ", "   ")), (False, 1, 0))
+# Text after a fence is a block boundary on BOTH sides: the masker used to see its
+# placeholder as prose and the validator its blanked lines as a blank line.
+AFTER_FENCE = "- a:\n    ```\n    x\n    ```\n    you should really check it\n"
+check("validate", "indented line right after a fence is a block",
+      V.extract_indented_blocks(AFTER_FENCE), ["    you should really check it"])
+truthy("compress", "indented line right after a fence is masked",
+       "    you should really check it" in C.rule_compress(AFTER_FENCE))
 # ===========================================================================
 # 4. Extractors
 # ===========================================================================
@@ -490,6 +551,19 @@ check("validate", "indented heading byte-identical after compression",
       _ihc.read_text().splitlines()[0], "  # Just Really Getting Started")
 _ihr = V.validate(_iho, _ihc)
 check("validate", "indented heading doc validates clean", (_ihr.is_valid, _ihr.errors, _ihr.warnings), (True, [], []))
+
+# Frontmatter must come through byte-identical: a rewritten `name:` or
+# `description:` is corruption a loader acts on, and nothing else here checks it.
+_fmo = write("fm_orig.md", FM_DOC)
+check("validate", "frontmatter rewritten is an error",
+      V.validate(_fmo, write("fm_rewritten.md", FM_DOC.replace("just-the-basics", "-the-basics"))).errors,
+      ["Frontmatter changed"])
+check("validate", "frontmatter dropped is an error",
+      V.validate(_fmo, write("fm_dropped.md", FM_DOC[len(FM):])).is_valid, False)
+_fmr = V.validate(_fmo, write("fm_comp.md", C.rule_compress(FM_DOC)))
+check("validate", "compressed frontmatter doc validates clean", (_fmr.is_valid, _fmr.errors), (True, []))
+check("validate", "BOM frontmatter rewritten is an error",
+      verdict(V.validate_frontmatter, BOM_DOC, BOM_DOC.replace("x  y", "x y")), (False, 1, 0))
 
 # ===========================================================================
 # 6. detect — every class it claims, and one it must not claim
@@ -954,6 +1028,105 @@ check("pipeline", "cli: retry candidate that fails to shrink after RuntimeError 
 check("pipeline", "cli: retry candidate that fails to shrink after RuntimeError exits non-zero",
       noshrink_exit, 1)
 
+# End-to-end, rule-only: each of these shapes used to be promoted corrupted
+# with "✅ Valid". The file must change (promotion ran) with the span intact.
+for name, doc, keep in [
+    ("e2e_fm.md", FM_DOC, FM),
+    ("e2e_nested.md", NESTED, 'echo "you should basically make sure to deploy"'),
+    ("e2e_tab.md", TAB_DOC, "\techo the really basic thing"),
+]:
+    e2e_live = write(name, doc)
+    sys.argv = ["scripts", str(e2e_live)]
+    try:
+        with contextlib.redirect_stdout(io.StringIO()):
+            try:
+                M.main()
+            except SystemExit:
+                pass
+    finally:
+        sys.argv = old_argv
+    e2e_out = e2e_live.read_text()
+    truthy("pipeline", f"cli: {name} promoted with its protected span intact", e2e_out != doc and keep in e2e_out)
+
+# Ctrl-C (any BaseException) in the --api retry loop used to leave this run's
+# backup behind, so every later run stopped at "Backup exists" (upstream
+# edd228e). The backup goes only while the live file provably still holds the
+# original; once a candidate is promoted it is the only copy and must stay.
+cc_doc = "# Notes\n\nYou should really just make sure to read the docs at https://example.com/docs before you deploy.\n"
+cc_live = write("ctrlc.md", cc_doc)
+_cc_calls = []
+
+
+def _fake_semantic_ctrlc(text, model=None):
+    _cc_calls.append(text)
+    if len(_cc_calls) == 1:
+        return text.replace("https://example.com/docs", "docs")  # shorter, but loses the URL: invalid
+    raise KeyboardInterrupt
+
+
+_real_c_api4, _real_m_api4 = SC.call_semantic_api, M.call_semantic_api
+SC.call_semantic_api = M.call_semantic_api = _fake_semantic_ctrlc
+sys.argv = ["scripts", "--api", str(cc_live)]
+cc_interrupted = False
+try:
+    with contextlib.redirect_stdout(io.StringIO()):
+        try:
+            M.main()
+        except KeyboardInterrupt:
+            cc_interrupted = True
+finally:
+    SC.call_semantic_api, M.call_semantic_api = _real_c_api4, _real_m_api4
+    sys.argv = old_argv
+
+truthy("pipeline", "cli: Ctrl-C test interrupted the retry loop", cc_interrupted and len(_cc_calls) == 2)
+check("pipeline", "cli: Ctrl-C mid-retry leaves live file byte-identical", cc_live.read_text(), cc_doc)
+check("pipeline", "cli: Ctrl-C mid-retry removes this run's backup", (TMP / "ctrlc.md.original.md").exists(), False)
+check("pipeline", "cli: Ctrl-C mid-retry leaves no staging file", list(TMP.glob(".ctrlc.md.*")), [])
+
+# The data-loss direction: interrupted right after promotion, the backup is the
+# only copy of the original and must survive.
+pa_live = write("ctrlc_after.md", BODY)
+pa_backup = TMP / "ctrlc_after.md.original.md"
+_real_promote = M._promote
+
+
+def _promote_then_ctrlc(staged, fp):
+    _real_promote(staged, fp)
+    raise KeyboardInterrupt
+
+
+M._promote = _promote_then_ctrlc
+sys.argv = ["scripts", str(pa_live)]
+try:
+    with contextlib.redirect_stdout(io.StringIO()):
+        try:
+            M.main()
+        except KeyboardInterrupt:
+            pass
+finally:
+    M._promote = _real_promote
+    sys.argv = old_argv
+
+truthy("pipeline", "cli: Ctrl-C after promote hit a compressed file", pa_live.read_text() != BODY)
+check("pipeline", "cli: Ctrl-C after promote keeps the backup",
+      pa_backup.read_text() if pa_backup.exists() else None, BODY)
+
+# A backup this run did not create is never removed, even though the live file
+# is unchanged when the run stops at "Backup exists".
+pre_live = write("prebackup.md", BODY)
+pre_backup = write("prebackup.md.original.md", "the only copy of the original\n")
+sys.argv = ["scripts", str(pre_live)]
+try:
+    with contextlib.redirect_stdout(io.StringIO()):
+        try:
+            M.main()
+        except SystemExit:
+            pass
+finally:
+    sys.argv = old_argv
+check("pipeline", "cli: a backup this run did not create is left alone",
+      pre_backup.read_text() if pre_backup.exists() else None, "the only copy of the original\n")
+
 # ===========================================================================
 # Key ladder — env > API_KEY_FILE > auth.json; every malformed rung falls
 # through to None instead of raising, and the CLI keeps the rule-based result.
@@ -1085,6 +1258,28 @@ try:
     truthy("keys", "HTTPError body redacted", msg is not None and "***" in msg and SECRET not in msg)
     msg = _redaction(ValueError(f"Invalid header value b'Bearer {SECRET}'"))
     truthy("keys", "generic error redacted", msg is not None and "***" in msg and SECRET not in msg)
+
+    # The key must not follow a redirect to another host (upstream 3ec6c5f).
+    # The stdlib's own redirect handler builds the 3xx hop, so _hop is what a
+    # server behind a 302 receives. Same request: frontmatter never reaches the
+    # model and is reattached verbatim.
+    _sent = []
+
+    def _capture(req, timeout=None):
+        _sent.append(req)
+        return io.BytesIO(json.dumps({"choices": [{"message": {"content": "body out"}, "finish_reason": "stop"}]}).encode())
+
+    with mock.patch.dict(os.environ, {"OPENCODE_API_KEY": SECRET}), \
+         mock.patch.object(urllib.request, "urlopen", _capture):
+        sem_out = C.call_semantic_api(FM_DOC)
+    _req = _sent[0]
+    check("keys", "api request carries the key", _req.get_header("Authorization"), f"Bearer {SECRET}")
+    _hop = urllib.request.HTTPRedirectHandler().redirect_request(
+        _req, None, 302, "Found", {}, "http://elsewhere.invalid/steal")
+    check("keys", "key not forwarded on a cross-host redirect", _hop.get_header("Authorization"), None)
+    check("keys", "frontmatter never sent to the model",
+          "just-the-basics" in json.loads(_req.data)["messages"][0]["content"], False)
+    check("keys", "frontmatter reattached to the semantic output", sem_out, FM + "body out")
 finally:
     shutil.rmtree(KD, ignore_errors=True)
 
