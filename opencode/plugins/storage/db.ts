@@ -207,6 +207,8 @@ function initSchema(d: Database) {
       created_at TEXT NOT NULL DEFAULT (datetime('now'))
     )
   `)
+  // Done-markers for one-time work that must not repeat per handle (engram_migrated).
+  d.run("CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT NOT NULL)")
   sweepOrphanedLinks(d)
 }
 
@@ -286,16 +288,24 @@ function migrateFtsTopicKey(d: Database) {
 // its schema onto ours rather than copying columns blindly. Idempotent via
 // INSERT OR IGNORE on primary keys; best-effort — a failure never blocks init,
 // because a broken migration must not cost us the whole memory store.
+// Once per store, not once per handle: the `engram_migrated` meta row stops the
+// re-run. Without it every fresh handle — each opencode v2 location activation,
+// each reopen after closeDb() — re-inserted engram-origin rows the user had
+// deleted since. Written only when every step succeeded, so a partial run still
+// retries on the next open, as before.
 // ecomono: dead code with an expiry condition, not a ceiling to raise. Engram
 // is a retired external product this port replaced, so the schema branch this
 // once implied — "a future engram version needs a matching branch" — will never
 // be needed. Delete this function, ENGRAM_DB, and test_migration.ts once every
-// machine has run it. A machine has, if `~/.engram/engram.db.pre-ecomono.bak`
-// exists beside the legacy db, or if `~/.engram/` was never there at all.
+// machine has run it. A machine has, if its memory.db holds the `engram_migrated`
+// meta row (stores migrated before the marker: `~/.engram/engram.db.pre-ecomono.bak`
+// exists beside the legacy db), or if `~/.engram/` was never there at all.
 // Until then it stays: on an unmigrated machine, deleting it silently strands
-// that machine's whole memory history. Cost of keeping it is one existsSync.
+// that machine's whole memory history. Cost of keeping it is one existsSync,
+// plus one indexed lookup where the legacy db exists.
 function migrateFromEngram(d: Database) {
   if (!existsSync(ENGRAM_DB)) return
+  if (d.query("SELECT 1 FROM meta WHERE key = 'engram_migrated'").get()) return
   // Only engram DBs have this shape; bail quietly on anything else.
   try {
     d.run("ATTACH DATABASE ? AS old", [ENGRAM_DB])
@@ -307,8 +317,9 @@ function migrateFromEngram(d: Database) {
     const backup = ENGRAM_DB + ".pre-ecomono.bak"
     if (!existsSync(backup)) copyFileSync(ENGRAM_DB, backup)
 
+    let complete = true
     const step = (label: string, sql: string) => {
-      try { d.run(sql) } catch (e) { console.error(`engram migration: skipped ${label} (${(e as Error).message})`) }
+      try { d.run(sql) } catch (e) { complete = false; console.error(`engram migration: skipped ${label} (${(e as Error).message})`) }
     }
     // projects: derived from the denormalized `project` column everywhere.
     step("projects/obs", "INSERT OR IGNORE INTO projects (id, name) SELECT DISTINCT project, project FROM old.observations WHERE project IS NOT NULL")
@@ -323,6 +334,7 @@ function migrateFromEngram(d: Database) {
     step("prompts", "INSERT OR IGNORE INTO prompts (id, session_id, content, created_at) SELECT id, session_id, content, created_at FROM old.user_prompts WHERE session_id IN (SELECT id FROM sessions)")
 
     d.run("DETACH DATABASE old")
+    if (complete) d.run("INSERT OR REPLACE INTO meta (key, value) VALUES ('engram_migrated', datetime('now'))")
   } catch (e) {
     console.error(`engram migration: aborted (${(e as Error).message})`)
     try { d.run("DETACH DATABASE old") } catch {}

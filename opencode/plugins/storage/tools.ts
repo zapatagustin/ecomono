@@ -3,8 +3,10 @@
  *
  * Both adapters wrap this: the opencode plugin (memory.ts) and the stdio MCP
  * server for Claude Code (mcp-server.ts). Each entry pairs a Zod arg shape
- * (accepted by both opencode's tool() and the MCP SDK's server.tool()) with a
- * pure handler over the storage layer. Adapters JSON-stringify the return.
+ * with a pure handler over the storage layer. memory.ts registers each entry
+ * through ctx.tool.transform's editor.add(), wrapping the shape in z.object();
+ * the MCP SDK's server.registerTool() takes it as inputSchema directly.
+ * Adapters JSON-stringify the return.
  */
 import { z } from "zod"
 import * as Obs from "./observations"

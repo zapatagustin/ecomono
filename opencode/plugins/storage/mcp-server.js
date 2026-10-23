@@ -19637,6 +19637,7 @@ function initSchema(d) {
       created_at TEXT NOT NULL DEFAULT (datetime('now'))
     )
   `);
+  d.run("CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT NOT NULL)");
   sweepOrphanedLinks(d);
 }
 function sweepOrphanedLinks(d) {
@@ -19679,6 +19680,8 @@ function migrateFtsTopicKey(d) {
 function migrateFromEngram(d) {
   if (!existsSync(ENGRAM_DB))
     return;
+  if (d.query("SELECT 1 FROM meta WHERE key = 'engram_migrated'").get())
+    return;
   try {
     d.run("ATTACH DATABASE ? AS old", [ENGRAM_DB]);
     const hasEngramSchema = d.query("SELECT COUNT(*) c FROM old.sqlite_master WHERE type='table' AND name IN ('observations','sessions','user_prompts')").get().c === 3;
@@ -19689,10 +19692,12 @@ function migrateFromEngram(d) {
     const backup = ENGRAM_DB + ".pre-ecomono.bak";
     if (!existsSync(backup))
       copyFileSync(ENGRAM_DB, backup);
+    let complete = true;
     const step = (label, sql) => {
       try {
         d.run(sql);
       } catch (e) {
+        complete = false;
         console.error(`engram migration: skipped ${label} (${e.message})`);
       }
     };
@@ -19704,6 +19709,8 @@ function migrateFromEngram(d) {
       FROM old.observations WHERE deleted_at IS NULL AND project IS NOT NULL AND content IS NOT NULL`);
     step("prompts", "INSERT OR IGNORE INTO prompts (id, session_id, content, created_at) SELECT id, session_id, content, created_at FROM old.user_prompts WHERE session_id IN (SELECT id FROM sessions)");
     d.run("DETACH DATABASE old");
+    if (complete)
+      d.run("INSERT OR REPLACE INTO meta (key, value) VALUES ('engram_migrated', datetime('now'))");
   } catch (e) {
     console.error(`engram migration: aborted (${e.message})`);
     try {

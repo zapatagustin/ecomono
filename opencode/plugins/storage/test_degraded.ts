@@ -8,6 +8,7 @@ import { mkdtempSync, writeFileSync } from "fs"
 import { tmpdir } from "os"
 import { join } from "path"
 import assert from "assert"
+import { fakeCtx } from "../tests/fake-ctx"
 
 // A regular file where a directory is expected: mkdirSync inside it fails ENOTDIR.
 const blocker = join(mkdtempSync(join(tmpdir(), "ecomono-degraded-")), "not-a-dir")
@@ -25,14 +26,17 @@ assert(doc.db_path.endsWith("memory.db"), "db_path still reported")
 
 // The plugin must not swallow the diagnostic along with everything else: a
 // health check the agent cannot reach when the store is broken reports nothing.
-const { default: MemoryPlugin } = await import("../memory")
-const hooks: any = await MemoryPlugin({ directory: tmpdir() } as any)
-assert(Object.keys(hooks.tool ?? {}).length === 1, `degraded plugin exposes exactly one tool, got ${Object.keys(hooks.tool ?? {}).join(",") || "none"}`)
-assert(hooks.tool?.mem_doctor, "degraded plugin still exposes mem_doctor")
-const viaPlugin = JSON.parse(await hooks.tool.mem_doctor.execute({}))
+const { default: plugin } = await import("../memory")
+const { ctx, hooks, tools, assertAwaited } = fakeCtx({ directory: tmpdir() })
+const cleanup = await plugin.setup(ctx) // resolves: a throw would list the plugin as failed
+assertAwaited()
+assert(typeof cleanup === "function", "degraded setup still returns its cleanup")
+assert(tools.size === 1 && tools.has("mem_doctor"), `degraded plugin exposes exactly mem_doctor, got ${[...tools.keys()].join(",") || "none"}`)
+const viaPlugin = JSON.parse((await tools.get("mem_doctor").execute({})).content)
 assert(viaPlugin.ok === false && viaPlugin.integrity === "unreadable", "mem_doctor reachable through the degraded plugin")
-// No protocol injection: instructing the agent to save when saving is impossible.
-assert(!hooks["experimental.chat.system.transform"], "degraded plugin injects no protocol")
+// No protocol injection (instructing the agent to save when saving is impossible)
+// and no prompt capture: no hooks at all.
+assert(Object.keys(hooks).length === 0, `degraded plugin registers no hooks, got ${Object.keys(hooks).join(",")}`)
 
 console.log("✓ degraded: unopenable store reported via mem_doctor (registry + plugin), not thrown")
 
