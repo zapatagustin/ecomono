@@ -239,6 +239,17 @@ async function fresh() {
   assert.strictEqual(textOf(await call("skill", { id: "x" }, skill)), skill, "skill output is never truncated")
 }
 
+// ── T5b. The fingerprint covers the whole text ───────────────────────────────
+
+{
+  const { read } = await fresh()
+  const body = "a".repeat(300)
+  await read("f.ts", body)
+  const edited = body.slice(0, 280) + "b" + body.slice(281)
+  assert.strictEqual(edited.length, body.length)
+  assert.ok(!textOf(await read("f.ts", edited)).startsWith(STUB), "a same-length edit past char 256 is not stubbed")
+}
+
 // ── 11. Stats are written to the temp cache dir ──────────────────────────────
 
 await new Promise((r) => setTimeout(r, 50))

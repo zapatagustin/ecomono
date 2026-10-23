@@ -276,11 +276,11 @@ function compressStructuredOutput(text: string, toolName: string, commandHint?: 
 // ── Read deduplication (ported from caveman-code, MIT) ───────────────────────
 
 /**
- * Lightweight content fingerprint: length + first 256 chars. Fast, and enough
- * to detect an unchanged file across re-reads.
+ * Content fingerprint: length + a hash of the whole text. Upstream's length +
+ * first 256 chars stubbed a same-length edit past char 256 as "unchanged".
  */
 function fingerprint(text: string): string {
-  return `${text.length}:${text.slice(0, 256)}`
+  return `${text.length}:${Bun.hash(text)}`
 }
 
 // The session-scoped read cache itself lives in the plugin's setup closure,
