@@ -1,0 +1,16 @@
+{
+  "$schema": "https://opencode.ai/v2/cli.json",
+  "theme": {
+    "name": "gruvbox"
+  },
+  "plugins": [
+    "opencode-subagent-statusline",
+    "/home/agustin/.config/opencode/tui-plugins/cyndaquill.tsx",
+    {
+      "package": "/home/agustin/.config/opencode/tui-plugins/org-todo.tsx",
+      "options": {
+        "orgDir": "/home/agustin/work/org"
+      }
+    }
+  ]
+}

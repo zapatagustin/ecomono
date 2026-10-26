@@ -722,7 +722,7 @@ repo is hooks and drift checks rather than prose.
 
 ## Portability notes
 
-- Only `opencode/tui.json` needs install-time patching (`/home/agustin` → `$HOME`): it's
+- Only `opencode/cli.json` needs install-time patching (`/home/agustin` → `$HOME`): it's
   JSON and can't expand env vars. `memory.ts`'s hardcoded fallback was fixed at source to
   `${process.env.HOME}`.
 - `opencode/plugins/` stays a writable real dir — opencode installs `node_modules`

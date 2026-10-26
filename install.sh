@@ -68,8 +68,8 @@ if [ -L "$OC/package.json" ] || [ ! -e "$OC/package.json" ] || ! cmp -s "$REPO/o
 fi
 link "$REPO/opencode/commands"     "$OC/commands"
 link "$REPO/opencode/tui-plugins"  "$OC/tui-plugins"
-# tui.json embeds an absolute plugin path (JSON can't expand $HOME) -> patch it.
-copy_patched "$REPO/opencode/tui.json" "$OC/tui.json"
+# cli.json embeds an absolute plugin path (JSON can't expand $HOME) -> patch it.
+copy_patched "$REPO/opencode/cli.json" "$OC/cli.json"
 # plugins/ must stay a writable real dir (opencode installs node_modules there);
 # link each entry individually, mirroring the Nix layout.
 link_children "$REPO/opencode/plugins" "$OC/plugins" required

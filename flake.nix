@@ -76,7 +76,7 @@
           programs.opencode = {
             enable = true;
             settings = readCfg ./opencode/opencode.json;
-            tui = readCfg ./opencode/tui.json;
+            cli = readCfg ./opencode/cli.json;
             context = ./opencode/AGENTS.md;
             commands = ./opencode/commands;
             # Same tree Claude gets — one tree, no sync to forget.

@@ -16,7 +16,7 @@ agent-skills/    Every skill (ecomono*, find-skills, proxy-manager) → ~/.claud
                  NOTICE.md for forked work.
 claude/          CLAUDE.md, agents/, commands/, hooks/, output-styles/, plugins/, themes/,
                  settings.template.json
-opencode/        AGENTS.md, opencode.json, tui.json, commands/, plugins/, tui-plugins/
+opencode/        AGENTS.md, opencode.json, cli.json, commands/, plugins/, tui-plugins/
 lib/common.sh    installer helpers
 install.sh       Arch/Debian/generic-Linux installer
 flake.nix        NixOS / home-manager module
@@ -71,7 +71,7 @@ Earlier versions declared `baseURL` and model lists for four API-key providers
 (nvidia, groq, cerebras, openrouter), and before that their `apiKey` as
 `{file:/run/secrets/...}`. Those paths only exist on a NixOS host running
 sops-nix, and `install.sh` links `opencode.json` verbatim rather than patching
-it the way it patches `tui.json` — so on Arch, Debian or any generic install the
+it the way it patches `cli.json` — so on Arch, Debian or any generic install the
 credentials silently pointed at files that were never going to be there. A repo
 that installs on four platforms has no business hardcoding one platform's
 secret store. A NixOS consumer still injecting those four keys can drop them;
@@ -210,7 +210,7 @@ or just copy `claude/settings.template.json` from a checkout.
 
 Almost every top-level entry the installer lays down is a symlink. Two are real files,
 so the symlink removals below skip them: `~/.claude/settings.json` (seeded once, left alone
-on later runs) and `~/.config/opencode/tui.json` (a patched copy the installer rewrites
+on later runs) and `~/.config/opencode/cli.json` (a patched copy the installer rewrites
 every run). Delete either yourself if you want it gone too. `package.json` is copied too,
 and re-copied when the repo file changes, because opencode rewrites it at startup to
 re-pin its plugin SDK; the `rm` below removes it along with its `package.json.seed` stamp.
