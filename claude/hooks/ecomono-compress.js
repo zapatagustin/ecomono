@@ -626,6 +626,12 @@ function selftest() {
     );
   }
 
+  // The omp extension (omp/extensions/ecomono/index.ts) loads these two through createRequire.
+  assert.ok(
+    typeof module.exports.compressBash === "function" && typeof module.exports.logStats === "function",
+    "omp contract: compressBash/logStats exported",
+  );
+
   console.log("ecomono-compress selftest: all assertions passed");
 }
 
@@ -644,6 +650,9 @@ function extractOverheadPatternsBlock(source) {
   }
   return null; // never closed — malformed, treat as not found
 }
+
+// The omp extension (omp/extensions/ecomono/index.ts) loads these two through createRequire (design 5.3).
+module.exports = { compressBash, logStats };
 
 if (require.main === module) {
   if (process.argv.includes("--selftest")) selftest();

@@ -61,7 +61,7 @@
 import { appendFile, mkdir } from "node:fs/promises"
 import { homedir } from "node:os"
 import { join, resolve } from "node:path"
-import { truncateWithToolBudget, collapseBlankLines, truncateLongOutput, truncateByChars } from "./cave-compress/core"
+import { truncateWithToolBudget, collapseBlankLines, truncateLongOutput, truncateByChars, STYLE } from "./cave-compress/core"
 
 // ── Compression logic (ported from caveman-code, MIT) ───────────────────────
 
@@ -389,22 +389,6 @@ async function logStats(tool: string, beforeText: string, afterText: string): Pr
 
 // ── Plugin ───────────────────────────────────────────────────────────────────
 
-// Compaction summaries persist for the rest of the session and are re-sent
-// every turn, so compressing their *style* pays off on every subsequent
-// request. We only tighten style — substance (decisions, active files, task
-// state, identifiers) must survive verbatim or session continuity breaks.
-// v2 has no slot in the summary prompt itself (opencode appends it after the
-// hooks run, packages/core/src/session/compaction.ts:283-292), so this goes in
-// as a system part ahead of the transcript and weighs less than v1's prompt
-// context did. It is additive: setting `event.result` instead would replace
-// the native summary and its required section template.
-const STYLE =
-  "Write the summary in compressed ecomono style: drop articles, filler, and " +
-  "hedging; fragments are fine; use short synonyms. Preserve ALL substance " +
-  "verbatim — decisions made, files being worked on, task state, open problems, " +
-  "and exact identifiers/paths/error strings. Compress the prose, never the facts. " +
-  "Keep the required section headings unchanged."
-
 export default {
   id: "cave-compress",
   async setup(ctx: any) {
@@ -513,6 +497,15 @@ export default {
         // The summary replaces the earlier reads, so a stub would point at
         // context the model no longer has.
         for (const key of readCache.keys()) if (key.startsWith(`${ev.sessionID}:`)) readCache.delete(key)
+        // Compaction summaries persist for the rest of the session and are re-sent
+        // every turn, so compressing their *style* pays off on every subsequent
+        // request. We only tighten style — substance (decisions, active files, task
+        // state, identifiers) must survive verbatim or session continuity breaks.
+        // v2 has no slot in the summary prompt itself (opencode appends it after the
+        // hooks run, packages/core/src/session/compaction.ts:283-292), so this goes in
+        // as a system part ahead of the transcript and weighs less than v1's prompt
+        // context did. It is additive: setting `event.result` instead would replace
+        // the native summary and its required section template.
         if (process.env.ECOMONO_COMPRESS !== "off") ev.system.push({ type: "text", text: STYLE })
       } catch {}
     })

@@ -126,3 +126,11 @@ export function truncateByChars(text: string): string {
   const nl = isCrlfDominant(text) ? "\r\n\r\n" : "\n\n"
   return `${text.slice(0, HEAD_CHARS)}${nl}[... ${omitted} chars omitted (cave mode char cap) ...]${nl}${text.slice(text.length - TAIL_CHARS)}`
 }
+
+// Compaction-summary style text shared by OpenCode (cave-compress.ts) and omp (session.compacting).
+export const STYLE =
+  "Write the summary in compressed ecomono style: drop articles, filler, and " +
+  "hedging; fragments are fine; use short synonyms. Preserve ALL substance " +
+  "verbatim — decisions made, files being worked on, task state, open problems, " +
+  "and exact identifiers/paths/error strings. Compress the prose, never the facts. " +
+  "Keep the required section headings unchanged."

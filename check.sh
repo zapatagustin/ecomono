@@ -16,6 +16,7 @@ run() { # run <label> <command...>
 
 run "storage, memory and bundle"   bash opencode/plugins/storage/run-tests.sh
 run "opencode plugins"             bash opencode/plugins/tests/run-tests.sh
+run "omp extension"                bash omp/tests/run-tests.sh
 run "installer linking primitives" bash lib/test-common.sh
 run "agent model gate"             bash claude/hooks/test-agent-model-gate.sh
 run "workflow model gate"          bash claude/hooks/test-workflow-model-gate.sh
@@ -35,7 +36,7 @@ run "skill registry"               node claude/hooks/ecomono-skill-registry.js -
 run "compress hook overhead"       node claude/hooks/ecomono-compress.js --selftest
 run "compress secret guard"        python3 agent-skills/ecomono-compress/scripts/test_secrets.py
 run "compress pipeline"            python3 agent-skills/ecomono-compress/scripts/test_compress.py
-run "shell syntax"                 bash -n install.sh lib/common.sh lib/mcp.sh lib/test-common.sh check-persona-drift.sh check-gate-drift.sh test-gate-drift.sh check-judge-twins.sh test-judge-twins.sh check-inline-skill-drift.sh check-hook-install-drift.sh test-hook-install-drift.sh
+run "shell syntax"                 bash -n install.sh lib/common.sh lib/mcp.sh lib/test-common.sh check-persona-drift.sh check-gate-drift.sh test-gate-drift.sh check-judge-twins.sh test-judge-twins.sh check-inline-skill-drift.sh check-hook-install-drift.sh test-hook-install-drift.sh omp/tests/run-tests.sh
 
 if [ "$fail" -eq 0 ]; then echo "all checks pass"; else echo "some checks failed" >&2; fi
 exit "$fail"
