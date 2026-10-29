@@ -81,6 +81,16 @@ link_children() {
   done
 }
 
+# omp (oh-my-pi). Links only: <ompdir> stays a real directory (omp writes agent.db, config.yml and
+# sessions there). The persona goes in as RULES.md, the one context file omp also hands to subagents.
+install_omp_config() { # install_omp_config <ompdir>   (uses $REPO)
+  link "$REPO/omp/extensions/ecomono"         "$1/extensions/ecomono"
+  link "$REPO/opencode/AGENTS.md"              "$1/RULES.md"
+  link "$REPO/claude/output-styles/ecomono.md" "$1/PERSONALITY.md"
+  link_children "$REPO/claude/agents"   "$1/agents"
+  link_children "$REPO/claude/commands" "$1/commands"
+}
+
 # Copy SRC to DST, replacing occurrences of /home/agustin with $HOME.
 # Used for config files that embed an absolute path and can't expand env vars.
 copy_patched() {

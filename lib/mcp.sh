@@ -151,6 +151,103 @@ remove_mcp() {
 # ecomono-memory is not here: its command is two paths that differ per platform (a bun
 # on PATH and a repo checkout, versus two nix store paths), so there is nothing shared
 # to hoist. Its caller passes them.
+#
+# The one context7 pin, shared by the Claude registration (ensure_context7_mcp below)
+# and the omp one (install.sh and flake.nix call ensure_omp_mcp with "${CONTEXT7_MCP[@]}").
+# A bump is a one-line edit here and reaches both harnesses.
+CONTEXT7_MCP=(npx -y --package=@upstash/context7-mcp@2.2.5 -- context7-mcp)
+
 ensure_context7_mcp() {
-  ensure_mcp context7 npx -y --package=@upstash/context7-mcp@2.2.5 -- context7-mcp
+  ensure_mcp context7 "${CONTEXT7_MCP[@]}"
+}
+
+# ensure_omp_mcp <file> <name> <command> [args...]
+#
+# omp (oh-my-pi) reads user MCP servers from <ompdir>/mcp.json, a plain JSON file, so the
+# reconcile is a jq upsert of one entry: set .command and .args, keep everything else.
+# What an operator or omp's dashboard added to that entry (`enabled`, `env`, `timeout`)
+# survives, and so do `$schema`, `disabledServers`, `enabledServers` and every foreign
+# server. The file is a REAL file on purpose, never a link into the repo or the Nix
+# store: omp's dashboard writes `enabled` into it (mcp/config-writer.ts:296-344) through
+# a tmp file + rename() (config-writer.ts:59-79), which would replace a home.file link
+# with a real file; home-manager would then find an unmanaged file in the way on its
+# next switch.
+#
+# Never clobbers. A missing jq, a file that is not valid JSON, one whose top level is not
+# an object, a shape the upsert cannot handle (an `mcpServers` that is not an object) and
+# a managed entry that is not a stdio server (an http/sse `url` entry the operator moved
+# to a remote endpoint) each warn and leave the file byte-identical. An unchanged result is not
+# written, so a steady-state run has no mtime churn and no race with omp's own locked
+# writer. A changed one goes through a temp file in the same directory and `mv`, which
+# is atomic and replaces a symlinked mcp.json with a real file (omp's writer does the
+# same).
+#
+# Returns 0 on EVERY path. home-manager concatenates every module's activation into one
+# script under `set -eu`, so a nonzero return here would abort the whole switch; install.sh
+# treats this as non-fatal for the same reason. Logging goes through _mcp_info/_mcp_warn
+# only, never a bare `info` (see the note above _mcp_info). No `set -e` in this file.
+ensure_omp_mcp() {
+  if [ "$#" -lt 3 ]; then
+    _mcp_warn "ensure_omp_mcp <file> <name> <command> [args...] needs at least three arguments"
+    return 0
+  fi
+  local file="$1" name="$2" cmd="$3" args cur new dir tmp
+  shift 3
+
+  if ! command -v jq >/dev/null 2>&1; then
+    _mcp_warn "omp mcp $name not registered: jq not found (install jq, then re-run the installer)"
+    return 0
+  fi
+
+  # `--` before the values: context7's own arguments start with `-y`, which jq would
+  # otherwise take for one of its options.
+  args="$(jq -cn '$ARGS.positional' --args -- "$@" 2>/dev/null)" || {
+    _mcp_warn "omp mcp $name not registered: could not encode its arguments"
+    return 0
+  }
+
+  if [ -e "$file" ]; then
+    # Slurped, so an empty file and a file holding several documents are refused too.
+    cur="$(jq -cs 'if length == 1 and (.[0] | type) == "object" then .[0] else error("not a single object") end' "$file" 2>/dev/null)" || {
+      _mcp_warn "omp mcp $name not registered: $file is not a valid JSON object — leaving it untouched (fix or remove it, then re-run the installer)"
+      return 0
+    }
+  else
+    cur='{}'
+  fi
+
+  # Only a stdio entry (or none) is reconciled. Adding command/args to an http/sse entry
+  # would leave one with both `command` and `url`, which omp rejects (mcp/config.ts
+  # validateServerConfig) and then skips the server. Same rule as the Claude
+  # counterpart above: a non-stdio transport is never touched.
+  printf '%s' "$cur" | jq -e --arg n "$name" \
+    '(.mcpServers[$n]? // null) as $e | $e == null or ($e | type == "object" and (.type // "stdio") == "stdio" and (has("url") | not))' \
+    >/dev/null 2>&1 || {
+    _mcp_warn "omp mcp $name not registered: $file defines it as something other than a stdio server (an http/sse entry, or a non-object) — leaving it untouched"
+    return 0
+  }
+
+  new="$(printf '%s' "$cur" | jq -c --arg n "$name" --arg c "$cmd" --argjson a "$args" \
+    '.mcpServers[$n] = ((.mcpServers[$n] // {}) + {command: $c, args: $a})' 2>/dev/null)" || {
+    _mcp_warn "omp mcp $name not registered: $file has a shape this installer cannot update (is mcpServers an object?) — leaving it untouched"
+    return 0
+  }
+
+  if [ "$new" = "$cur" ]; then
+    _mcp_info "omp mcp $name ✓"
+    return 0
+  fi
+
+  dir="$(dirname "$file")" || dir=.
+  if ! mkdir -p "$dir" 2>/dev/null || ! tmp="$(mktemp "$dir/.mcp.json.XXXXXX" 2>/dev/null)"; then
+    _mcp_warn "omp mcp $name not registered: cannot write in $dir"
+    return 0
+  fi
+  if printf '%s' "$new" | jq . > "$tmp" 2>/dev/null && mv -f "$tmp" "$file" 2>/dev/null; then
+    _mcp_info "omp mcp $name registered in $file"
+  else
+    rm -f "$tmp" 2>/dev/null || true
+    _mcp_warn "omp mcp $name not registered: could not write $file"
+  fi
+  return 0
 }

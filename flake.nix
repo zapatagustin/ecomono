@@ -71,6 +71,20 @@
             ".claude/themes".source = ./claude/themes;
             ".claude/skills".source = claudeSkills;
             ".agents/skills".source = ./agent-skills;
+
+            # omp (oh-my-pi). The extension imports ../../../opencode/plugins/* and runs
+            # ../../../claude/hooks/* relative to its realpath, so it must sit inside a
+            # complete copy of the repo. "${self}/..." is a string with store context,
+            # which home-manager links as-is, so the link lands in the full source
+            # tree; `./omp/extensions/ecomono` would be copied into a store path of its
+            # own, with none of those siblings next to it.
+            ".omp/agent/extensions/ecomono".source = "${self}/omp/extensions/ecomono";
+            ".omp/agent/RULES.md".source = ./opencode/AGENTS.md;
+            ".omp/agent/PERSONALITY.md".source = ./claude/output-styles/ecomono.md;
+            # recursive = per-file links inside a real directory (omp writes agents/
+            # itself), the same shape install.sh's link_children produces.
+            ".omp/agent/agents" = { source = ./claude/agents; recursive = true; };
+            ".omp/agent/commands" = { source = ./claude/commands; recursive = true; };
           };
 
           programs.opencode = {
@@ -261,6 +275,23 @@
                   || echo "warning: could not install org-todo (retry: claude plugin install org-todo@ecomono)" >&2
               fi
             fi
+          '';
+
+          # Own entry, not inside the claude block above: omp does not need the claude
+          # CLI, so its registration must not depend on finding one. mcp.json is a real
+          # file, not a home.file link, because omp's dashboard writes `enabled` into it
+          # (mcp/config-writer.ts:296-344) with a tmp file + rename(), which would replace
+          # the link with a real file and leave home-manager an unmanaged file in the way
+          # on the next switch.
+          # ensure_omp_mcp upserts command and args only and never fails (this runs
+          # under the same `set -eu` as every other activation).
+          home.activation.ecomonoOmpMcp = lib.hm.dag.entryAfter [ "writeBoundary" ] ''
+            PATH="${pkgs.jq}/bin:$PATH"
+            # shellcheck source=lib/mcp.sh
+            . ${./lib/mcp.sh}
+            ecomono_omp_mcp="${config.home.homeDirectory}/.omp/agent/mcp.json"
+            ensure_omp_mcp "$ecomono_omp_mcp" ecomono-memory ${pkgs.bun}/bin/bun ${./opencode/plugins/storage/mcp-server.js}
+            ensure_omp_mcp "$ecomono_omp_mcp" context7 "''${CONTEXT7_MCP[@]}"
           '';
         };
     };

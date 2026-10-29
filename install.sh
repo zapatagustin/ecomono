@@ -1,13 +1,17 @@
 #!/usr/bin/env bash
 #
-# ecomono installer — lays down the Claude Code + opencode config on any Linux.
+# ecomono installer — lays down the Claude Code + opencode + omp (oh-my-pi) config on
+# any Linux.
 # Idempotent: re-running only refreshes symlinks and never clobbers a runtime
 # settings.json. NixOS is handled by the flake, not this script.
 #
 #   ./install.sh
 #
 # Env overrides:
-#   ECOMONO_SKIP_PLUGINS=1          skip claude plugin/mcp registration
+#   ECOMONO_SKIP_PLUGINS=1          skip claude plugin/mcp registration (omp's mcp.json
+#                                   entries are written regardless)
+#   PI_CODING_AGENT_DIR / PI_CONFIG_DIR   where the omp config goes, as omp itself reads
+#                                   them (default ~/.omp/agent)
 
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=lib/common.sh
@@ -23,8 +27,8 @@ log "ecomono installer — os=$OS_ID arch=$(uname -m)"
 
 if [ "$OS_ID" = nixos ]; then
   cat <<'EOF'
-NixOS detected. This installer writes into ~/.claude and ~/.config/opencode,
-which home-manager owns — don't run it here. Instead consume the flake:
+NixOS detected. This installer writes into ~/.claude, ~/.config/opencode and
+~/.omp/agent, which home-manager owns — don't run it here. Instead consume the flake:
 
   inputs.ecomono.url = "github:zapatagustin/ecomono";
   # then import ecomono.homeModules.default in your home-manager config
@@ -74,6 +78,15 @@ copy_patched "$REPO/opencode/cli.json" "$OC/cli.json"
 # link each entry individually, mirroring the Nix layout.
 link_children "$REPO/opencode/plugins" "$OC/plugins" required
 
+# omp's default-profile agent dir, resolved the way omp itself does (pi-utils dirs.ts):
+# PI_CODING_AGENT_DIR overrides the whole path, otherwise $HOME/${PI_CONFIG_DIR:-.omp}/agent.
+# ecomono: named profiles are not handled. With OMP_PROFILE/PI_PROFILE omp reads
+# $HOME/${PI_CONFIG_DIR:-.omp}/profiles/<name>/agent and ignores PI_CODING_AGENT_DIR;
+# upgrade path: branch on that variable here.
+OMP="${PI_CODING_AGENT_DIR:-$HOME/${PI_CONFIG_DIR:-.omp}/agent}"
+log "linking omp config -> $OMP"
+install_omp_config "$OMP"
+
 # ---- 3. prerequisites (check only; distro package managers own these) -------
 log "checking prerequisites"
 pkg_hint() {
@@ -86,9 +99,12 @@ pkg_hint() {
 if have node;     then info "node ✓";     else warn "node missing — $(pkg_hint nodejs)"; fi
 if have claude;   then info "claude ✓";   else warn "claude missing — npm i -g @anthropic-ai/claude-code"; fi
 if have opencode; then info "opencode ✓"; else warn "opencode missing — curl -fsSL https://opencode.ai/install | bash"; fi
+if have omp;      then info "omp ✓";      else warn "omp missing (optional) — https://github.com/can1357/oh-my-pi"; fi
 # bun runs ecomono-memory (opencode plugin + Claude Code MCP server).
 BUN="$(command -v bun 2>/dev/null || { [ -x "$HOME/.bun/bin/bun" ] && echo "$HOME/.bun/bin/bun"; })"
 if [ -n "$BUN" ]; then info "bun ✓"; else warn "bun missing — curl -fsSL https://bun.sh/install | bash (needed for ecomono-memory)"; fi
+# The committed MCP server bundle, registered for Claude (step 4) and for omp (step 4b).
+MEMORY_MCP="$REPO/opencode/plugins/storage/mcp-server.js"
 
 # ---- 3b. ecomono-memory deps (node_modules for the plugin + MCP server) -----
 if [ -n "$BUN" ]; then
@@ -99,7 +115,7 @@ fi
 
 # ---- 4. Claude plugins + MCP servers (idempotent, non-fatal) ----------------
 if [ "${ECOMONO_SKIP_PLUGINS:-}" = 1 ]; then
-  info "skipping plugin/mcp registration (ECOMONO_SKIP_PLUGINS=1)"
+  info "skipping Claude plugin/mcp registration (ECOMONO_SKIP_PLUGINS=1)"
 elif have claude; then
   log "registering Claude plugins + MCP servers"
   # Retire the superpowers plugin: its four load-bearing process skills now ship
@@ -142,7 +158,6 @@ elif have claude; then
   # whenever the repo is cloned somewhere else. flake.nix reasoned its way to comparing
   # them for exactly this reason; the non-Nix path — the more common one — kept skipping
   # on presence and would have gone on launching whatever it was first registered with.
-  MEMORY_MCP="$REPO/opencode/plugins/storage/mcp-server.js"
   if [ -n "$BUN" ]; then
     ensure_mcp ecomono-memory "$BUN" "$MEMORY_MCP"
   else
@@ -163,5 +178,18 @@ elif have claude; then
 else
   info "claude not on PATH — skipping plugin/mcp registration"
 fi
+
+# ---- 4b. omp MCP servers (idempotent, non-fatal) ----------------------------
+# Outside the block above on purpose: ECOMONO_SKIP_PLUGINS documents itself as skipping
+# CLAUDE registration, and omp needs no claude binary. Runs whether or not omp is
+# installed yet, so installing it later needs no re-run. mcp.json stays a real file that
+# omp's dashboard may write to; ensure_omp_mcp only upserts command and args.
+log "registering omp MCP servers -> $OMP/mcp.json"
+if [ -n "$BUN" ]; then
+  ensure_omp_mcp "$OMP/mcp.json" ecomono-memory "$BUN" "$MEMORY_MCP"
+else
+  warn "skipping omp ecomono-memory mcp — bun not found (install bun and re-run, or add it to $OMP/mcp.json by hand: command bun, args [\"$MEMORY_MCP\"])"
+fi
+ensure_omp_mcp "$OMP/mcp.json" context7 "${CONTEXT7_MCP[@]}"
 
 log "done."
