@@ -22,7 +22,7 @@
  */
 
 import type { ExtensionAPI } from "@oh-my-pi/pi-coding-agent"
-import { existsSync, readFileSync, realpathSync } from "node:fs"
+import { appendFileSync, existsSync, mkdirSync, readFileSync, realpathSync } from "node:fs"
 import { createRequire } from "node:module"
 import { homedir } from "node:os"
 import { basename, dirname, join, resolve } from "node:path"
@@ -602,11 +602,46 @@ export function ecomono(o: { repo: string; hooksDir?: string; timeoutMs?: number
     )
 
     // Once per session, main agent only: a subagent's factory has its own closure and would repeat it.
+    // Separate flags: one warning must not suppress the other.
     let skillsWarned = false
+    let jqWarned = false
+    // Where a startup fault is written besides the logger; the same directory runHook's fail-open lines go to.
+    // Never throws: the file is a trace for headless runs, and a write failure must not cost the warning.
+    const stateLog = (line: string): void => {
+      try {
+        // `||`, not `??`: an empty XDG_STATE_HOME means unset, as in hook-runner/core.ts.
+        const dir = join(process.env.XDG_STATE_HOME || join(process.env.HOME || homedir(), ".local", "state"), "ecomono")
+        mkdirSync(dir, { recursive: true })
+        appendFileSync(join(dir, "ecomono.log"), `${new Date().toISOString()} ${line}\n`)
+      } catch {}
+    }
+    // Notify where there is a UI, else the logger.
+    const warnOnce = (ctx: any, text: string): void => {
+      if (ctx.hasUI) {
+        try {
+          ctx.ui.notify(text, "warning")
+        } catch (e) {
+          pi.logger.warn(`ecomono: notify failed: ${e instanceof Error ? e.message : String(e)}`)
+        }
+      } else pi.logger.warn(text)
+    }
     pi.on(
       "session_start",
       safe((_event: any, ctx: any) => {
         if (ctx?.agent?.kind !== "main") return undefined
+        // Checked before the skills guard below, which returns early on a healthy tree. Three gate scripts
+        // (secret-access, review-receipt, judge-standards) exit 0 with no output when jq is missing, which
+        // runHook reads as a deliberate allow and so reports nothing; check-diff-size.sh exits 127 and is
+        // reported, but the cause is the same. Say it here, once, where nothing else would.
+        // The gates spawn with this process's env (runHook), so its PATH is the one that matters. It is passed
+        // explicitly because Bun.which does not see a PATH changed at runtime.
+        if (!jqWarned && !Bun.which("jq", { PATH: process.env.PATH ?? "" })) {
+          jqWarned = true
+          const text =
+            "ecomono: jq is not on PATH; the bash secret-path gate, the review gate, the judge gate and the diff-size reminder are disabled (they fail open without it)"
+          stateLog(text)
+          warnOnce(ctx, text)
+        }
         refresh(ctx)
         // The org-todo widget, the counterpart of OpenCode's org-todo panel: the interactive main session only.
         if (ctx.mode === "tui" && ctx.hasUI) startOrgTodo(pi, ctx, orgTodoCore)
@@ -616,14 +651,10 @@ export function ecomono(o: { repo: string; hooksDir?: string; timeoutMs?: number
         const shared = join(process.env.HOME || homedir(), ".claude/skills/ecomono-sdd-shared")
         if (existsSync(shared)) return undefined
         skillsWarned = true
-        const text = `ecomono: ${shared} is missing; the ecomono-sdd-* commands and agents read ~/.claude/skills, so run install.sh (or switch the home-manager config) to link it`
-        if (ctx.hasUI) {
-          try {
-            ctx.ui.notify(text, "warning")
-          } catch (e) {
-            pi.logger.warn(`ecomono: notify failed: ${e instanceof Error ? e.message : String(e)}`)
-          }
-        } else pi.logger.warn(text)
+        warnOnce(
+          ctx,
+          `ecomono: ${shared} is missing; the ecomono-sdd-* commands and agents read ~/.claude/skills, so run install.sh (or switch the home-manager config) to link it`,
+        )
         return undefined
       }),
     )

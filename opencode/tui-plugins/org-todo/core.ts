@@ -3,8 +3,8 @@
 // from this tree; omp/tests/test_contract.ts fails when one is added. Do not put a plugin in this directory:
 // cli.json lists TUI plugins by file, and nothing here is one.
 
-export const ORG = /^(\*+) (TODO|BLOCKED) (.*)$/
-export const MD = /^(\s*[-*] )\[ \] (.*)$/
+const ORG = /^(\*+) (TODO|BLOCKED) (.*)$/
+const MD = /^(\s*[-*] )\[ \] (.*)$/
 export const PATTERN = "^\\*+ (TODO|BLOCKED) |^[[:space:]]*[-*] \\[ \\] "
 
 export type Todo = { file: string; line: number; text: string; kind: "org" | "md"; src: string }

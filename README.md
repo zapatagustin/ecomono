@@ -66,7 +66,7 @@ generator was reimplemented as `claude/hooks/ecomono-skill-registry.js`, and its
 SDD dispatchers only ever read an `openspec/` layout this setup does not use.
 
 It **checks** — but does not install — `node`, `claude`, `opencode`, `omp` (optional),
-and `bun`, printing a distro-specific hint if any is missing (those belong to your package
+`jq` and `bun`, printing a distro-specific hint if any is missing (those belong to your package
 manager).
 
 ### Provider credentials are not shipped here
@@ -181,7 +181,9 @@ data above instead of restating it:
   `ECOMONO_ALLOW_UNREVIEWED_PUSH=1` are read by the scripts from the omp process
   environment, so set them per launch. A gate that cannot run (script missing, 20 s
   timeout, unreadable output) fails open with a line in `~/.local/state/ecomono/` and one
-  notice per session; omp itself would fail a crashing handler closed.
+  notice per session; omp itself would fail a crashing handler closed. Without `jq` on
+  omp's `PATH` three gate scripts exit 0 silently, so the extension warns once per
+  session at start (notice, or logger when headless, plus a line in `ecomono.log` there).
 
 Accepted ceilings. Where omp has a native switch it is named:
 

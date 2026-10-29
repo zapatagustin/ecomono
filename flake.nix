@@ -51,8 +51,9 @@
         in
         {
           # bun runs ecomono-memory (opencode plugin + the bundled
-          # Claude Code MCP server).
-          home.packages = [ pkgs.nodejs pkgs.bun ];
+          # Claude Code MCP server). jq: the gate scripts run from the host's
+          # own PATH, which the activation scripts' ${pkgs.jq} does not reach.
+          home.packages = [ pkgs.nodejs pkgs.bun pkgs.jq ];
 
           programs.claude-code = {
             enable = true;

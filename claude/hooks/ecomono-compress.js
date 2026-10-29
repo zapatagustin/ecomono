@@ -626,7 +626,6 @@ function selftest() {
     );
   }
 
-  // The omp extension (omp/extensions/ecomono/index.ts) loads these two through createRequire.
   assert.ok(
     typeof module.exports.compressBash === "function" && typeof module.exports.logStats === "function",
     "omp contract: compressBash/logStats exported",

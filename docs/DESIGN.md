@@ -776,8 +776,9 @@ its refusal text, its 30 s timeout and its env strip. Two OpenCode-visible chang
 log line now ends `this call was NOT checked` instead of `this delivery was NOT checked`, because the core
 serves four gates and "delivery" is wrong for the secret and judge gates. And each link of the refusal reason
 is read only when it is a string: a deny or ask with a non-string `permissionDecisionReason` falls through to
-`systemMessage` or the default reason and still refuses, where the old code threw inside `runHook`'s catch and
-came out as a fail-open allow.
+`systemMessage` or the default reason and still refuses. The old handler's `new Error(reason)` used the raw value
+as the message (`5`, `[object Object]`) or threw a `TypeError` for an object with a non-callable `toString`;
+either way the call was refused, so only the refusal text changes. This is not a deny-to-allow fix on OpenCode.
 
 ### Handler contracts
 
@@ -807,7 +808,8 @@ came out as a fail-open allow.
     head and tail keep the first error and the summary).
   - `tool_result` on `read`: the read post-check, which withholds content omp resolved to a denied file.
   - `session.compacting`: the compression style hint. `before_subagent_spawn`: tier and inheritance routing.
-  - `session_start` and `before_agent_start` (main only): skill-registry refresh, a one-time warning when
+  - `session_start` and `before_agent_start` (main only): skill-registry refresh, a one-time warning when `jq` is not on
+    PATH (three gate scripts exit 0 silently without it), a one-time warning when
     `~/.claude/skills/ecomono-sdd-shared` is missing, the org-todo widget, prompt capture. `session_shutdown`
     closes the memory DB.
 

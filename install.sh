@@ -100,6 +100,7 @@ if have node;     then info "node ✓";     else warn "node missing — $(pkg_hi
 if have claude;   then info "claude ✓";   else warn "claude missing — npm i -g @anthropic-ai/claude-code"; fi
 if have opencode; then info "opencode ✓"; else warn "opencode missing — curl -fsSL https://opencode.ai/install | bash"; fi
 if have omp;      then info "omp ✓";      else warn "omp missing (optional) — https://github.com/can1357/oh-my-pi"; fi
+if have jq;       then info "jq ✓";       else warn "jq missing — $(pkg_hint jq) (the bash, review and judge gates fail open without it)"; fi
 # bun runs ecomono-memory (opencode plugin + Claude Code MCP server).
 BUN="$(command -v bun 2>/dev/null || { [ -x "$HOME/.bun/bin/bun" ] && echo "$HOME/.bun/bin/bun"; })"
 if [ -n "$BUN" ]; then info "bun ✓"; else warn "bun missing — curl -fsSL https://bun.sh/install | bash (needed for ecomono-memory)"; fi

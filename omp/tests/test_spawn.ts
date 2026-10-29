@@ -2,7 +2,7 @@
 // through fake-pi. Plain assert script. No real LLM, no real registry run: pi.exec is a stub.
 import { ISOLATED, makeCtx, makePi } from "./fake-pi.ts"
 import assert from "node:assert/strict"
-import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs"
+import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs"
 import { join } from "node:path"
 import { REPO, TIER_ROLE, ecomono } from "../extensions/ecomono/index.ts"
 
@@ -335,6 +335,57 @@ const never = () => new Promise(() => {})
     else process.env.HOME = realHome
   }
   assert.equal(process.env.HOME, realHome)
+}
+
+// ---- jq missing ----------------------------------------------------------------------------------------------------
+// Three gate scripts exit 0 with no output without jq, so runHook reports nothing; session_start says it once. PATH is
+// read per call, so an empty directory stands in for "jq not installed".
+
+{
+  const realHome = process.env.HOME
+  const realPath = process.env.PATH
+  const stateLog = join(process.env.XDG_STATE_HOME!, "ecomono", "ecomono.log")
+  try {
+    // A healthy skills tree must not hide the jq warning: the two checks have separate once-flags.
+    const full = dir("home")
+    mkdirSync(join(full, ".claude/skills/ecomono-sdd-shared"), { recursive: true })
+    process.env.HOME = full
+    process.env.PATH = dir("empty-path")
+
+    const a = setup({ hasUI: true })
+    await a.fire("session_start", { reason: "start" }, a.ctx)
+    await a.fire("session_start", { reason: "start" }, a.ctx)
+    assert.equal(a.ctx.recorded.notify.length, 1, "once per session")
+    const [text, level] = a.ctx.recorded.notify[0]
+    assert.equal(level, "warning")
+    assert.ok(text.includes("jq") && text.includes("secret-path") && text.includes("review") && text.includes("judge"), text)
+    assert.ok(readFileSync(stateLog, "utf8").includes(text), "a headless run leaves a trace too")
+
+    // Headless: the logger, not the UI. The skills warning (tree absent) still fires on its own flag.
+    process.env.HOME = dir("home")
+    const h = setup()
+    await h.fire("session_start", { reason: "start" }, h.ctx)
+    await h.fire("session_start", { reason: "start" }, h.ctx)
+    assert.equal(h.ctx.recorded.notify.length, 0)
+    assert.equal(h.calls.warn.length, 2)
+    assert.ok(h.calls.warn[0].includes("jq is not on PATH"))
+    assert.ok(h.calls.warn[1].includes("ecomono-sdd-shared"))
+
+    // A subagent never warns, and jq on PATH is silent.
+    const s = setup({ hasUI: true, ...sub("ecomono-explore") })
+    await s.fire("session_start", { reason: "start" }, s.ctx)
+    assert.equal(s.ctx.recorded.notify.length, 0)
+    process.env.PATH = realPath
+    process.env.HOME = full
+    const p = setup({ hasUI: true })
+    await p.fire("session_start", { reason: "start" }, p.ctx)
+    assert.equal(p.ctx.recorded.notify.length, 0)
+    assert.deepEqual(p.calls.warn, [])
+  } finally {
+    if (realHome === undefined) delete process.env.HOME
+    else process.env.HOME = realHome
+    process.env.PATH = realPath
+  }
 }
 
 console.log("test_spawn: all assertions passed")

@@ -188,7 +188,9 @@ function decide(o: Opts, stdout: string): HookDecision | undefined {
 
   // A link counts only when it is a string. Converting anything else can throw (an object
   // whose `toString` is not callable), and a throw here, with a deny or ask already in
-  // hand, would reach runHook's `.catch` and come back as a fail-open allow.
+  // hand, would reach runHook's `.catch` and come back as a fail-open allow. The plugin's
+  // old `new Error(reason)` refused in that case too, so this changes only the refusal
+  // text (the next link, not "5" or "[object Object]") and keeps the result a string.
   const text = (v: unknown) => (typeof v === "string" ? v : "")
   const reason =
     text(parsed?.hookSpecificOutput?.permissionDecisionReason) ||
