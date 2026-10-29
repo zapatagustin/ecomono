@@ -720,6 +720,222 @@ value defined in one place while the consumer reads another. Every instance was 
 same reason — an absent rule reads exactly like a followed one. That is why the enforcement in this
 repo is hooks and drift checks rather than prose.
 
+## omp target
+
+omp (oh-my-pi) is the third harness, tested against 18.13.3. The README carries the user-facing side
+(install paths, posture, every accepted ceiling, the opt-ins, the upgrade protocol); this section records
+why the target is built the way it is. Evidence paths below are relative to the omp package sources.
+
+### Base, single source, repo-tree contract
+
+The target started from the draft that reused the most existing code. Taken from the others: an exported
+factory `ecomono({repo, hooksDir, timeoutMs})` as the test seam, bash gates run concurrently with a
+deny-beats-ask merge, a totality contract for the Claude hooks (`CLAUDE_HOOKS`, with a negative fixture), a
+kill switch (`omp --no-extensions`), and a spike slice that ran before any code depended on its answers.
+Rejected:
+
+- An ecomono-owned `.mcp.json`: omp's dashboard writes `enabled` into the file a server came from, through
+  tmp + rename (`mcp/config-writer.ts:296-344`), so a Nix store link there becomes a real file and breaks the
+  next switch. `mcp.json` is a real file edited by a jq upsert of `command` and `args` only.
+- A valve on the in-process path deny (neither host has one), a hand-written secret list, a custom glob
+  converter, an unconditional block of the `github` tool, and a partial compression variant (a third behaviour).
+- `[tier, @role]` model lists: a bare `sonnet` fuzzy-matches whatever authenticated model comes first, so
+  roles alone could not steer tiers.
+- A port of the loop-breaker: omp's native `model.toolCallLoopGuard` is on by default.
+
+Single-source rules: executables are run, never re-derived; code is imported, never copied; data is parsed,
+never restated; prose is linked, never generated. Every shared asset is resolved from
+`REPO = resolve(dirname(realpathSync(import.meta.url)), "../../..")`. omp imports an extension from its realpath
+and both install paths put a complete ecomono tree behind it (the checkout, or the flake source `${self}`), so
+the extension never depends on `~/.claude/hooks`. That is also why the extension is linked from `${self}` on Nix
+rather than copied from its own subdirectory.
+
+| Shared asset | omp uses it as | Owner stays |
+|---|---|---|
+| `opencode/plugins/hook-runner/core.ts` | `runHook`: runs a Claude hook script with Claude's payload | OpenCode receipt gate and omp |
+| `opencode/plugins/cave-compress/core.ts` | `STYLE` for `session.compacting` | OpenCode cave-compress and omp |
+| `claude/hooks/ecomono-compress.js` | `compressBash`, `logStats` (CommonJS, lazy `createRequire`) | Claude hook and omp |
+| `claude/hooks/{secret-access-gate,check-diff-size,review-receipt-gate,judge-standards-gate}.sh` | executed by `runHook` | Claude |
+| `claude/hooks/ecomono-skill-registry.js` | `pi.exec("node", ...)` | Claude, OpenCode and omp |
+| `claude/settings.template.json` `permissions.deny` `Bash(...)` | `rm -rf` literals, parsed lazily | Claude |
+| `opencode/opencode.json` `permission.read` entries with value `deny` | path-tool deny globs, parsed lazily | OpenCode |
+| `claude/agents/<name>.md` `tools:` | per-agent memory allowlist, parsed lazily, cached | Claude |
+| `opencode/plugins/storage/*.ts` | prompt capture, dynamic import | OpenCode memory |
+| `opencode/tui-plugins/org-todo/core.ts` | `PATTERN`, `parse` for the org-todo widget | OpenCode TUI and omp |
+
+Two path resolvers exist on purpose, one per host. The OpenCode receipt gate keeps its copy of OpenCode's
+`resolvePath` and the omp extension mirrors omp's `normalizePathLikeInput` + `expandPath` + `resolveToCwd`
+(`tools/path-utils.ts`). They answer different questions, namely where each host runs a command, so sharing one
+would make one of them wrong. The mirror can only widen what the deny check sees.
+
+`hook-runner/core.ts` was moved out of `review-receipt-gate.ts` in its own commit, a move apart from two declared changes: `runGate`, its
+EPIPE guard and the stdout parsing (empty allows; unparsable output, a missing `permissionDecision` and any
+non-deny/ask decision fail open), with every comment moved unshortened. Only host values became parameters
+(`name`, `script`, `payload`, `cwd`, `timeoutMs`, `stripEnv`, `report`, `defaultReason`), so OpenCode keeps
+its refusal text, its 30 s timeout and its env strip. Two OpenCode-visible changes are declared. The fail-open
+log line now ends `this call was NOT checked` instead of `this delivery was NOT checked`, because the core
+serves four gates and "delivery" is wrong for the secret and judge gates. And each link of the refusal reason
+is read only when it is a string: a deny or ask with a non-string `permissionDecisionReason` falls through to
+`systemMessage` or the default reason and still refuses, where the old code threw inside `runHook`'s catch and
+came out as a fail-open allow.
+
+### Handler contracts
+
+- **Error contract.** omp fails a `tool_call` closed on a throw, a rejection or its 30 s per-handler budget
+  (`extensibility/extensions/runner.ts`). ecomono's gates fail open. Every handler body therefore runs inside
+  one `safe()` wrapper that catches, logs through `pi.logger.warn` and returns `undefined`; child processes get
+  20 s and run concurrently; there are no raw timers (`ctx.setInterval` only), no floating promises and no
+  `console.error` (it draws over the TUI). No handler returns a `systemPrompt`.
+- **Fail-open reporting.** `runHook`'s `report` is `pi.logger.warn`, plus the state log written by the core, plus
+  one `ctx.ui.notify` per session when a UI exists.
+- **`ompPath(cwd, raw)`** mirrors omp's path normalisation: trim, outer double quotes, a leading `@` or `:`,
+  `file://`, `~` and `~x`, then `resolve`. An internal URL (`skill://`, `artifact://`, `xd://`, ...) returns
+  `undefined`. The path gate keeps `ssh://` parts and matches their URL path as text, whatever the host.
+- **Handlers**, in registration order:
+  - `tool_call` on `bash`: in-process `rm -rf` literal check, then `secret-access-gate`, `check-diff-size` and
+    `review-receipt-gate` concurrently; any deny blocks, an ask is confirmed in the TUI and blocks headless,
+    except that a headless ask from `check-diff-size` alone is dropped (it is a nudge, and omp's headless mode
+    includes subagents).
+  - `tool_call` on `github` with `op` `pr_create` or `pr_push`: synthesises `gh pr create` / `git push` and runs
+    the diff-size and receipt gates.
+  - `tool_call` on the path tools: the deny globs of `opencode/opencode.json`, selectors and lists peeled.
+  - `tool_call` on `task`: `judge-standards-gate` once per item; the script alone knows which agents are judges.
+  - `tool_call` on `mcp__ecomono_memory_*` from a subagent: allowed only for the tools in that agent's own
+    `tools:` frontmatter. Bundled omp agents, `/tan` clones and the advisor have no file and pass.
+  - `tool_result` on `bash`: peel the trailing notice block, `compressBash`, log to `stats.jsonl`; skipped for
+    eval-bridged results and under `ECOMONO_COMPRESS=off`. Failing commands are compressed too (OpenCode does;
+    head and tail keep the first error and the summary).
+  - `tool_result` on `read`: the read post-check, which withholds content omp resolved to a denied file.
+  - `session.compacting`: the compression style hint. `before_subagent_spawn`: tier and inheritance routing.
+  - `session_start` and `before_agent_start` (main only): skill-registry refresh, a one-time warning when
+    `~/.claude/skills/ecomono-sdd-shared` is missing, the org-todo widget, prompt capture. `session_shutdown`
+    closes the memory DB.
+
+### Settings mapping
+
+Every key of `claude/settings.template.json` and `opencode/cli.json`, and the host settings of
+`opencode/opencode.json`, maps to an omp default or to the item that covers it. ecomono ships no `config.yml`.
+
+| Claude key | omp |
+|---|---|
+| `hooks` | the extension; each script is classified in `CLAUDE_HOOKS` (gates, compression, registry), the model gates are replaced by tier routing, `heavy-skill-gate` is not needed (gated skills ship only inside Claude Code) |
+| `permissions.defaultMode: bypassPermissions` | `tools.approvalMode` defaults to `yolo` |
+| `permissions.deny` `Bash(...)`, `Read(...)`, `Edit(...)` | the gates: `rm -rf` literals, the path deny, the read post-check |
+| `skipDangerousModePermissionPrompt` | nothing: `yolo` has no prompt |
+| `model: opus[1m]` | not shipped; the user's `modelRoles` and `/model` |
+| `effortLevel: high` | `defaultThinkingLevel`, whose omp default is already `high` |
+| `outputStyle: Ecomono` | `PERSONALITY.md` (its five frontmatter lines are injected verbatim, accepted) |
+| `statusLine` | omp's native segments; `usage` and `subagents` are documented opt-ins |
+| `theme: auto` | omp follows the terminal |
+| `preferredNotifChannel: notifications_disabled` | `completion.notify` (omp default `on`; `off` matches) |
+| `enabledPlugins` | nothing: the Claude plugin marketplace is Claude-only |
+
+| `opencode/cli.json` | omp |
+|---|---|
+| `theme: gruvbox` | omp follows the terminal |
+| `opencode-subagent-statusline` | the native `subagents` segment, opt-in |
+| `cyndaquill.tsx` | skipped: omp has no home-logo slot |
+| `org-todo.tsx` | a widget below the editor, sharing `org-todo/core.ts` |
+
+| `opencode/opencode.json` | omp |
+|---|---|
+| `default_agent: orchestrator` | no primary-agent slot (see below) |
+| `model`, `small_model` | the user's `modelRoles` (`smol`, `task`, `slow`) |
+| `compaction` | omp's defaults |
+| `lsp` | omp's default (on) |
+| `mcp.context7` | the shared `CONTEXT7_MCP` pin in `lib/mcp.sh`, upserted into omp's `mcp.json` |
+| `permission` blocks | the gates: read denies become the path deny, secret `bash` globs are the script, the git ask-globs are not ported (the receipt gate covers delivery; `bash.patterns` is the documented opt-in) |
+| `provider` | credentials stay out of the repo |
+| `share`, `instructions` | nothing needed |
+| `agent` | omp uses the Claude agent files, linked per file (the orchestrator: see below) |
+
+The OpenCode orchestrator is not ported as an agent. omp has no primary-agent slot, the SDD commands carry the
+orchestrator pointer themselves, and omp's bundled agents stay spawnable. `task.disabledAgents` is the option
+to hide them.
+
+### Open questions, resolved
+
+| Question | Resolution |
+|---|---|
+| Provider and models | Tiers become `@smol` / `@task` / `@slow` in `before_subagent_spawn`; silent inheritance goes to `@task`. The consumer binds roles and per-agent `task.agentModelOverrides`. Roles over explicit ids: ids go stale and lock the provider. |
+| `xd://` mounting | Accept omp's default; the memory protocol arrives through MCP server instructions. Opt-ins `tools.xdevDocs: inline`, `tools.xdev: false`. |
+| Symlinked extension imports | Yes, by source and by spike 1: realpath import, relative graph resolution. |
+| Persona to subagents | `RULES.md` -> `opencode/AGENTS.md`, omp's only file-based carrier that reaches subagents; not also `AGENTS.md` (double injection). |
+| Read-only agents writing memory | Guarded from each agent's own `tools:` frontmatter, keyed on `ctx.agent.name`. |
+| Shared core location | `opencode/plugins/<name>/core.ts` (OpenCode's Nix store path is built from `opencode/plugins` alone, so a core outside it would break OpenCode). |
+| Compress failing bash | Yes: head and tail keep the first error and the summary. |
+| `PERSONALITY.md` frontmatter | Accepted verbatim to keep one file and one link. |
+| Claude-only `CLAUDE.md` tail | Nothing in v1 (a third persona carrier); deferred. |
+| Skill description compression | No repo-wide `SKILL.md` change; spike 2 recorded the previews. |
+| Secret path gating | In-extension: the deny globs parsed at load, `Bun.Glob`, every omp path form, plus the read post-check. No subprocess per read. Bash keeps the script. |
+| `PI_CODING_AGENT_DIR` and profiles | `install.sh` honours `PI_CODING_AGENT_DIR`, else `$HOME/${PI_CONFIG_DIR:-.omp}/agent`; a named profile is a re-run with its directory. The flake hardcodes `.omp/agent`. |
+| omp-only machines | Not a v1 target. The extension has no `~/.claude/hooks` dependency and warns once when `~/.claude/skills/ecomono-sdd-shared`, the remaining prose dependency, is missing. |
+| org-todo and prompt capture | Both shipped at OpenCode parity as optional, independently droppable slices. |
+
+### Deferred, with triggers
+
+| Item | Trigger | Upgrade path |
+|---|---|---|
+| Loop-breaker block | A session log shows two or more consecutive native loop-guard steers for one call | Lower `model.toolCallLoopGuard.threshold`; then extract `opencode/plugins/loop-breaker/core.ts` with polling tools exempted |
+| Claude-only persona tail | Autonomous delegation is missed on omp | Write an omp tail and generalise `check-persona-drift.sh` to N carriers |
+| Skill description routing sentence | Routing misses observed on omp | Front-load a routing sentence repo-wide |
+| Judge gate for eval `agent()` | An eval judge spawn observed | Run the script with an empty prompt from `before_subagent_spawn` |
+| Parent-directory search leak | A denied file's content observed in a grep result | Filter grep results by path in the extension, or `tools.restrictedFolders` |
+| `lsp` file argument | A leak observed | Add `lsp` `input.file` to the path gate, or `lsp.enabled: false` |
+| `debug` launch | A `launch` observed in a session | Run the bash scripts on `[program, ...args].join(' ')` |
+| `artifact://` read of a withheld result | One observed | Record N from the replaced content and deny `read artifact://N` |
+| Prompt capture of omp's own prompts | Synthetic prompts observed in the memory database | Capture from `message_start` and keep `role === "user" && !synthetic && attribution !== "agent"` (needs `message_start` in `fake-pi.ts`) |
+| omp-only machines | Requested | Repoint prose from `~/.claude/skills` to `~/.agents/skills` |
+| Nix profiles | Requested | A module option for the agent directory |
+| One compressor for Claude and OpenCode | The JS and TS copies drift | A separate change; Claude hooks run on node |
+| Web tools for `ecomono-sdd-explore` on omp | Exploration needs the web on omp | Add `web_search` once Claude ignores unknown names safely |
+| Consumer credentials in nixos-config | The user wants omp on Anthropic models | Export the sops key into omp's environment (consumer repo) |
+
+### Version coupling
+
+The extension relies on these omp 18.13.3 surfaces; any of them changing is a smoke failure or a mirror to
+re-check, not silent breakage. The upgrade protocol in the README starts here. Ranges are relative to the omp
+package sources (`path-utils.ts`, `ssh-protocol.ts`, `search-approval-targets.ts`) and to pi-tui (`read.ts`);
+the `ecomono:` comments in `omp/extensions/ecomono/index.ts` cite them at the code that mirrors them.
+
+Mirrored code, re-diffed on every omp upgrade:
+
+| Mirror | Source range |
+|---|---|
+| `normalizePathLikeInput`, `stripOuterDoubleQuotes`, `normalizePathSeparators`, `expandPath`, `resolveToCwd` | omp `tools/path-utils.ts:75-133,332-344,541-543,571-578` |
+| Selector peel (`splitPathAndSel`) | pi-tui `tools/read.ts:147-184` |
+| `ssh://` path rule | omp `internal-urls/ssh-protocol.ts:76-106` |
+| Search-root splitter `/[;,\s]+/` | omp `tools/search-approval-targets.ts:23` |
+
+Surfaces relied on:
+
+- Loader: `extensions/<name>/index.ts` discovery, realpath import, default-export factory (awaited), factories
+  re-run per subagent session, relative graph resolution, `createRequire` with a computed path.
+- Events: `tool_call` (fail-closed, 30 s, first block wins), `tool_result` (chained, `{content, isError}`),
+  `before_subagent_spawn` (`patterns`, `modelRole`, `invocationKind`; `{model, note}` with role expansion),
+  `session.compacting` (`{context}`), `before_agent_start` (`reason`), `session_start`, `session_shutdown`.
+- `ctx` and `pi`: `agent.{kind,id,name}`, `hasUI`, `mode`, `model.{provider,id}`, `ui.{confirm,notify,setWidget}`,
+  `setInterval`, `sessionManager.getSessionId()`; `pi.exec`, `pi.logger`.
+- Tool inputs: `bash.{command,cwd}`, `read.path` (selectors, `;` lists, `file://`), `grep`/`glob`/`find`/`write`/
+  `ast_grep.path`, `edit.{path,paths}`, `ast_edit.paths`, `github.op`, `task.{context,tasks[].agent,task}`; read
+  `details.{suffixResolution,displayReadTargets}`.
+- Output notices, MCP tool naming `mcp__ecomono_memory_<tool>`, MCP file discovery and the dashboard writer,
+  `RULES.md`/`PERSONALITY.md`/agents/commands discovery, skills from `~/.agents/skills`, Handlebars command
+  rendering, role aliases `@smol`/`@task`/`@slow`, `model.toolCallLoopGuard`, `shellMinimizer.enabled`, the
+  `debug.enabled` / `eval.py` / `eval.js` / `lsp.enabled` defaults behind the accepted ceilings, `bash.patterns`.
+
+### Spike results
+
+Recorded in `~/.cache/ecomono-omp-port/spikes/results.json` for omp 18.13.3. Every spike ran offline against a
+mock provider, in a temp tree, with the data and state directories isolated.
+
+| Spike | Result | Consumed as |
+|---|---|---|
+| 1, imports | Both layouts of the extension behind symlinks into a read-only tree resolve. `route: static`: relative static imports across trees work. `cjs: createRequire`: the CommonJS compressor loads through `createRequire` with a computed path. | Static imports for `STYLE`, the hook runner and the org-todo core; `createRequire` for the compressor. Prompt capture stays dynamic regardless, so a storage fault cannot stop the gates loading. |
+| 2, memory | MCP server instructions reached the system prompt. Two call shapes stored a row: `write` to `xd://mcp__ecomono_memory_mem_save` with a JSON body (observation 1) and the bare tool `mcp__ecomono_memory_mem_save` (observation 2). The `xd://` write fires `tool_call` for the outer `write`, then again with the inner name `mcp__ecomono_memory_mem_save` and the JSON body as input, before the outer `tool_result`. Skill previews observed: `ecomono-commit` "Ultra-compressed commit message generator.", `ecomono-tdd` "Write the failing check before the implementation." | The memory guard keys on the inner tool name; the `xd://` path-guard fallback was not needed. |
+| 3, tiers | Confirmed, no fallback. A spawn with patterns `["sonnet"]` and a spawn that inherits (`["fakellm/fake-1"]`, `modelRole` null) both resolved the handler's `@task` through `modelRoles.task`. | `before_subagent_spawn` returns the role. |
+| 4, semantics | A throwing `tool_call` handler becomes a block (`Extension ... failed: ...`). A headless `confirm` returns false. The first block wins and a blocked call has no `tool_result`. A `tool_result` replacement of `content` with `isError` reaches the model. | The `safe()` wrapper, the fake-pi harness semantics, the read post-check (no ceiling fallback was taken). |
+
 ## Portability notes
 
 - Only `opencode/cli.json` needs install-time patching (`/home/agustin` → `$HOME`): it's
