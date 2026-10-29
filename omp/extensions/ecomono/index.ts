@@ -36,6 +36,22 @@ export const REPO = resolve(dirname(realpathSync(fileURLToPath(import.meta.url))
 // model with omp's own modelRoles; ecomono ships no model ids (design.md 5.7).
 export const TIER_ROLE = { haiku: "@smol", sonnet: "@task", opus: "@slow" } as const
 
+// What omp does with each script claude/settings.template.json registers. omp/tests/test_contract.ts keeps this
+// table total: a hook added to the template without a line here fails the suite (the omp analogue of
+// check-hook-install-drift.sh). Keys are script basenames under claude/hooks.
+export const CLAUDE_HOOKS: Record<string, string> = {
+  "secret-access-gate.sh": "tool_call bash, plus the path tools through the opencode.json deny globs",
+  "check-diff-size.sh": "tool_call bash and github (pr_create, pr_push)",
+  "review-receipt-gate.sh": "tool_call bash and github (pr_create, pr_push)",
+  "judge-standards-gate.sh": "tool_call task, one run per item",
+  "ecomono-skill-registry.js": "session_start and before_agent_start, main session, pi.exec node",
+  "ecomono-compress.js": "tool_result bash, loaded with createRequire",
+  "agent-model-gate.sh": "replaced: before_subagent_spawn tiers",
+  "workflow-model-gate.sh": "replaced: before_subagent_spawn tiers, eval spawns take the inheritance rule",
+  "heavy-skill-gate.sh": "not needed: gated skills ship only inside Claude Code",
+  "statusline.sh": "not needed: native status line",
+}
+
 // omp names an MCP tool `mcp__<server>_<tool>` with the server's `-` turned into `_`; Claude's agent files name the
 // same tool `mcp__ecomono-memory__<tool>`.
 const MEMORY_TOOL = "mcp__ecomono_memory_"
