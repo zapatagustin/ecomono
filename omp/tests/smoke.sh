@@ -167,6 +167,25 @@ scenario compression "smoke: compression" '[{"tool":"bash","args":{"command":"se
 expect "the bash result reaching the model has 'lines omitted'" \
   '[.[] | select(.ev == "request" and .last.role == "toolResult")] | any(.last | tostring | contains("lines omitted"))'
 
+# (c) receipt: Claude's review-receipt-gate.sh, run by the extension, refuses a delivery in an armed repository.
+# The project has no remote, so even a gate that failed open could not push anything. It is a git repository
+# only from here on: scenarios (a) and (b) ran in a plain directory.
+pgit() { git -C "$tmp/project" -c user.name=smoke -c user.email=smoke@example.invalid -c commit.gpgsign=false "$@"; }
+pgit init -q -b master
+echo base > "$tmp/project/a.txt"
+pgit add a.txt
+pgit commit -q -m base
+pgit checkout -q -b work
+echo work > "$tmp/project/b.txt"
+pgit add b.txt
+pgit commit -q -m work
+mkdir -p "$tmp/project/.git/ecomono"
+: > "$tmp/project/.git/ecomono/review-mode"
+scenario receipt "smoke: receipt" '[{"tool":"bash","args":{"command":"git push"}},{"text":"done"}]'
+expect "the bash result reaching the model has 'Review mode is armed'" \
+  '[.[] | select(.ev == "request" and .last.role == "toolResult")] | any(.last | tostring | contains("Review mode is armed"))'
+if [ -z "$(pgit remote)" ]; then echo "ok: receipt: the project has no remote, nothing could be pushed"; else bad "receipt: the project has a remote"; fi
+
 if [ "$fails" -ne 0 ]; then
   echo "smoke: $fails check(s) failed" >&2
   exit 1
