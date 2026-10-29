@@ -5,7 +5,9 @@
  * receipt) plus the `rm -rf` literals of Claude's deny list, denies the path tools on the read-deny globs of
  * opencode/opencode.json (and withholds a read that resolved to such a file), runs judge-standards-gate on every
  * task item, compresses bash tool results with the same compressor Claude's PostToolUse hook runs and adds the
- * compaction-summary style text. omp loads the DEFAULT export only (the named exports are test seams).
+ * compaction-summary style text. It also maps the agents' haiku/sonnet/opus tiers to omp's @smol/@task/@slow
+ * roles, blocks the ecomono-memory tools an agent's own `tools:` line does not list, and refreshes the skill
+ * registry from the main session. omp loads the DEFAULT export only (the named exports are test seams).
  *
  * Error contract (non-negotiable): omp fails a `tool_call` CLOSED on a throw, a rejection or after 30 s, while
  * ecomono's gates fail OPEN. Every handler body therefore runs inside safe(): it catches everything, logs with
@@ -18,7 +20,7 @@
  */
 
 import type { ExtensionAPI } from "@oh-my-pi/pi-coding-agent"
-import { readFileSync, realpathSync } from "node:fs"
+import { existsSync, readFileSync, realpathSync } from "node:fs"
 import { createRequire } from "node:module"
 import { homedir } from "node:os"
 import { basename, dirname, join, resolve } from "node:path"
@@ -29,6 +31,15 @@ import { STYLE } from "../../../opencode/plugins/cave-compress/core.ts"
 import { type HookDecision, runHook } from "../../../opencode/plugins/hook-runner/core.ts"
 
 export const REPO = resolve(dirname(realpathSync(fileURLToPath(import.meta.url))), "../../..")
+
+// The agents' frontmatter `model:` tier -> the omp role that stands for it. The consumer binds each role to a real
+// model with omp's own modelRoles; ecomono ships no model ids (design.md 5.7).
+export const TIER_ROLE = { haiku: "@smol", sonnet: "@task", opus: "@slow" } as const
+
+// omp names an MCP tool `mcp__<server>_<tool>` with the server's `-` turned into `_`; Claude's agent files name the
+// same tool `mcp__ecomono-memory__<tool>`.
+const MEMORY_TOOL = "mcp__ecomono_memory_"
+const MEMORY_TOOL_CLAUDE = "mcp__ecomono-memory__"
 
 // omp appends model-facing notices after the body: wall time, raw-output artifact, temp-shell notice,
 // spill/truncation, timeout, exit code (omp: tools/bash.ts:705,722-739; exec/bash-executor.ts:855-873;
@@ -266,6 +277,59 @@ export function ecomono(o: { repo: string; hooksDir?: string; timeoutMs?: number
       return undefined
     }
 
+    // The ecomono-memory tools an agent's own claude/agents/<name>.md may call, from its frontmatter `tools:` line:
+    // the `mcp__ecomono-memory__<tool>` entries, prefix stripped. Cached per name; null means "no restriction" (no
+    // such file, which covers omp's bundled agents, /tan clones and the advisor, or a file with no `tools:` line,
+    // which Claude reads as "inherits every tool"). The name is matched before it joins a path, so nothing outside
+    // claude/agents is ever read.
+    const memoryTools = new Map<string, Set<string> | null>()
+    const memoryAllowed = (name: string): Set<string> | null => {
+      const cached = memoryTools.get(name)
+      if (cached !== undefined) return cached
+      let allowed: Set<string> | null = null
+      if (/^[a-z0-9-]+$/.test(name)) {
+        try {
+          const lines = readFileSync(join(o.repo, "claude/agents", `${name}.md`), "utf8").split(/\r?\n/)
+          const open = lines.findIndex((l) => l.trim() === "---")
+          const close = open < 0 ? -1 : lines.findIndex((l, i) => i > open && l.trim() === "---")
+          const tools = close < 0 ? undefined : lines.slice(open + 1, close).find((l) => l.startsWith("tools:"))
+          if (tools !== undefined) {
+            allowed = new Set(
+              tools
+                .slice("tools:".length)
+                .split(",")
+                .map((t) => t.trim())
+                .filter((t) => t.startsWith(MEMORY_TOOL_CLAUDE))
+                .map((t) => t.slice(MEMORY_TOOL_CLAUDE.length)),
+            )
+          }
+        } catch (e) {
+          if ((e as NodeJS.ErrnoException)?.code !== "ENOENT") {
+            pi.logger.warn(
+              `ecomono: memory guard disabled for ${name}, cannot read claude/agents/${name}.md from ${o.repo}: ${
+                e instanceof Error ? e.message : String(e)
+              }`,
+            )
+          }
+        }
+      }
+      memoryTools.set(name, allowed)
+      return allowed
+    }
+
+    // Skill registry refresh, same generator, flags and timeout as OpenCode's skill-registry.ts. Fire and forget: the
+    // generator exits 0 under --quiet and a failure must never hold a prompt, so the promise is never awaited and
+    // never rejects. Main session only: a subagent shares the parent's project and would only repeat the work.
+    // ecomono: runs are not deduplicated, so a prompt during a slow refresh starts a second one. Add an in-flight
+    // guard if overlapping runs ever cause harm.
+    const refresh = (ctx: any): void => {
+      if (ctx?.agent?.kind !== "main") return
+      pi.exec("node", [join(o.repo, "claude/hooks/ecomono-skill-registry.js"), "--quiet", "--cwd", ctx.cwd], {
+        cwd: ctx.cwd,
+        timeout: 30_000,
+      }).catch(() => {})
+    }
+
     const gate = (name: string, payload: unknown, cwd: string, ctx: any) =>
       runHook({
         name,
@@ -375,6 +439,22 @@ export function ecomono(o: { repo: string; hooksDir?: string; timeoutMs?: number
           )
           return decide(ctx, results)
         }
+
+        // Memory write guard: Claude restricts a subagent to the memory tools its own `tools:` line lists, and omp
+        // mounts every MCP tool on every agent, so the same line is enforced here. The tool arrives under its own
+        // name even when the model reaches it through `write xd://mcp__ecomono_memory_<tool>`: omp fires a second
+        // tool_call for the inner call (spikes/results.json .sp2.innerToolCall is true), so this one branch
+        // covers both routes.
+        if (typeof event.toolName === "string" && event.toolName.startsWith(MEMORY_TOOL)) {
+          const agent = ctx?.agent
+          if (agent?.kind !== "sub" || typeof agent.name !== "string") return undefined
+          const allowed = memoryAllowed(agent.name)
+          if (allowed === null || allowed.has(event.toolName.slice(MEMORY_TOOL.length))) return undefined
+          return {
+            block: true,
+            reason: `${agent.name} has no memory write access (claude/agents/${agent.name}.md tools:); report it to the parent instead`,
+          }
+        }
         return undefined
       }),
     )
@@ -470,6 +550,69 @@ export function ecomono(o: { repo: string; hooksDir?: string; timeoutMs?: number
     pi.on(
       "session.compacting",
       safe(() => (process.env.ECOMONO_COMPRESS === "off" ? undefined : { context: [STYLE] })),
+    )
+
+    // Tier routing. A bare tier word (the agents' frontmatter `model:`) becomes its role: a bare `sonnet` would
+    // otherwise fuzzy-match whatever authenticated model comes first, so `[tier, @role]` cannot steer it. Silent
+    // inheritance (no role, and the one pattern is exactly the main model) goes to @task instead of the main
+    // model. Same rule for a task spawn and an eval agent(). Anything else is left alone: a role, and an explicit
+    // model or task.agentModelOverrides entry that names a model other than the main one.
+    // spikes/results.json .sp3.fallback is unset: the handler's `model` replacement was observed to take effect.
+    // ecomono: ceiling. An override or explicit selector that is exactly the main model's `provider/id` reaches this
+    // event as [mainModel] with modelRole undefined, identical to silent inheritance (the event carries no selection
+    // source and extensions get no settings access), so it is rerouted to @task. Workaround: bind the override
+    // through a role alias such as `@slow`, which sets modelRole. Upgrade path: use the selection source if omp adds
+    // it to BeforeSubagentSpawnEvent.
+    pi.on(
+      "before_subagent_spawn",
+      safe((event: any, ctx: any) => {
+        const patterns = event?.patterns
+        if (!Array.isArray(patterns) || patterns.length !== 1 || typeof patterns[0] !== "string") return undefined
+        const pattern: string = patterns[0]
+        const tier = pattern.toLowerCase()
+        if (Object.hasOwn(TIER_ROLE, tier)) {
+          const role = TIER_ROLE[tier as keyof typeof TIER_ROLE]
+          return { model: role, note: `ecomono: ${tier} tier -> ${role}` }
+        }
+        if (!event.modelRole && ctx?.model && pattern === `${ctx.model.provider}/${ctx.model.id}`) {
+          return { model: "@task", note: "ecomono: no model tier; routed to @task instead of the main model" }
+        }
+        return undefined
+      }),
+    )
+
+    // Once per session, main agent only: a subagent's factory has its own closure and would repeat it.
+    let skillsWarned = false
+    pi.on(
+      "session_start",
+      safe((_event: any, ctx: any) => {
+        if (ctx?.agent?.kind !== "main") return undefined
+        refresh(ctx)
+        if (skillsWarned) return undefined
+        // The remaining prose dependency: the ecomono-sdd-* commands and agents read ~/.claude/skills by path, and
+        // omp reads skills only from ~/.agents/skills, so a missing tree is a silent half-working install.
+        const shared = join(process.env.HOME || homedir(), ".claude/skills/ecomono-sdd-shared")
+        if (existsSync(shared)) return undefined
+        skillsWarned = true
+        const text = `ecomono: ${shared} is missing; the ecomono-sdd-* commands and agents read ~/.claude/skills, so run install.sh (or switch the home-manager config) to link it`
+        if (ctx.hasUI) {
+          try {
+            ctx.ui.notify(text, "warning")
+          } catch (e) {
+            pi.logger.warn(`ecomono: notify failed: ${e instanceof Error ? e.message : String(e)}`)
+          }
+        } else pi.logger.warn(text)
+        return undefined
+      }),
+    )
+
+    // Every prompt, so a skill added mid-session is in the registry by the next one. A revive replays no prompt.
+    pi.on(
+      "before_agent_start",
+      safe((event: any, ctx: any) => {
+        if (event?.reason === "prompt") refresh(ctx)
+        return undefined
+      }),
     )
   }
 }
