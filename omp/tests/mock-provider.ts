@@ -2,13 +2,17 @@
 //
 // It registers the provider `fakellm` (model `fake-1`) whose replies come from a script instead of an LLM, and
 // appends what omp showed it to a JSON-lines dump so the smoke can assert on the real harness:
-//   ECOMONO_OMP_SCRIPT      JSON array of steps. {tool, args} emits a tool call, {text} is the final answer;
-//                           past the end the reply is the text "done".
+//   ECOMONO_OMP_SCRIPT      JSON array of steps, or {"main": [...], "sub": [...]} to script the main session and
+//                           a spawned subagent apart. {tool, args} emits a tool call, {text} is the final answer;
+//                           past the end the reply is the text "done". A session is "sub" when its first message
+//                           carries CHILD_MARKER (put it in the `task` text of the spawning call); anything else is
+//                           "main". Without the split, a child would replay the parent's `task` step.
 //   ECOMONO_OMP_DUMP        file that receives one JSON line per event:
 //     {ev: "prompt"}        at before_agent_start: the joined system prompt, command names and tool names,
 //                           i.e. what persona, style, skills, commands and the memory bundle resolved to;
 //     {ev: "request"}       on every provider request: the last context message, which after a tool call is
-//                           the tool result as the model sees it (the compression handler's output);
+//                           the tool result as the model sees it (the compression handler's output), the model
+//                           the request names as "provider/id", and the session, "main" or "sub";
 //     {ev: "spawn"}         at before_subagent_spawn: agent, invocationKind, modelRole and patterns.
 //   ECOMONO_OMP_BLOCK_SPAWN=1 makes the spawn handler refuse, so a scripted `task` call stops at preflight.
 //
@@ -21,15 +25,19 @@ import { appendFileSync, readFileSync } from "node:fs"
 
 type Step = { tool: string; args?: Record<string, unknown> } | { text: string }
 
+/** Put this in the task text of a spawning call: the child's first message then carries it (see the header). */
+export const CHILD_MARKER = "ecomono-smoke-child"
+
 function dump(entry: Record<string, unknown>): void {
   const file = process.env.ECOMONO_OMP_DUMP
   if (file) appendFileSync(file, JSON.stringify(entry) + "\n")
 }
 
-function loadScript(): Step[] {
+function loadScript(session: "main" | "sub"): Step[] {
   const file = process.env.ECOMONO_OMP_SCRIPT
   if (!file) return []
-  const steps = JSON.parse(readFileSync(file, "utf8"))
+  const script = JSON.parse(readFileSync(file, "utf8"))
+  const steps = Array.isArray(script) ? script : script?.[session]
   return Array.isArray(steps) ? steps : []
 }
 
@@ -41,8 +49,9 @@ export default function (pi: ExtensionAPI): void {
     streamSimple: (model, context, options) => {
       const messages = context.messages as Array<{ role: string }>
       const index = messages.filter(m => m.role === "toolResult").length
-      dump({ ev: "request", last: messages[messages.length - 1] })
-      const step = loadScript()[index]
+      const session = JSON.stringify(messages[0] ?? "").includes(CHILD_MARKER) ? "sub" : "main"
+      dump({ ev: "request", last: messages[messages.length - 1], model: `${model.provider}/${model.id}`, session })
+      const step = loadScript(session)[index]
       const handler = () => {
         if (step && "tool" in step) {
           return { content: [{ type: "toolCall" as const, name: step.tool, arguments: step.args ?? {} }] }
@@ -51,17 +60,17 @@ export default function (pi: ExtensionAPI): void {
       }
       return streamMock(createMockModel({ id: model.id, provider: model.provider, handler }), context, options)
     },
-    models: [
-      {
-        id: "fake-1",
-        name: "Fake 1",
-        reasoning: false,
-        input: ["text"],
-        cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
-        contextWindow: 100000,
-        maxTokens: 8000,
-      },
-    ],
+    // Distinct ids so a request shows which model omp applied: fake-1 is the main model, the others stand for the
+    // tier roles (omp/tests/smoke.sh binds modelRoles smol, task and slow to them).
+    models: ["fake-1", "fake-smol", "fake-task", "fake-slow"].map(id => ({
+      id,
+      name: id,
+      reasoning: false,
+      input: ["text" as const],
+      cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+      contextWindow: 100000,
+      maxTokens: 8000,
+    })),
   })
 
   pi.on("before_agent_start", async event => {

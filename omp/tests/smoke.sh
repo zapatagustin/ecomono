@@ -9,8 +9,11 @@
 # A throwaway HOME gets the layout install.sh would build (install_omp_config, the skills link, the two
 # mcp.json entries), then omp runs with omp/tests/mock-provider.ts as its model, so no LLM and no network is
 # involved. Each scenario asserts on the dump the mock writes: what the real harness resolved (persona, style,
-# commands, skills, the memory bundle) and what it fed back to the model (the compression handler loading
-# through the symlinked extension). The end-to-end layer above the bun suites of omp/tests/run-tests.sh.
+# commands, skills, the memory bundle) and what it fed back to the model (the compression handler, the bash
+# receipt, path deny, judge and github gates through the symlinked extension), plus what omp did with a spawn (the
+# payload the tier routing reads, the model it applied, the memory guard in the child). The end-to-end layer above
+# the bun suites of omp/tests/run-tests.sh, whose events are built by hand: this is where a renamed omp field shows.
+# A version other than the tested one fails unless ECOMONO_OMP_UNTESTED=1.
 #
 # Skips (exit 0) without omp on PATH. The first statements are shell builtins on purpose: this guard runs
 # before anything that might not be installed.
@@ -81,14 +84,26 @@ export XDG_STATE_HOME="$tmp/.local/state" XDG_CACHE_HOME="$tmp/.cache"
 export ECOMONO_DATA_DIR="$tmp/data" ECOMONO_LEGACY_DB="$tmp/no-legacy.db"
 export PI_NO_TITLE=1 OMP_MCP_TIMEOUT_MS=8000
 unset PI_CODING_AGENT_DIR PI_CONFIG_DIR CLAUDE_CONFIG_DIR OMP_PROFILE PI_PROFILE
+# Valves and toggles of the calling shell: any of them changes what the gates and the compressor do.
+unset ECOMONO_COMPRESS ECOMONO_ALLOW_UNREVIEWED_PUSH ECOMONO_ALLOW_SECRET_PATHS
 mkdir -p "$XDG_CONFIG_HOME" "$XDG_DATA_HOME" "$XDG_STATE_HOME" "$XDG_CACHE_HOME" "$ECOMONO_DATA_DIR" "$tmp/project"
 
 # After the isolation above, so not even `--version` can touch the real home.
 version="$(omp --version)"
 echo "omp: $version"
+# An untested omp is a failure: the gates read event fields by name, and a renamed one would allow in silence while
+# every other check stays green. ECOMONO_OMP_UNTESTED=1 runs it anyway, for the upgrade protocol in README.md: the
+# scenarios below are what vets a new version, after which this number is bumped.
 case "$version" in
   *18.13.3*) ;;
-  *) echo "warn: tested against omp 18.13.3, running $version" >&2 ;;
+  *)
+    if [ "${ECOMONO_OMP_UNTESTED:-}" = 1 ]; then
+      echo "warn: tested against omp 18.13.3, running $version (ECOMONO_OMP_UNTESTED=1)" >&2
+    else
+      echo "error: tested against omp 18.13.3, running $version; run with ECOMONO_OMP_UNTESTED=1 to vet it (README.md, upgrade protocol)" >&2
+      exit 1
+    fi
+    ;;
 esac
 
 OMP="$tmp/.omp/agent"
@@ -102,6 +117,17 @@ OMP="$tmp/.omp/agent"
   ensure_omp_mcp "$OMP/mcp.json" ecomono-memory "$BUN" "$SRC/opencode/plugins/storage/mcp-server.js"
   ensure_omp_mcp "$OMP/mcp.json" context7 "${CONTEXT7_MCP[@]}"
 ) >/dev/null
+# omp's own settings for the run. ecomono ships no config.yml, so this one is the smoke's alone: the three roles the
+# tier routing resolves (smol, task, slow) name distinct mock models, which shows what omp applied to a spawn, and
+# the github tool, off by default, is on where gh exists (omp registers it only then).
+cat > "$OMP/config.yml" <<'EOF'
+modelRoles:
+  smol: fakellm/fake-smol
+  task: fakellm/fake-task
+  slow: fakellm/fake-slow
+github:
+  enabled: true
+EOF
 # Registered like install.sh does, then disabled so print mode does not wait on npx.
 jq '.disabledServers = ((.disabledServers // []) + ["context7"])' "$OMP/mcp.json" > "$tmp/mcp.json.new"
 mv "$tmp/mcp.json.new" "$OMP/mcp.json"
@@ -122,7 +148,12 @@ scenario() {
     ECOMONO_OMP_SCRIPT="$script" ECOMONO_OMP_DUMP="$DUMP" \
       timeout 120 omp -p --no-session --no-lsp -e "$CHECKOUT/omp/tests/mock-provider.ts" \
       --model fakellm/fake-1 --mode json "$2" </dev/null >"$out" 2>"$err"
-  ) || bad "$SCEN: omp exited $? (stderr: $err)"
+  ) || {
+    rc=$?
+    bad "$SCEN: omp exited $rc, first lines of its stderr:"
+    # The temp dir (and with it $err) is gone once the trap runs, so the lines are printed now.
+    head -n 20 "$err" | sed 's/^/  /' >&2
+  }
   if grep -q 'Failed to load extension' "$out" "$err"; then
     bad "$SCEN: an extension failed to load: $(grep -h 'Failed to load extension' "$out" "$err" | head -n 1)"
   fi
@@ -153,7 +184,7 @@ expect "command skill:ecomono-commit is registered" \
 # (omp: extensibility/extensions/get-commands-handler.ts), so ecomono-sdd-new is proven by its expansion:
 # the first request carries the command body with $ARGUMENTS substituted, not the literal slash text.
 expect "markdown command ecomono-sdd-new expanded with its arguments" \
-  '[.[] | select(.ev == "request")][0].last | tostring | contains("Change name: smoke-change")'
+  '[.[] | select(.ev == "request" and .model == "fakellm/fake-1")][0].last | tostring | contains("Change name: smoke-change")'
 # Spike 2 (docs/DESIGN.md, omp target > Spike results, row 2): the memory tool is either a bare tool name or reachable through its
 # xd:// route in the system prompt.
 mem="mcp__ecomono_memory_mem_save"
@@ -202,6 +233,48 @@ expect "a spawn event for ecomono-explore has patterns [\"sonnet\"]" \
 scenario urlcwd "smoke: url cwd" '[{"tool":"bash","args":{"command":"cat ~/.ssh/id_ed25519","cwd":"local://"}},{"text":"done"}]'
 expect "the bash result reaching the model has 'credential material'" \
   '[.[] | select(.ev == "request" and .last.role == "toolResult")] | any(.last | tostring | contains("credential material"))'
+
+# (f) path deny: the in-process deny on the read tool, with the globs of opencode/opencode.json. The sentinel is not a
+# secret; the file name is what matches `**/.env`. A gate that failed open would hand its content to the model.
+sentinel="SMOKE-SENTINEL-4f9c1e"
+printf '%s\n' "$sentinel" > "$tmp/project/.env"
+scenario pathdeny "smoke: path deny" '[{"tool":"read","args":{"path":".env"}},{"text":"done"}]'
+expect "the read result reaching the model names opencode/opencode.json" \
+  '[.[] | select(.ev == "request" and .last.role == "toolResult")] | any(.last | tostring | contains("opencode/opencode.json"))'
+expect "no request carries the file's content" \
+  "[.[] | select(.ev == \"request\")] | all(.last | tostring | contains(\"$sentinel\") | not)"
+
+# (g) judge gate: judge-standards-gate.sh refuses a task item for a judge whose prompt has no skills heading. The spawn
+# is blocked as in (d), so a gate that failed open still could not launch a child that replays the script.
+ECOMONO_OMP_BLOCK_SPAWN=1 scenario judge "smoke: judge gate" \
+  '[{"tool":"task","args":{"agent":"ecomono-judge-a","task":"review the diff","solutionSpace":"n/a"}},{"text":"done"}]'
+expect "the task result reaching the model has the judge gate's reason" \
+  '[.[] | select(.ev == "request" and .last.role == "toolResult")] | any(.last | tostring | contains("Skills to load before work"))'
+
+# (h) github gate: a delivery through the github tool meets the same receipt gate as `git push`, in the armed project.
+# omp registers the github tool only where gh is installed (config.yml above enables it).
+if command -v gh >/dev/null 2>&1; then
+  scenario github "smoke: github gate" '[{"tool":"github","args":{"op":"pr_push"}},{"text":"done"}]'
+  expect "the github tool is registered" \
+    '[.[] | select(.ev == "prompt")][0].tools | index("github") != null'
+  expect "the github result reaching the model has 'Review mode is armed'" \
+    '[.[] | select(.ev == "request" and .last.role == "toolResult")] | any(.last | tostring | contains("Review mode is armed"))'
+else
+  echo "skip: github: gh is not on PATH, omp does not register the github tool"
+fi
+
+# (i) a spawned child: the memory guard and the tier model, in a session omp really runs. The spawn is NOT blocked here,
+# and the mock scripts the two sessions apart ({"main", "sub"}, told by the marker in the task text) so the child does
+# not replay the parent's `task` step. ecomono-explore lists no memory tool and has `model: sonnet`: its mem_save call
+# must be refused, and its own requests must name the model the smoke bound to @task, not the main model. The refused
+# call is the only memory call; had the guard failed open, the row would land in the throwaway data dir.
+scenario child "smoke: child session" \
+  '{"main":[{"tool":"task","args":{"agent":"ecomono-explore","task":"ecomono-smoke-child: save a memory","solutionSpace":"n/a"}},{"tool":"wait","args":{}},{"text":"done"}],"sub":[{"tool":"mcp__ecomono_memory_mem_save","args":{"title":"smoke","content":"smoke","type":"learning"}},{"text":"child done"}]}'
+expect "the child's memory call was refused by the guard" \
+  '[.[] | select(.ev == "request" and .session == "sub" and .last.role == "toolResult")] | any(.last | tostring | contains("has no memory write access"))'
+# The child's first request is omp's own background call on the smol role; the agent loop's requests carry a tool result.
+expect "the child's agent-loop requests name the @task model" \
+  '[.[] | select(.ev == "request" and .session == "sub" and .last.role == "toolResult")] | length > 0 and all(.model == "fakellm/fake-task")'
 
 if [ "$fails" -ne 0 ]; then
   echo "smoke: $fails check(s) failed" >&2

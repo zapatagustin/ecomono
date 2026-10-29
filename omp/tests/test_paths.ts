@@ -2,20 +2,12 @@
 // reads the content of a file under test: the gate matches path strings and resolves symlinks, so the real home
 // directory is safe to use in expectations, and the symlink fixtures are empty files in a temp tree. `~` is built
 // from os.homedir(); HOME is never changed (Bun's os.homedir() ignores a runtime change).
-import { ISOLATED, makeCtx, makePi } from "./fake-pi.ts"
+import { dir, makeCtx, makePi, withEnv } from "./fake-pi.ts"
 import assert from "node:assert/strict"
-import { mkdirSync, mkdtempSync, readFileSync, symlinkSync, writeFileSync } from "node:fs"
+import { mkdirSync, readFileSync, symlinkSync, writeFileSync } from "node:fs"
 import { homedir } from "node:os"
 import { join } from "node:path"
 import { REPO, ecomono } from "../extensions/ecomono/index.ts"
-
-const TMP = mkdtempSync(join(ISOLATED, "paths-"))
-let seq = 0
-const dir = (label: string) => {
-  const d = join(TMP, `${label}-${++seq}`)
-  mkdirSync(d, { recursive: true })
-  return d
-}
 
 const setup = (repo: string = REPO) => {
   const { pi, fire, calls } = makePi()
@@ -196,14 +188,25 @@ const sample = (glob: string) => glob.replace(/\*\*\//g, "/x/").replace(/\*\*/g,
 {
   // The release valve of the bash secret gate never lifts the in-process path deny.
   const { fire, ctx } = setup()
-  const saved = process.env.ECOMONO_ALLOW_SECRET_PATHS
-  process.env.ECOMONO_ALLOW_SECRET_PATHS = "1"
-  try {
+  await withEnv({ ECOMONO_ALLOW_SECRET_PATHS: "1" }, async () => {
     assert.equal((await fire("tool_call", call("read", { path: ".env" }), ctx))?.block, true)
-  } finally {
-    if (saved === undefined) delete process.env.ECOMONO_ALLOW_SECRET_PATHS
-    else process.env.ECOMONO_ALLOW_SECRET_PATHS = saved
+  })
+}
+
+{
+  // A read whose input names no path under either key is a shape omp 18.13.3 never sends: it is allowed, and the
+  // warning says the path deny skipped it, once. A well-formed read stays silent.
+  const { fire, calls, ctx } = setup()
+  for (const input of [{}, { file: ".env" }, { path: 7 }]) {
+    assert.equal(await fire("tool_call", call("read", input), ctx), undefined, JSON.stringify(input))
   }
+  const drift = calls.warn.filter((l) => l.includes("unexpected omp shape"))
+  assert.equal(drift.length, 1)
+  assert.ok(drift[0].includes("read tool_call"), drift[0])
+  const quiet = setup()
+  await quiet.fire("tool_call", call("read", { path: "a.txt" }), quiet.ctx)
+  await quiet.fire("tool_call", call("grep", { pattern: "x" }), quiet.ctx)
+  assert.deepEqual(quiet.calls.warn, [])
 }
 
 // ---- symlinks -------------------------------------------------------------------------------------------------

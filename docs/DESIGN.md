@@ -785,7 +785,7 @@ either way the call was refused, so only the refusal text changes. This is not a
 - **Error contract.** omp fails a `tool_call` closed on a throw, a rejection or its 30 s per-handler budget
   (`extensibility/extensions/runner.ts`). ecomono's gates fail open. Every handler body therefore runs inside
   one `safe()` wrapper that catches, logs through `pi.logger.warn` and returns `undefined`; child processes get
-  20 s and run concurrently; there are no raw timers (`ctx.setInterval` only), no floating promises and no
+  20 s (`GATE_TIMEOUT_MS`, which `test_gates.ts` holds under omp's 30 s) and run concurrently; there are no raw timers (`ctx.setInterval` only), no floating promises and no
   `console.error` (it draws over the TUI). No handler returns a `systemPrompt`.
 - **Fail-open reporting.** `runHook`'s `report` is `pi.logger.warn`, plus the state log written by the core, plus
   one `ctx.ui.notify` per session when a UI exists. A `tool_call` handler that throws (a rejected confirm
@@ -905,8 +905,25 @@ to hide them.
 
 ### Version coupling
 
-The extension relies on these omp 18.13.3 surfaces; any of them changing is a smoke failure or a mirror to
-re-check, not silent breakage. The upgrade protocol in the README starts here. Ranges are relative to the omp
+The extension relies on these omp 18.13.3 surfaces. A change to one of them is caught by one of three nets, in
+this order of strength:
+
+- **The smoke** (`omp/tests/smoke.sh`), which drives real omp offline and fails on any other omp version unless
+  `ECOMONO_OMP_UNTESTED=1` is set. It covers discovery (rules, persona, agents, commands, skills, the MCP memory
+  bundle), `bash.{command,cwd}` through the secret and receipt gates, bash result compression, `read.path`
+  through the path deny, `task.{tasks[].agent,agent}` through the judge gate, `github.op` through the receipt
+  gate (where `gh` exists), the `before_subagent_spawn` payload, the model omp applies to the `@task` role, and
+  `ctx.agent.{kind,name}` through the memory guard in a real child session.
+- **A shape warning.** Where the extension reads a field by name and finds none, it still allows (failing
+  closed would brick every session after an upgrade) and logs `ecomono: unexpected omp shape, <kind>: ...` once
+  per kind and session: a `read` call with no `path`/`paths`, a `task` call with neither `tasks[]` nor `agent`,
+  `ctx.agent` without a `kind` or a subagent without a `name`, and a spawn without an array `patterns`.
+- **The mirror table** below, re-diffed on every upgrade.
+
+Not covered by the smoke, and so resting on the fake-pi tests (events built by hand to the 18.13.3 shape) and the
+mirror table: the read post-check (`details.{suffixResolution,displayReadTargets}`), edit and `ast_edit` inputs,
+prompt capture, the compaction style, the org-todo widget and the `ui.confirm` flow. The upgrade protocol in the
+README starts here. Ranges are relative to the omp
 package sources (`path-utils.ts`, `ssh-protocol.ts`, `search-approval-targets.ts`) and to pi-tui (`read.ts`);
 the `ecomono:` comments in `omp/extensions/ecomono/index.ts` cite them at the code that mirrors them.
 
@@ -921,6 +938,7 @@ Mirrored code, re-diffed on every omp upgrade:
 | `extractFileMentions` (task `@path` mentions) | omp `utils/file-mentions.ts:33-55,168-186` |
 | Edit header grammar (`[PATH#TAG]`, `¶`, `*** ... File:`, `*** Move to:`, `MV`) | omp `extensibility/tool-event-input.ts:35-90`; pi-edit `modes/hashline/input.rs`, `tokenizer.rs` |
 | Symlink resolution through a missing tail (`resolveEquivalentPath`) | pi-utils `dirs.ts` |
+| Handler budget `EXTENSION_HANDLER_TIMEOUT_MS = 30_000`, which the gate timeout (`GATE_TIMEOUT_MS`, 20 s) must stay under | omp `extensibility/extensions/runner.ts:133` |
 
 Surfaces relied on:
 

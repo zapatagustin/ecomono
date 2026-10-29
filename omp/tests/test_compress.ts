@@ -1,9 +1,9 @@
 // Bash compression and compaction style in the omp extension, driven through fake-pi. Plain assert script.
-import { ISOLATED, makeCtx, makePi } from "./fake-pi.ts"
+import { ISOLATED, dir, makeCtx, makePi, withEnv } from "./fake-pi.ts"
 import assert from "node:assert/strict"
-import { existsSync, mkdtempSync, readFileSync, statSync } from "node:fs"
+import { existsSync, readFileSync, statSync } from "node:fs"
 import { createRequire } from "node:module"
-import { homedir, tmpdir } from "node:os"
+import { homedir } from "node:os"
 import { join } from "node:path"
 import { STYLE } from "../../opencode/plugins/cave-compress/core.ts"
 import { REPO, ecomono } from "../extensions/ecomono/index.ts"
@@ -86,14 +86,9 @@ const bash = (text: string, over: Record<string, any> = {}) => ({
 {
   // (5) ECOMONO_COMPRESS=off disables it, read per call.
   const { fire, ctx } = setup()
-  const prev = process.env.ECOMONO_COMPRESS
-  process.env.ECOMONO_COMPRESS = "off"
-  try {
+  await withEnv({ ECOMONO_COMPRESS: "off" }, async () => {
     assert.equal(await fire("tool_result", bash(bigBody), ctx), undefined)
-  } finally {
-    if (prev === undefined) delete process.env.ECOMONO_COMPRESS
-    else process.env.ECOMONO_COMPRESS = prev
-  }
+  })
   assert.ok(await fire("tool_result", bash(bigBody), ctx), "back on once the variable is restored")
 }
 
@@ -146,7 +141,7 @@ const bash = (text: string, over: Record<string, any> = {}) => ({
 
 {
   // (9) A repo without the hook script: pass through, one warning however many results follow.
-  const repo = mkdtempSync(join(tmpdir(), "ecomono-omp-norepo-"))
+  const repo = dir("norepo")
   const { fire, calls, ctx } = setup(repo)
   assert.equal(await fire("tool_result", bash(bigBody), ctx), undefined)
   assert.equal(await fire("tool_result", bash(bigBody), ctx), undefined)
@@ -158,14 +153,9 @@ const bash = (text: string, over: Record<string, any> = {}) => ({
   // (10) Compaction: the style text, unless compression is off.
   const { fire, ctx } = setup()
   assert.deepEqual(await fire("session.compacting", {}, ctx), { context: [STYLE] })
-  const prev = process.env.ECOMONO_COMPRESS
-  process.env.ECOMONO_COMPRESS = "off"
-  try {
+  await withEnv({ ECOMONO_COMPRESS: "off" }, async () => {
     assert.equal(await fire("session.compacting", {}, ctx), undefined)
-  } finally {
-    if (prev === undefined) delete process.env.ECOMONO_COMPRESS
-    else process.env.ECOMONO_COMPRESS = prev
-  }
+  })
 }
 
 {
@@ -198,6 +188,21 @@ const bash = (text: string, over: Record<string, any> = {}) => ({
   assert.equal(await fire("tool_result", bash("", { content }), ctx), undefined)
   assert.ok(calls.warn.some((l) => l.includes("handler failed") && l.includes("text gone")), calls.warn.join("\n"))
   assert.deepEqual(calls.failures, [])
+}
+
+{
+  // (13) The command that produced the output is forwarded as the hint: compressJson keeps the keys the command
+  // is known for (kubectl: metadata, spec, status). Every other case runs `seq 2000` on plain text, where the hint
+  // changes nothing, so dropping the argument would go unnoticed. The three keys come last, past the 8 an unhinted
+  // pass keeps. Past 50 lines, so that detectOutputFormat looks at it, and pretty-printed, since a one-line body cannot shrink.
+  const { fire, ctx } = setup()
+  const command = "kubectl get pod x -o json"
+  const filler = Object.fromEntries(Array.from({ length: 60 }, (_, i) => [`field${i}`, `value ${i}`]))
+  const body = JSON.stringify({ ...filler, metadata: { name: "x" }, spec: { replicas: 1 }, status: { phase: "Running" } }, null, 2)
+  const r = await fire("tool_result", bash(body, { input: { command } }), ctx)
+  assert.equal(r.content[0].text, ref.compressBash(body, command))
+  assert.notEqual(ref.compressBash(body, command), ref.compressBash(body), "the fixture must be one where the hint matters")
+  assert.ok(r.content[0].text.includes('"metadata"'), "the hinted key survived")
 }
 
 console.log("test_compress: all assertions passed")

@@ -3,19 +3,62 @@
 // Every test file imports this module FIRST. Module evaluation follows import order, so the isolation block
 // below runs before any extension or storage code loads.
 
-import { mkdtempSync } from "node:fs"
+import { mkdirSync, mkdtempSync, rmSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 
 // Isolation. opencode/plugins/storage/db.ts reads ECOMONO_DATA_DIR and ECOMONO_LEGACY_DB at
 // import and would otherwise ATTACH and back up the real ~/.engram/engram.db; logStats and the hook runner read
 // XDG_CACHE_HOME and XDG_STATE_HOME on every call and would otherwise write under the real home. The legacy DB
-// path is deliberately never created. Tests never change HOME: Bun's os.homedir() ignores a runtime HOME change.
+// path is deliberately never created. Bun's os.homedir() ignores a runtime HOME change, so expectations built from
+// it need no swap; a test changes process.env.HOME only for code that reads it per call (the skills check of
+// session_start).
 export const ISOLATED = mkdtempSync(join(tmpdir(), "ecomono-omp-test-"))
 process.env.XDG_CACHE_HOME = join(ISOLATED, "cache")
 process.env.XDG_STATE_HOME = join(ISOLATED, "state")
 process.env.ECOMONO_DATA_DIR = join(ISOLATED, "data")
 process.env.ECOMONO_LEGACY_DB = join(ISOLATED, "no-such-engram.db")
+// Ambient toggles of the shell running the suite: the compressor and its stats line read them per call, and a value
+// of "off" would fail the compression cases for a reason that has nothing to do with the code under test.
+delete process.env.ECOMONO_COMPRESS
+delete process.env.ECOMONO_COMPRESS_STATS
+
+// The temp tree is removed on a clean exit. A failing run keeps it, and so does ECOMONO_KEEP_TMP=1, so the evidence
+// (DBs, state logs, stub hooks) stays on disk.
+process.on("exit", (code) => {
+  if (code !== 0 || process.env.ECOMONO_KEEP_TMP) return
+  try {
+    rmSync(ISOLATED, { recursive: true, force: true })
+  } catch {}
+})
+
+// Helpers every test file needs and that import nothing from the extension, so they live here and not in each file.
+// One scratch tree and one counter serve the whole run.
+const SCRATCH = mkdtempSync(join(ISOLATED, "dirs-"))
+let dirSeq = 0
+/** A new empty directory under ISOLATED, named after `label`. */
+export const dir = (label: string): string => {
+  const d = join(SCRATCH, `${label}-${++dirSeq}`)
+  mkdirSync(d, { recursive: true })
+  return d
+}
+
+/** A short pause for fire-and-forget work (a never-awaited exec) to settle. */
+export const tick = () => new Promise((r) => setTimeout(r, 20))
+
+/** Runs fn with env keys set (undefined deletes), then restores them. */
+export const withEnv = async <T>(patch: Record<string, string | undefined>, fn: () => Promise<T>): Promise<T> => {
+  const saved = Object.fromEntries(Object.keys(patch).map((k) => [k, process.env[k]]))
+  const apply = (e: Record<string, string | undefined>) => {
+    for (const [k, v] of Object.entries(e)) v === undefined ? delete process.env[k] : (process.env[k] = v)
+  }
+  apply(patch)
+  try {
+    return await fn()
+  } finally {
+    apply(saved)
+  }
+}
 
 // The only events the extension may subscribe to. omp ignores unknown names silently, which would turn a typo
 // into a gate that never runs; the fake throws instead.

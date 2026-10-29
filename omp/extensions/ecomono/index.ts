@@ -293,6 +293,11 @@ interface Compressor {
   logStats(tool: string, before: string, after: string): void
 }
 
+// The time a gate script gets. Exported so omp/tests/test_gates.ts can hold it under omp's per-handler budget,
+// EXTENSION_HANDLER_TIMEOUT_MS = 30_000 (omp: extensibility/extensions/runner.ts:133), a mirrored constant that
+// docs/DESIGN.md, Version coupling, lists for re-checking on every omp upgrade.
+export const GATE_TIMEOUT_MS = 20_000
+
 // hooksDir and timeoutMs are test seams: the extension has no env knob for either. 20 s keeps the slowest gate
 // inside omp's 30 s per-handler budget, past which omp fails the call closed.
 // ecomono: the 20 s assumes omp's default extensionHandlers.toolCallTimeoutMs of 30 s (omp:
@@ -300,7 +305,7 @@ interface Compressor {
 // into a bash call failed CLOSED. Upgrade path: derive timeoutMs from the setting if extensions can ever read it.
 export function ecomono(o: { repo: string; hooksDir?: string; timeoutMs?: number }) {
   const hooksDir = o.hooksDir ?? join(o.repo, "claude/hooks")
-  const timeoutMs = o.timeoutMs ?? 20_000
+  const timeoutMs = o.timeoutMs ?? GATE_TIMEOUT_MS
   return (pi: ExtensionAPI): void => {
     // `onError`, when given, replaces the logger line for a caught fault; it must not throw.
     const safe =
@@ -315,6 +320,24 @@ export function ecomono(o: { repo: string; hooksDir?: string; timeoutMs?: number
           return undefined
         }
       }
+
+    // An event or ctx field that is not the shape omp 18.13.3 sends (docs/DESIGN.md, Version coupling). The check
+    // that reads it finds nothing and allows, so a renamed field would switch a gate off in silence: this says so,
+    // once per kind per session. It still allows, because failing closed on a shape mismatch would brick every
+    // session after an omp upgrade; the smoke (omp/tests/smoke.sh) is where the mismatch is meant to be caught.
+    const drifted = new Set<string>()
+    const drift = (kind: string, why: string): void => {
+      if (drifted.has(kind)) return
+      drifted.add(kind)
+      pi.logger.warn(`ecomono: unexpected omp shape, ${kind}: ${why}; the check that reads it is skipped (tested on omp 18.13.3)`)
+    }
+    // ctx.agent.kind, the key of every main-session-only and subagent-only branch below. Anything but "main" or
+    // "sub" makes all of them skip.
+    const agentKind = (ctx: any): unknown => {
+      const kind = ctx?.agent?.kind
+      if (kind !== "main" && kind !== "sub") drift("ctx.agent.kind", `got ${String(kind)}, expected "main" or "sub"`)
+      return kind
+    }
 
     // A warning notice where there is a UI. A notify that throws is logged, never raised.
     const notify = (ctx: any, text: string): void => {
@@ -471,7 +494,7 @@ export function ecomono(o: { repo: string; hooksDir?: string; timeoutMs?: number
       pi.logger.warn(`ecomono: skill registry not refreshed: ${why}`)
     }
     const refresh = (ctx: any): void => {
-      if (ctx?.agent?.kind !== "main") return
+      if (agentKind(ctx) !== "main") return
       pi.exec("node", [join(o.repo, "claude/hooks/ecomono-skill-registry.js"), "--quiet", "--cwd", ctx.cwd], {
         cwd: ctx.cwd,
         timeout: 30_000,
@@ -563,6 +586,7 @@ export function ecomono(o: { repo: string; hooksDir?: string; timeoutMs?: number
         // tools.restrictedFolders, or filtering the result in tool_result, once a leak is observed.
         if (PATH_TOOLS.has(event.toolName)) {
           const values = [...strings(input.path), ...strings(input.paths)]
+          if (event.toolName === "read" && values.length === 0) drift("read tool_call", "the input has no string path or paths")
           if (event.toolName === "edit") values.push(...editTargets(input))
           const hit = deny(ctx, values)
           if (!hit) return undefined
@@ -590,6 +614,7 @@ export function ecomono(o: { repo: string; hooksDir?: string; timeoutMs?: number
         // (session/agent-session.ts:9825-9840), has its mentions read too and is not seen here. Upgrade path: deny
         // their mentions at the event that carries them, if one is ever exposed to extensions.
         if (event.toolName === "task") {
+          if (!Array.isArray(input.tasks) && typeof input.agent !== "string") drift("task tool_call", "the input has neither tasks[] nor a string agent")
           const items: unknown[] = Array.isArray(input.tasks) ? input.tasks : [input]
           const mentions = items.flatMap((item: any) => (typeof item?.task === "string" ? fileMentions(item.task) : []))
           const mentioned = deny(ctx, mentions)
@@ -620,7 +645,11 @@ export function ecomono(o: { repo: string; hooksDir?: string; timeoutMs?: number
         // branch covers both routes.
         if (typeof event.toolName === "string" && event.toolName.startsWith(MEMORY_TOOL)) {
           const agent = ctx?.agent
-          if (agent?.kind !== "sub" || typeof agent.name !== "string") return undefined
+          if (agentKind(ctx) !== "sub") return undefined
+          if (typeof agent.name !== "string") {
+            drift("ctx.agent.name", `a subagent has no string name (got ${String(agent.name)}), so its memory guard is skipped`)
+            return undefined
+          }
           const allowed = memoryAllowed(agent.name)
           if (allowed === null || allowed.has(event.toolName.slice(MEMORY_TOOL.length))) return undefined
           return {
@@ -739,7 +768,11 @@ export function ecomono(o: { repo: string; hooksDir?: string; timeoutMs?: number
       "before_subagent_spawn",
       safe((event: any, ctx: any) => {
         const patterns = event?.patterns
-        if (!Array.isArray(patterns) || patterns.length !== 1 || typeof patterns[0] !== "string") return undefined
+        if (!Array.isArray(patterns)) {
+          drift("before_subagent_spawn", "patterns is not an array")
+          return undefined
+        }
+        if (patterns.length !== 1 || typeof patterns[0] !== "string") return undefined
         const pattern: string = patterns[0]
         const tier = pattern.toLowerCase()
         if (Object.hasOwn(TIER_ROLE, tier)) {
@@ -775,7 +808,7 @@ export function ecomono(o: { repo: string; hooksDir?: string; timeoutMs?: number
     pi.on(
       "session_start",
       safe((_event: any, ctx: any) => {
-        if (ctx?.agent?.kind !== "main") return undefined
+        if (agentKind(ctx) !== "main") return undefined
         // Checked before the skills guard below, which returns early on a healthy tree. Three gate scripts
         // (secret-access, review-receipt, judge-standards) exit 0 with no output when jq is missing, which
         // runHook reads as a deliberate allow and so reports nothing; check-diff-size.sh exits 127 and is
@@ -857,7 +890,7 @@ export function ecomono(o: { repo: string; hooksDir?: string; timeoutMs?: number
     // event loop, before the prompt is sent, and a session's cwd is stable. OpenCode derives it once at plugin init.
     const projects = new Map<string, string>()
     const capture = async (event: any, ctx: any): Promise<void> => {
-      if (ctx?.agent?.kind !== "main" || typeof event?.prompt !== "string") return
+      if (agentKind(ctx) !== "main" || typeof event?.prompt !== "string") return
       const text = event.prompt.trim()
       if (!text) return
       const s = await loadStorage()

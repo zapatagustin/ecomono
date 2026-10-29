@@ -1,29 +1,28 @@
 // The org-todo widget of the omp extension and the parser it shares with OpenCode's TUI plugin, driven through
 // fake-pi. Plain assert script. pi.exec is a stub: no omp, no network; the one real process is the grep that
 // checks the shared PATTERN against fixture files in a temp dir.
-import { ISOLATED, makeCtx, makePi } from "./fake-pi.ts"
+import { dir, makeCtx, makePi, tick, withEnv } from "./fake-pi.ts"
 import assert from "node:assert/strict"
 import { spawnSync } from "node:child_process"
-import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs"
+import { mkdirSync, writeFileSync } from "node:fs"
 import { homedir } from "node:os"
 import { join } from "node:path"
 import { PATTERN, parse } from "../../opencode/tui-plugins/org-todo/core.ts"
 import { REPO, ecomono } from "../extensions/ecomono/index.ts"
 
-const TMP = mkdtempSync(join(ISOLATED, "org-todo-"))
-let seq = 0
-const dir = (label: string) => {
-  const d = join(TMP, `${label}-${++seq}`)
-  mkdirSync(d, { recursive: true })
-  return d
-}
+// A main session_start checks $HOME/.claude/skills/ecomono-sdd-shared (the extension reads process.env.HOME per
+// call), so the file runs under a temp HOME that has it: the real home is never consulted and the machine cannot
+// change a result. Restored at the end of the file.
+const hostHome = process.env.HOME
+const fakeHome = dir("home")
+mkdirSync(join(fakeHome, ".claude/skills/ecomono-sdd-shared"), { recursive: true })
+process.env.HOME = fakeHome
 
 const setup = (over: Record<string, any> = {}, opts: Parameters<typeof makePi>[0] = {}) => {
   const { pi, fire, calls } = makePi(opts)
   ecomono({ repo: REPO })(pi)
   return { fire, calls, ctx: makeCtx(over) }
 }
-const settle = () => new Promise((r) => setTimeout(r, 20))
 /** A hang in the code under test fails the run instead of freezing it. */
 const within = <T>(p: Promise<T>, ms = 2000): Promise<T> =>
   Promise.race([p, new Promise<never>((_, rej) => setTimeout(() => rej(new Error(`still pending after ${ms} ms`)), ms))])
@@ -87,7 +86,7 @@ for (const [label, over] of [
 ] as const) {
   const { fire, calls, ctx } = setup(over)
   await start(ctx, fire)
-  await settle()
+  await tick()
   assert.equal(greps(calls).length, 0, `${label}: no grep`)
   assert.equal(ctx.recorded.setInterval.length, 0, `${label}: no timer`)
   assert.equal(ctx.recorded.setWidget.length, 0, `${label}: no widget`)
@@ -99,14 +98,12 @@ for (const [label, over] of [
 {
   // Main TUI session: one grep now over <cwd>/docs and the org directory, one timer at 3000 ms.
   const orgDir = dir("org-dir")
-  const saved = process.env.ECOMONO_ORG_DIR
-  process.env.ECOMONO_ORG_DIR = orgDir
-  try {
+  await withEnv({ ECOMONO_ORG_DIR: orgDir }, async () => {
     const cwd = dir("project")
     const rows = Array.from({ length: 12 }, (_, i) => `${cwd}/docs/n${i + 1}.md:${i + 1}:- [ ] item ${i + 1}`)
     const { fire, calls, ctx } = setup({ cwd, mode: "tui", hasUI: true }, { exec: (command) => (command === "grep" ? grepOut(rows.join("\n")) : nodeOk) })
     assert.equal(await start(ctx, fire), undefined)
-    await settle()
+    await tick()
 
     assert.equal(greps(calls).length, 1)
     const [command, args, options] = greps(calls)[0]!
@@ -129,28 +126,21 @@ for (const [label, over] of [
 
     // The timer callback runs the same tick again.
     await ctx.recorded.setInterval[0]![0]()
-    await settle()
+    await tick()
     assert.equal(greps(calls).length, 2)
     assert.equal(ctx.recorded.setWidget.length, 2)
     assert.deepEqual(calls.failures, [])
     assert.deepEqual(calls.warn, [])
-  } finally {
-    if (saved === undefined) delete process.env.ECOMONO_ORG_DIR
-    else process.env.ECOMONO_ORG_DIR = saved
-  }
+  })
 }
 
 {
   // Without ECOMONO_ORG_DIR the org directory is ~/work/org (a path only: nothing is read from it here).
-  const saved = process.env.ECOMONO_ORG_DIR
-  delete process.env.ECOMONO_ORG_DIR
-  try {
+  await withEnv({ ECOMONO_ORG_DIR: undefined }, async () => {
     const { fire, calls, ctx } = setup({ mode: "tui", hasUI: true })
     await start(ctx, fire)
     assert.equal(greps(calls)[0]![1].at(-1), join(homedir(), "work/org"))
-  } finally {
-    if (saved !== undefined) process.env.ECOMONO_ORG_DIR = saved
-  }
+  })
 }
 
 {
@@ -159,7 +149,7 @@ for (const [label, over] of [
   let todos = `${cwd}/docs/long.md:3:- [ ] ${"x".repeat(200)}`
   const { fire, ctx } = setup({ cwd, mode: "tui", hasUI: true }, { exec: (command) => (command === "grep" ? grepOut(todos) : nodeOk) })
   await start(ctx, fire)
-  await settle()
+  await tick()
   const [, lines] = ctx.recorded.setWidget[0]!
   assert.equal(lines[0], "todo 1")
   assert.equal(lines.length, 2)
@@ -168,7 +158,7 @@ for (const [label, over] of [
 
   todos = ""
   await ctx.recorded.setInterval[0]![0]()
-  await settle()
+  await tick()
   assert.equal(ctx.recorded.setWidget.length, 2)
   assert.deepEqual(ctx.recorded.setWidget[1], ["org-todo", undefined])
 }
@@ -184,7 +174,7 @@ for (const [label, over] of [
     const rejecting = setup({ mode: "tui", hasUI: true }, { exec: () => Promise.reject(new Error("grep rejected")) })
     await start(rejecting.ctx, rejecting.fire)
     await rejecting.ctx.recorded.setInterval[0]![0]()
-    await settle()
+    await tick()
     assert.equal(greps(rejecting.calls).length, 2)
     assert.equal(rejecting.ctx.recorded.setWidget.length, 0)
     assert.deepEqual(rejecting.calls.failures, [])
@@ -197,7 +187,7 @@ for (const [label, over] of [
       },
     })
     assert.equal(await start(throwing.ctx, throwing.fire), undefined)
-    await settle()
+    await tick()
     assert.deepEqual(throwing.calls.failures, [], "safe() contains a synchronous failure")
     assert.ok(throwing.calls.warn.some((l) => l.includes("exec threw")))
   } finally {
@@ -214,22 +204,25 @@ for (const [label, over] of [
   let result: any = grepOut(`${cwd}/docs/a.md:1:- [ ] one`)
   const { fire, calls, ctx } = setup({ cwd, mode: "tui", hasUI: true }, { exec: (command) => (command === "grep" ? result : nodeOk) })
   await start(ctx, fire)
-  await settle()
+  await tick()
   assert.equal(ctx.recorded.setWidget.length, 1)
 
   result = { stdout: `${cwd}/docs/a.md:1:- [ ] one`, stderr: "", code: -1, killed: true }
   await ctx.recorded.setInterval[0]![0]()
   await ctx.recorded.setInterval[0]![0]()
-  await settle()
+  await tick()
   assert.equal(ctx.recorded.setWidget.length, 1, "a killed grep leaves the widget as it was")
   assert.deepEqual(calls.warn, ["ecomono: org-todo grep timed out; keeping the previous widget"])
 
   result = { stdout: `${cwd}/docs/a.md:1:- [ ] one\n${cwd}/docs/b.md:2:- [ ] two`, stderr: "", code: 2, killed: false }
   await ctx.recorded.setInterval[0]![0]()
-  await settle()
+  await tick()
   assert.equal(ctx.recorded.setWidget.length, 2)
   assert.equal(ctx.recorded.setWidget[1]![1][0], "todo 2")
   assert.deepEqual(calls.failures, [])
 }
+
+if (hostHome === undefined) delete process.env.HOME
+else process.env.HOME = hostHome
 
 console.log("test_org_todo: all assertions passed")

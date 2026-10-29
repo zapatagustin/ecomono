@@ -1,25 +1,24 @@
 // Subagent tier routing, the memory write guard and the skill-registry refresh of the omp extension, driven
 // through fake-pi. Plain assert script. No real LLM, no real registry run: pi.exec is a stub.
-import { ISOLATED, makeCtx, makePi } from "./fake-pi.ts"
+import { dir, makeCtx, makePi, tick, withEnv } from "./fake-pi.ts"
 import assert from "node:assert/strict"
-import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs"
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs"
 import { join } from "node:path"
 import { REPO, TIER_ROLE, ecomono } from "../extensions/ecomono/index.ts"
 
-const TMP = mkdtempSync(join(ISOLATED, "spawn-"))
-let seq = 0
-const dir = (label: string) => {
-  const d = join(TMP, `${label}-${++seq}`)
-  mkdirSync(d, { recursive: true })
-  return d
-}
+// A main session_start checks $HOME/.claude/skills/ecomono-sdd-shared (the extension reads process.env.HOME per
+// call), so the file runs under a temp HOME that has it: the real home is never consulted and the machine cannot
+// change a result. The blocks that test the check itself swap HOME again with withEnv. Restored at the end.
+const hostHome = process.env.HOME
+const fileHome = dir("home")
+mkdirSync(join(fileHome, ".claude/skills/ecomono-sdd-shared"), { recursive: true })
+process.env.HOME = fileHome
 
 const setup = (over: Record<string, any> = {}, opts: Parameters<typeof makePi>[0] = {}, repo = REPO) => {
   const { pi, fire, calls } = makePi(opts)
   ecomono({ repo })(pi)
   return { fire, calls, ctx: makeCtx(over) }
 }
-const settle = () => new Promise((r) => setTimeout(r, 20))
 /** A hang in the code under test fails the run instead of freezing it. */
 const within = <T>(p: Promise<T>, ms = 2000): Promise<T> =>
   Promise.race([p, new Promise<never>((_, rej) => setTimeout(() => rej(new Error(`still pending after ${ms} ms`)), ms))])
@@ -180,6 +179,7 @@ const sub = (name: string) => ({ agent: { kind: "sub", id: `0-${name}`, name, de
   agent("crlf", "---\r\nname: crlf\r\ntools: mcp__ecomono-memory__mem_save\r\n---\r\n")
   agent("bodytools", "---\nname: bodytools\ntools: Read\n---\ntools: mcp__ecomono-memory__mem_save\n")
   agent("notools", "---\nname: notools\ndescription: d\n---\n")
+  agent("bodyonly", "---\nname: bodyonly\n---\ntools: mcp__ecomono-memory__mem_search\n")
   agent("nofront", "tools: Read\n")
   agent("unclosed", "---\ntools: Read\n")
   agent("othermcp", "---\nname: othermcp\ntools: mcp__context7__query-docs, mcp__ecomono-memory-x__mem_save, mcp__ecomono_memory__mem_save\n---\n")
@@ -192,6 +192,7 @@ const sub = (name: string) => ({ agent: { kind: "sub", id: `0-${name}`, name, de
   assert.equal(await call("crlf"), undefined)
   assert.equal((await call("bodytools")).block, true, "a tools: line in the body is not the frontmatter's")
   assert.equal(await call("notools"), undefined)
+  assert.equal(await call("bodyonly"), undefined, "a frontmatter without tools: is not restricted by a tools: line below it")
   assert.equal(await call("nofront"), undefined)
   assert.equal(await call("unclosed"), undefined)
   assert.equal((await call("othermcp")).block, true, "only mcp__ecomono-memory__ entries count")
@@ -281,7 +282,7 @@ const never = () => new Promise(() => {})
     assert.equal(rejecting.calls.exec.length, 2)
     assert.deepEqual(rejecting.calls.failures, [])
     // Logged, once per session although it runs on every prompt.
-    await settle()
+    await tick()
     const refreshWarns = (c: typeof rejecting.calls) => c.warn.filter((l) => l.includes("skill registry not refreshed"))
     assert.equal(refreshWarns(rejecting.calls).length, 1)
     assert.ok(refreshWarns(rejecting.calls)[0].includes("exec rejected"))
@@ -289,7 +290,7 @@ const never = () => new Promise(() => {})
     // No node on PATH: pi.exec rejects with ENOENT, named as such.
     const enoent = setup({}, { exec: () => Promise.reject(Object.assign(new Error("spawn node ENOENT"), { code: "ENOENT" })) })
     await within(enoent.fire("before_agent_start", { reason: "prompt", prompt: "x" }, enoent.ctx))
-    await settle()
+    await tick()
     assert.deepEqual(refreshWarns(enoent.calls), ["ecomono: skill registry not refreshed: node not on PATH"])
 
     // A timeout or a crash resolves instead of rejecting; both are failures too. Exit 0 is silent.
@@ -299,20 +300,20 @@ const never = () => new Promise(() => {})
     ] as const) {
       const t = setup({}, { exec: () => result })
       await within(t.fire("before_agent_start", { reason: "prompt", prompt: "x" }, t.ctx))
-      await settle()
+      await tick()
       assert.equal(refreshWarns(t.calls).length, 1, want)
       assert.ok(refreshWarns(t.calls)[0].includes(want), refreshWarns(t.calls)[0])
     }
     const ok = setup({}, { exec: () => ({ stdout: "", stderr: "", code: 0, killed: false }) })
     await within(ok.fire("before_agent_start", { reason: "prompt", prompt: "x" }, ok.ctx))
-    await settle()
+    await tick()
     assert.deepEqual(refreshWarns(ok.calls), [])
 
     const throwing = setup({}, { exec: () => { throw new Error("exec threw") } })
     assert.equal(await within(throwing.fire("before_agent_start", { reason: "prompt", prompt: "x" }, throwing.ctx)), undefined)
     assert.ok(throwing.calls.warn.some((l) => l.includes("exec threw")), "a synchronous failure is logged by safe()")
     assert.deepEqual(throwing.calls.failures, [])
-    await settle()
+    await tick()
   } finally {
     process.off("unhandledRejection", onUnhandled)
   }
@@ -324,11 +325,11 @@ const never = () => new Promise(() => {})
 // HOME is about os.homedir(), which Bun does not re-read).
 
 {
-  const realHome = process.env.HOME
-  try {
+  const bare = dir("home")
+  const full = dir("home")
+  mkdirSync(join(full, ".claude/skills/ecomono-sdd-shared"), { recursive: true })
+  await withEnv({ HOME: bare }, async () => {
     // Absent: one notify across two session_start calls, naming the tree and who reads it.
-    const bare = dir("home")
-    process.env.HOME = bare
     const a = setup({ hasUI: true })
     await a.fire("session_start", { reason: "start" }, a.ctx)
     await a.fire("session_start", { reason: "start" }, a.ctx)
@@ -355,8 +356,6 @@ const never = () => new Promise(() => {})
     assert.deepEqual(s.calls.warn, [])
 
     // Present: silence, and it is read per call, so the tree appearing mid-session ends the warning.
-    const full = dir("home")
-    mkdirSync(join(full, ".claude/skills/ecomono-sdd-shared"), { recursive: true })
     process.env.HOME = full
     const p = setup({ hasUI: true })
     await p.fire("session_start", { reason: "start" }, p.ctx)
@@ -372,11 +371,8 @@ const never = () => new Promise(() => {})
     await t.fire("session_start", { reason: "start" }, t.ctx)
     assert.ok(t.calls.warn.some((l) => l.includes("ui gone")))
     assert.deepEqual(t.calls.failures, [])
-  } finally {
-    if (realHome === undefined) delete process.env.HOME
-    else process.env.HOME = realHome
-  }
-  assert.equal(process.env.HOME, realHome)
+  })
+  assert.equal(process.env.HOME, fileHome, "withEnv restored the file's HOME")
 }
 
 // ---- jq missing ----------------------------------------------------------------------------------------------------
@@ -384,16 +380,12 @@ const never = () => new Promise(() => {})
 // read per call, so an empty directory stands in for "jq not installed".
 
 {
-  const realHome = process.env.HOME
   const realPath = process.env.PATH
   const stateLog = join(process.env.XDG_STATE_HOME!, "ecomono", "ecomono.log")
-  try {
-    // A healthy skills tree must not hide the jq warning: the two checks have separate once-flags.
-    const full = dir("home")
-    mkdirSync(join(full, ".claude/skills/ecomono-sdd-shared"), { recursive: true })
-    process.env.HOME = full
-    process.env.PATH = dir("empty-path")
-
+  // A healthy skills tree must not hide the jq warning: the two checks have separate once-flags.
+  const full = dir("home")
+  mkdirSync(join(full, ".claude/skills/ecomono-sdd-shared"), { recursive: true })
+  await withEnv({ HOME: full, PATH: dir("empty-path") }, async () => {
     const a = setup({ hasUI: true })
     await a.fire("session_start", { reason: "start" }, a.ctx)
     await a.fire("session_start", { reason: "start" }, a.ctx)
@@ -423,11 +415,52 @@ const never = () => new Promise(() => {})
     await p.fire("session_start", { reason: "start" }, p.ctx)
     assert.equal(p.ctx.recorded.notify.length, 0)
     assert.deepEqual(p.calls.warn, [])
-  } finally {
-    if (realHome === undefined) delete process.env.HOME
-    else process.env.HOME = realHome
-    process.env.PATH = realPath
-  }
+  })
+  assert.equal(process.env.PATH, realPath, "withEnv restored PATH")
 }
+
+// ---- shape drift ---------------------------------------------------------------------------------------------------
+// An event or ctx field that is not the shape omp 18.13.3 sends skips the check that reads it. The extension still
+// allows, and says so once per kind and session, so a renamed field does not switch a gate off in silence.
+
+{
+  const drift = (c: ReturnType<typeof makePi>["calls"]) => c.warn.filter((l) => l.includes("unexpected omp shape"))
+
+  // before_subagent_spawn without an array `patterns`: allowed, one warning however many spawns follow.
+  const { fire, calls } = setup()
+  assert.equal(await fire("before_subagent_spawn", { agent: "ecomono-explore", invocationKind: "task", model: "sonnet" }, makeCtx()), undefined)
+  assert.equal(await fire("before_subagent_spawn", { agent: "ecomono-explore", invocationKind: "task" }, makeCtx()), undefined)
+  assert.equal(drift(calls).length, 1)
+  assert.ok(drift(calls)[0].includes("before_subagent_spawn") && drift(calls)[0].includes("patterns"), drift(calls)[0])
+  // A well-formed event that simply is not a tier word stays silent.
+  assert.equal(await fire("before_subagent_spawn", spawn(["a/b", "c/d"]), makeCtx()), undefined)
+  assert.equal(drift(calls).length, 1)
+
+  // ctx.agent without a kind: the memory guard and the main-session handlers skip, once.
+  const noKind = setup()
+  const odd = makeCtx({ agent: { id: "x", name: "ecomono-explore" } })
+  assert.equal(await noKind.fire("tool_call", mem(SAVE), odd), undefined)
+  assert.equal(await noKind.fire("tool_call", mem(SAVE), odd), undefined)
+  await noKind.fire("session_start", { reason: "start" }, odd)
+  assert.equal(drift(noKind.calls).length, 1)
+  assert.ok(drift(noKind.calls)[0].includes("ctx.agent.kind"), drift(noKind.calls)[0])
+
+  // A subagent without a string name: the guard has no file to read, so it skips, once.
+  const noName = setup()
+  const nameless = makeCtx({ agent: { kind: "sub", id: "x" } })
+  assert.equal(await noName.fire("tool_call", mem(SAVE), nameless), undefined)
+  assert.equal(await noName.fire("tool_call", mem(SAVE), nameless), undefined)
+  assert.equal(drift(noName.calls).length, 1)
+  assert.ok(drift(noName.calls)[0].includes("ctx.agent.name"), drift(noName.calls)[0])
+
+  // A healthy session and subagent never warn.
+  const ok = setup()
+  await ok.fire("session_start", { reason: "start" }, makeCtx())
+  await ok.fire("tool_call", mem(SEARCH), makeCtx(sub("ecomono-explore")))
+  assert.equal(drift(ok.calls).length, 0)
+}
+
+if (hostHome === undefined) delete process.env.HOME
+else process.env.HOME = hostHome
 
 console.log("test_spawn: all assertions passed")

@@ -2,22 +2,15 @@
 // script. Gate scripts are executable stubs in a temp hooksDir that print a fixed decision, fail, or record what
 // they received; the real Claude scripts are used only in the "real script" block. No command under test ever
 // runs: `rm -rf` and credential paths are only ever event input.
-import { ISOLATED, makeCtx, makePi } from "./fake-pi.ts"
+import { dir, makeCtx, makePi, withEnv } from "./fake-pi.ts"
 import assert from "node:assert/strict"
 import { execFileSync } from "node:child_process"
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs"
+import { chmodSync, existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs"
 import { homedir } from "node:os"
 import { join } from "node:path"
 import { runHook } from "../../opencode/plugins/hook-runner/core.ts"
-import { REPO, ecomono } from "../extensions/ecomono/index.ts"
+import { GATE_TIMEOUT_MS, REPO, ecomono } from "../extensions/ecomono/index.ts"
 
-const TMP = mkdtempSync(join(ISOLATED, "gates-"))
-let seq = 0
-const dir = (label: string) => {
-  const d = join(TMP, `${label}-${++seq}`)
-  mkdirSync(d, { recursive: true })
-  return d
-}
 const stub = (d: string, name: string, body: string) => {
   const f = join(d, `${name}.sh`)
   writeFileSync(f, `#!/bin/sh\n${body}\n`)
@@ -65,18 +58,22 @@ const bash = (command: unknown, extra: Record<string, any> = {}) => ({
 })
 const github = (op: string) => ({ toolName: "github", toolCallId: "call-1", input: { op } })
 
-/** Runs fn with env keys set (undefined deletes), then restores them. */
-const withEnv = async <T>(patch: Record<string, string | undefined>, fn: () => Promise<T>): Promise<T> => {
-  const saved = Object.fromEntries(Object.keys(patch).map((k) => [k, process.env[k]]))
-  const apply = (e: Record<string, string | undefined>) => {
-    for (const [k, v] of Object.entries(e)) v === undefined ? delete process.env[k] : (process.env[k] = v)
-  }
-  apply(patch)
-  try {
-    return await fn()
-  } finally {
-    apply(saved)
-  }
+/**
+ * A stub body that proves its gates run at the same time, without reading a clock: each touches its own marker
+ * in `d`, then waits until `n` markers exist (deadline about 5 s, well under the 20 s gate timeout) and exits 1 if
+ * they never do. A serial runner never gets past the first gate, which then fails open with a warning; a concurrent
+ * one allows the call at any machine load.
+ */
+const rendezvous = (d: string, n: number) =>
+  `${ALLOW}; touch "${d}/m.$$"; i=0
+while [ "$(ls "${d}" | wc -l)" -lt ${n} ] && [ $i -lt 100 ]; do sleep 0.05; i=$((i+1)); done
+[ "$(ls "${d}" | wc -l)" -ge ${n} ] || exit 1`
+
+{
+  // The gate timeout stays inside omp's 30 s per-handler budget (omp: extensibility/extensions/runner.ts:133
+  // EXTENSION_HANDLER_TIMEOUT_MS), past which omp fails the call CLOSED. A mirror of that constant: re-check it on an
+  // omp upgrade (docs/DESIGN.md, Version coupling).
+  assert.ok(GATE_TIMEOUT_MS < 30_000, `the gate timeout ${GATE_TIMEOUT_MS} ms must stay under omp's 30000 ms handler budget`)
 }
 
 {
@@ -135,6 +132,9 @@ const withEnv = async <T>(patch: Record<string, string | undefined>, fn: () => P
   const { fire, ctx } = setup({ repo, hooksDir: hooks() })
   assert.equal((await fire("tool_call", bash("deploy   prod"), ctx))?.block, true)
   assert.equal(await fire("tool_call", bash("rm -rf /"), ctx), undefined)
+  // The other direction of the guard: no literal of the real template survives in the extension, so an extra
+  // hard-coded one (`denyLiterals.push("rm -rf /*")`) would block here.
+  for (const e of entries) assert.equal(await fire("tool_call", bash(e), ctx), undefined, `${e}: not in this template, so not blocked`)
   assert.equal(await fire("tool_call", bash(".env"), ctx), undefined, "only Bash(...) entries count")
 
   // An unreadable or unparseable template: one warning, no literal blocks, the gates still run.
@@ -218,13 +218,31 @@ const withEnv = async <T>(patch: Record<string, string | undefined>, fn: () => P
 }
 
 {
-  // The three scripts run concurrently: wall time is the slowest one, not the sum.
-  const slow = `${ALLOW}; sleep 0.6`
-  const { fire, ctx } = setup({ hooksDir: hooks({ "secret-access-gate": slow, "check-diff-size": slow, "review-receipt-gate": slow }) })
-  const t0 = performance.now()
+  // The three scripts run concurrently: each waits until all three are running (rendezvous), so a serial runner
+  // times its first gate out, which fails open and warns.
+  const wait = rendezvous(dir("rendezvous"), 3)
+  const { fire, calls, ctx } = setup({ hooksDir: hooks({ "secret-access-gate": wait, "check-diff-size": wait, "review-receipt-gate": wait }) })
   assert.equal(await fire("tool_call", bash("ls"), ctx), undefined)
-  const ms = performance.now() - t0
-  assert.ok(ms >= 550 && ms < 1500, `three 0.6 s gates ran in ${Math.round(ms)} ms`)
+  assert.deepEqual(calls.warn.filter((l) => l.includes("failing open")), [], "a gate timed out waiting for the others: they did not run together")
+}
+
+{
+  // A task call with neither tasks[] nor a string agent is a shape omp 18.13.3 never sends: allowed, with one
+  // warning that the judge gate skipped it. A well-formed one stays silent.
+  const hooksDir = hooks()
+  stub(hooksDir, "judge-standards-gate", ALLOW)
+  const { fire, calls, ctx } = setup({ hooksDir })
+  const task = (input: unknown) => ({ toolName: "task", toolCallId: "call-1", input })
+  for (const input of [{}, { agnt: "ecomono-judge-a", task: "x" }, { tasks: "nope" }]) {
+    assert.equal(await fire("tool_call", task(input), ctx), undefined, JSON.stringify(input))
+  }
+  const drift = calls.warn.filter((l) => l.includes("unexpected omp shape"))
+  assert.equal(drift.length, 1)
+  assert.ok(drift[0].includes("task tool_call"), drift[0])
+  const quiet = setup({ hooksDir })
+  await quiet.fire("tool_call", task({ agent: "explore", task: "x" }), quiet.ctx)
+  await quiet.fire("tool_call", task({ tasks: [{ agent: "explore", task: "x" }] }), quiet.ctx)
+  assert.deepEqual(quiet.calls.warn, [])
 }
 
 // ---- faults fail open, are reported, notify once ------------------------------------------------------------
@@ -368,7 +386,7 @@ const withEnv = async <T>(patch: Record<string, string | undefined>, fn: () => P
 // ---- malformed events ---------------------------------------------------------------------------------------
 
 {
-  const { fire, ctx } = setup({ hooksDir: hooks({ "secret-access-gate": say("deny", "R") }) })
+  const { fire, calls, ctx } = setup({ hooksDir: hooks({ "secret-access-gate": say("deny", "R") }) })
   for (const ev of [
     { toolName: "bash", input: null },
     { toolName: "bash", input: "ls" },
@@ -385,6 +403,8 @@ const withEnv = async <T>(patch: Record<string, string | undefined>, fn: () => P
   ]) {
     assert.equal(await fire("tool_call", ev, ctx), undefined, JSON.stringify(ev))
   }
+  // safe() would turn a TypeError into the same undefined, so the guard's own effect is that nothing threw.
+  assert.ok(calls.warn.every((l) => !l.includes("handler failed")), calls.warn.join("\n"))
 }
 
 // ---- the real Claude scripts --------------------------------------------------------------------------------
@@ -552,17 +572,15 @@ const withEnv = async <T>(patch: Record<string, string | undefined>, fn: () => P
   assert.equal(seen().length, 2, "both items were judged")
   for (const f of readdirSync(d)) rmSync(join(d, f))
 
-  // The items run concurrently: wall time is the slowest script, not the sum.
+  // The items run concurrently: the same rendezvous as for the bash gates, one marker per judge run.
   const slowDir = dir("hooks")
-  stub(slowDir, "judge-standards-gate", `${ALLOW}; sleep 0.6`)
+  stub(slowDir, "judge-standards-gate", rendezvous(dir("rendezvous"), 3))
   const slow = setup({ hooksDir: slowDir })
-  const t0 = performance.now()
   assert.equal(
     await slow.fire("tool_call", task({ tasks: [{ agent: "a1", task: "x" }, { agent: "a2", task: "x" }, { agent: "a3", task: "x" }] }), slow.ctx),
     undefined,
   )
-  const ms = performance.now() - t0
-  assert.ok(ms >= 550 && ms < 1500, `three 0.6 s judge gates ran in ${Math.round(ms)} ms`)
+  assert.deepEqual(slow.calls.warn.filter((l) => l.includes("failing open")), [], "a judge gate timed out waiting for the others")
 
   // A script that is missing or fails fails open, like the other gates.
   const missing = setup({ hooksDir: dir("hooks") })
@@ -575,7 +593,8 @@ const withEnv = async <T>(patch: Record<string, string | undefined>, fn: () => P
 {
   const d = dir("probe")
   const sleeper = stub(d, "sleeper", "exec sleep 5")
-  const say2 = (body: object) => stub(d, `say-${++seq}`, `cat >/dev/null\ncat <<'EOF'\n${JSON.stringify(body)}\nEOF`)
+  let sayN = 0
+  const say2 = (body: object) => stub(d, `say-${++sayN}`, `cat >/dev/null\ncat <<'EOF'\n${JSON.stringify(body)}\nEOF`)
   const cwd = dir("cwd")
   const settle = (p: Promise<unknown>) => p.then((v) => ({ ok: true as const, v }), (e) => ({ ok: false as const, e }))
   const wait = (ms: number) => new Promise((r) => setTimeout(r, ms))

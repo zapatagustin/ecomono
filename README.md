@@ -428,9 +428,11 @@ Notes:
   prompt template as its expanded body. The session id a model passes to the memory tools
   is not joined to the omp session id, as in OpenCode.
 
-Upgrade protocol. The tested version is **omp 18.13.3**; the smoke warns on any other.
+Upgrade protocol. The tested version is **omp 18.13.3**; the smoke exits non-zero on any
+other unless `ECOMONO_OMP_UNTESTED=1` is set.
 nixos-config pins omp in its `flake.lock`. After `nix flake update oh-my-pi` and a switch,
-run `bash omp/tests/smoke.sh` and `bash omp/tests/smoke.sh --installed` before relying on
+run `ECOMONO_OMP_UNTESTED=1 bash omp/tests/smoke.sh` and
+`ECOMONO_OMP_UNTESTED=1 bash omp/tests/smoke.sh --installed` before relying on
 the gates, and diff the code the extension mirrors (`tools/path-utils.ts` and
 `internal-urls/ssh-protocol.ts` in omp, `tools/read.ts` in pi-tui; `docs/DESIGN.md`
 "Version coupling" lists the ranges) against the new release. If something breaks, `omp --no-extensions` is the kill

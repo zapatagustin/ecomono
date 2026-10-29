@@ -107,6 +107,22 @@ const unclassified = (templateText: string): string[] => referenced(templateText
   const template = text("claude/settings.template.json")
   assert.deepEqual(unclassified(template), [], "claude/settings.template.json registers a hook that CLAUDE_HOOKS (omp/extensions/ecomono/index.ts) does not classify")
 
+  // Every hook entry is a command that runs a script under .claude/hooks, so referenced() cannot skip one in
+  // silence: an entry without a string command (type prompt, say) or a command with another spelling would
+  // otherwise be classified by nobody.
+  const parsed = JSON.parse(template)
+  for (const [event, groups] of Object.entries<any>(parsed.hooks)) {
+    for (const [g, group] of groups.entries()) {
+      for (const [h, entry] of (group?.hooks ?? []).entries()) {
+        const where = `hooks.${event}[${g}].hooks[${h}] (${JSON.stringify(entry)})`
+        assert.equal(typeof entry?.command, "string", `claude/settings.template.json ${where}: no string command, so no omp disposition can be checked`)
+        assert.ok(entry.command.includes(".claude/hooks/"), `claude/settings.template.json ${where}: the command does not run a script under .claude/hooks`)
+      }
+    }
+  }
+  const status = parsed.statusLine?.command
+  assert.ok(typeof status !== "string" || status.includes(".claude/hooks/"), `claude/settings.template.json statusLine (${status}): the command does not run a script under .claude/hooks`)
+
   // Guard: the scan sees the real hooks, so an empty result above cannot mean it found nothing.
   assert.deepEqual(referenced(template).sort(), Object.keys(CLAUDE_HOOKS).sort(), "CLAUDE_HOOKS and the template's hook scripts differ")
 
@@ -131,23 +147,28 @@ const unclassified = (templateText: string): string[] => referenced(templateText
 
 // ---- (e) the agents stay safe for omp's frontmatter parser and tier routing ---------------------------------
 
-/** Top-level frontmatter keys. A value runs over its indented continuation lines, so `description: >` blocks read whole. */
-function frontmatter(src: string): Record<string, string> {
+/**
+ * The frontmatter of an agent file, parsed the way omp parses it (pi-utils frontmatter.ts: Bun.YAML.parse on the
+ * block between the first two `---` lines), so a file omp cannot parse fails here, and a YAML list for `tools:`,
+ * which omp accepts, does not.
+ */
+function frontmatter(src: string, rel: string): Record<string, unknown> {
   const lines = src.split(/\r?\n/)
   if (lines[0]?.trim() !== "---") return {}
   const end = lines.findIndex((l, i) => i > 0 && l.trim() === "---")
-  const out: Record<string, string> = {}
-  let key = ""
-  for (const l of lines.slice(1, end < 0 ? undefined : end)) {
-    const m = /^([A-Za-z_-]+):\s*(.*)$/.exec(l)
-    if (m) {
-      key = m[1]!
-      out[key] = m[2]!.replace(/^[>|][+-]?$/, "")
-    } else if (key && /^\s/.test(l)) out[key] = `${out[key]} ${l.trim()}`
+  if (end < 0) return {}
+  let parsed: unknown
+  try {
+    parsed = Bun.YAML.parse(lines.slice(1, end).join("\n"))
+  } catch (e) {
+    throw new Error(`${rel}: omp's frontmatter parser (Bun.YAML.parse) rejects it: ${e instanceof Error ? e.message : e}`)
   }
-  for (const k of Object.keys(out)) out[k] = out[k]!.trim()
-  return out
+  return typeof parsed === "object" && parsed !== null && !Array.isArray(parsed) ? (parsed as Record<string, unknown>) : {}
 }
+
+/** A `tools:` value as omp's parseArrayOrCSV reads it: a comma-separated string or an array. */
+const toolList = (v: unknown): string[] =>
+  (Array.isArray(v) ? v.map(String) : typeof v === "string" ? v.split(",") : []).map((t) => t.trim()).filter(Boolean)
 
 // WebFetch and WebSearch are accepted but dropped by omp (omp: sdk.ts:4252); the agent just has no web tools there.
 const OMP_TOOLS = new Set(["Read", "Grep", "Glob", "Bash", "Edit", "Write"])
@@ -158,14 +179,18 @@ const DROPPED_TOOLS = new Set(["WebFetch", "WebSearch"])
   assert.ok(agentFiles.length > 0, "claude/agents has no .md file")
   for (const f of agentFiles) {
     const rel = `claude/agents/${f}`
-    const fm = frontmatter(text(rel))
-    assert.ok(fm.name, `${rel}: frontmatter has no name`)
+    const fm = frontmatter(text(rel), rel)
+    assert.ok(fm.name && typeof fm.name === "string", `${rel}: frontmatter has no name`)
     assert.ok(fm.description, `${rel}: frontmatter has no description`)
+    // memoryAllowed reads claude/agents/<omp's agent.name>.md, so a name that differs from the file silently turns
+    // the memory guard off for that agent; omp reserves main and sub for its own sessions.
+    assert.equal(fm.name, f.replace(/\.md$/, ""), `${rel}: frontmatter name "${fm.name}" differs from the file name, so the memory guard would not find this file`)
+    assert.ok(!["main", "sub"].includes(fm.name.toLowerCase()), `${rel}: frontmatter name "${fm.name}" is reserved by omp`)
     assert.ok(
-      Object.hasOwn(TIER_ROLE, fm.model ?? ""),
+      typeof fm.model === "string" && Object.hasOwn(TIER_ROLE, fm.model),
       `${rel}: frontmatter model "${fm.model}" is not a key of TIER_ROLE (${Object.keys(TIER_ROLE).join(", ")}), so no omp role stands for it`,
     )
-    for (const tool of (fm.tools ?? "").split(",").map((t) => t.trim()).filter(Boolean)) {
+    for (const tool of toolList(fm.tools)) {
       assert.ok(
         OMP_TOOLS.has(tool) || DROPPED_TOOLS.has(tool) || tool.startsWith("mcp__ecomono-memory__"),
         `${rel}: tools entry "${tool}" is not one omp maps (Read, Grep, Glob, Bash, Edit, Write, mcp__ecomono-memory__*, WebFetch, WebSearch)`,
@@ -173,10 +198,13 @@ const DROPPED_TOOLS = new Set(["WebFetch", "WebSearch"])
     }
   }
   // The parser reads real files: a folded description and a tools line come through.
-  const explore = frontmatter(text("claude/agents/ecomono-explore.md"))
+  const explore = frontmatter(text("claude/agents/ecomono-explore.md"), "claude/agents/ecomono-explore.md")
   assert.equal(explore.name, "ecomono-explore")
-  assert.ok(explore.description!.startsWith("Read-only exploration agent"), "frontmatter() lost the folded description")
-  assert.equal(explore.tools, "Read, Grep, Glob, Bash")
+  assert.ok(String(explore.description).startsWith("Read-only exploration agent"), "frontmatter() lost the folded description")
+  assert.deepEqual(toolList(explore.tools), ["Read", "Grep", "Glob", "Bash"])
+  // Both spellings of tools: omp accepts, as one list.
+  assert.deepEqual(toolList(frontmatter("---\nname: x\ntools:\n  - Read\n  - Grep\n---\n", "fixture").tools), ["Read", "Grep"])
+  assert.throws(() => frontmatter("---\nname: [unclosed\n---\n", "fixture"), /Bun\.YAML\.parse/)
 }
 
 console.log("test_contract: all assertions passed")
