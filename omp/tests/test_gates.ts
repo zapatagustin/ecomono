@@ -5,7 +5,7 @@
 import { ISOLATED, makeCtx, makePi } from "./fake-pi.ts"
 import assert from "node:assert/strict"
 import { execFileSync } from "node:child_process"
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, writeFileSync } from "node:fs"
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs"
 import { homedir } from "node:os"
 import { join } from "node:path"
 import { runHook } from "../../opencode/plugins/hook-runner/core.ts"
@@ -348,6 +348,9 @@ const withEnv = async <T>(patch: Record<string, string | undefined>, fn: () => P
     { toolName: "github", input: null },
     { toolName: "github", input: {} },
     { toolName: "read", input: { path: "x" } },
+    { toolName: "task", input: null },
+    { toolName: "task", input: {} },
+    { toolName: "task", input: { tasks: [null, 3] } },
     {},
     undefined,
   ]) {
@@ -405,6 +408,130 @@ const withEnv = async <T>(patch: Record<string, string | undefined>, fn: () => P
     const secret = setup({ hooksDir: real })
     assert.equal(await secret.fire("tool_call", bash("cat ~/.ssh/id_rsa"), secret.ctx), undefined)
   })
+}
+
+// ---- the judge gate (task) ----------------------------------------------------------------------------------
+
+{
+  const real = join(REPO, "claude/hooks")
+  const HEADING = "## Skills to load before work"
+  const task = (input: unknown) => ({ toolName: "task", toolCallId: "call-1", input })
+  const item = { agent: "ecomono-judge-a", task: "review", solutionSpace: "n/a" }
+
+  // The real script, which alone knows the judges: no heading blocks, a heading line in the rebuilt prompt (the
+  // batch context or the item's task, the two fields omp hands the child as text) lets it through. A heading
+  // that sits only in solutionSpace blocks: omp feeds that field to the auto-thinking classifier alone.
+  const { fire, ctx } = setup({ hooksDir: real })
+  const r = await fire("tool_call", task({ context: "x", tasks: [item] }), ctx)
+  assert.equal(r?.block, true)
+  assert.match(r.reason, /Skills to load before work/)
+  assert.equal(await fire("tool_call", task({ context: `x\n${HEADING}\n- a/SKILL.md`, tasks: [item] }), ctx), undefined)
+  const onlySpace = await fire("tool_call", task({ context: "x", tasks: [{ ...item, solutionSpace: `${HEADING}\n- a/SKILL.md` }] }), ctx)
+  assert.equal(onlySpace?.block, true, "a heading only in solutionSpace never reaches the judge")
+  assert.equal(await fire("tool_call", task({ context: "x", tasks: [{ ...item, task: `review\n${HEADING}` }] }), ctx), undefined)
+  assert.equal(await fire("tool_call", task({ context: "x", tasks: [{ ...item, agent: "ecomono-explore" }] }), ctx), undefined)
+  assert.equal(await fire("tool_call", task({ context: "x", tasks: [{ ...item, agent: "explore" }] }), ctx), undefined)
+  // omp trims the agent name before the lookup, so a padded judge name is still a judge.
+  const padded = await fire("tool_call", task({ context: "x", tasks: [{ ...item, agent: " ecomono-judge-a " }] }), ctx)
+  assert.equal(padded?.block, true, "a padded judge name is gated")
+
+  // A non-batch call is one item, with its own context field.
+  const single = await fire("tool_call", task({ agent: "ecomono-judge-b", task: "review", solutionSpace: "n/a" }), ctx)
+  assert.equal(single?.block, true)
+  const flatSpace = await fire("tool_call", task({ agent: "ecomono-judge-b", task: "review", solutionSpace: HEADING }), ctx)
+  assert.equal(flatSpace?.block, true, "a heading only in solutionSpace never reaches the judge")
+  assert.equal(await fire("tool_call", task({ agent: "ecomono-judge-b", task: `review\n${HEADING}` }), ctx), undefined)
+  assert.equal(await fire("tool_call", task({ agent: "ecomono-judge-b", task: "review", context: HEADING }), ctx), undefined)
+
+  // One bad item among good ones blocks the whole call; a heading on one item does not cover another.
+  const mixed = await fire(
+    "tool_call",
+    task({ context: "x", tasks: [{ ...item, task: `review\n${HEADING}` }, { ...item, agent: "ecomono-judge-fix" }] }),
+    ctx,
+  )
+  assert.equal(mixed?.block, true)
+  assert.match(mixed.reason, /ecomono-judge-fix/)
+}
+
+{
+  // What the script receives, and which items reach it. The stub accepts any agent name, so nothing in the
+  // extension decides what a judge is.
+  const d = dir("judge")
+  const seen = () =>
+    readdirSync(d)
+      .filter((f) => f.endsWith(".in"))
+      .map((f) => JSON.parse(readFileSync(join(d, f), "utf8")))
+      .sort((a, b) => a.tool_input.subagent_type.localeCompare(b.tool_input.subagent_type))
+  const deny = JSON.stringify({ hookSpecificOutput: { hookEventName: "PreToolUse", permissionDecision: "deny", permissionDecisionReason: "R-judge" } })
+  const hooksDir = dir("hooks")
+  stub(
+    hooksDir,
+    "judge-standards-gate",
+    `in=$(cat)\nprintf '%s' "$in" > "${d}/in.$$.in"\ncase "$in" in\n  *'"subagent_type":"deny-me"'*)\ncat <<'EOF'\n${deny}\nEOF\n    ;;\nesac`,
+  )
+  const task = (input: unknown) => ({ toolName: "task", toolCallId: "call-1", input })
+  const { fire, ctx } = setup({ hooksDir })
+
+  // Batch: the context, then the item's task, one per line (solutionSpace is not part of the prompt); empty and
+  // non-string fields are dropped; an item without a string agent never reaches the script; the agent name is
+  // passed trimmed, as omp resolves it.
+  assert.equal(
+    await fire(
+      "tool_call",
+      task({
+        context: "C",
+        tasks: [
+          { agent: "a1", solutionSpace: "S", task: "T" },
+          { agent: " a2 ", task: "T2" },
+          { task: "no agent" },
+          { agent: 5, task: "numeric agent" },
+          null,
+          "a string item",
+        ],
+      }),
+      ctx,
+    ),
+    undefined,
+  )
+  assert.deepEqual(seen(), [
+    { tool_input: { subagent_type: "a1", prompt: "C\nT" } },
+    { tool_input: { subagent_type: "a2", prompt: "C\nT2" } },
+  ])
+  for (const f of readdirSync(d)) rmSync(join(d, f))
+
+  // Non-batch: the call itself is the item.
+  assert.equal(await fire("tool_call", task({ agent: "a3", context: "C", solutionSpace: "S", task: "T" }), ctx), undefined)
+  assert.deepEqual(seen(), [{ tool_input: { subagent_type: "a3", prompt: "C\nT" } }])
+  for (const f of readdirSync(d)) rmSync(join(d, f))
+
+  // Nothing to gate: no script runs.
+  for (const input of [{}, { task: "x" }, { tasks: [] }, { tasks: [{ task: "x" }] }, { agent: 7 }, { tasks: "nope", task: "x" }]) {
+    assert.equal(await fire("tool_call", task(input), ctx), undefined, JSON.stringify(input))
+  }
+  assert.deepEqual(seen(), [])
+
+  // A deny on any item blocks, with the script's reason.
+  const blocked = await fire("tool_call", task({ tasks: [{ agent: "a1", task: "T" }, { agent: "deny-me", task: "T" }] }), ctx)
+  assert.deepEqual(blocked, { block: true, reason: "R-judge" })
+  assert.equal(seen().length, 2, "both items were judged")
+  for (const f of readdirSync(d)) rmSync(join(d, f))
+
+  // The items run concurrently: wall time is the slowest script, not the sum.
+  const slowDir = dir("hooks")
+  stub(slowDir, "judge-standards-gate", `${ALLOW}; sleep 0.6`)
+  const slow = setup({ hooksDir: slowDir })
+  const t0 = performance.now()
+  assert.equal(
+    await slow.fire("tool_call", task({ tasks: [{ agent: "a1", task: "x" }, { agent: "a2", task: "x" }, { agent: "a3", task: "x" }] }), slow.ctx),
+    undefined,
+  )
+  const ms = performance.now() - t0
+  assert.ok(ms >= 550 && ms < 1500, `three 0.6 s judge gates ran in ${Math.round(ms)} ms`)
+
+  // A script that is missing or fails fails open, like the other gates.
+  const missing = setup({ hooksDir: dir("hooks") })
+  assert.equal(await missing.fire("tool_call", task({ agent: "ecomono-judge-a", task: "x" }), missing.ctx), undefined)
+  assert.ok(missing.calls.warn.some((l) => l.includes("[judge-standards-gate] failing open")))
 }
 
 // ---- runHook, directly --------------------------------------------------------------------------------------

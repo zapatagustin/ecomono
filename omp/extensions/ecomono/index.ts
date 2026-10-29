@@ -2,9 +2,10 @@
  * ecomono extension for oh-my-pi (omp): the omp counterpart of the Claude hooks and the OpenCode plugins.
  *
  * Today it gates bash and github delivery through Claude's own hook scripts (secret access, diff size, review
- * receipt) plus the `rm -rf` literals of Claude's deny list, compresses bash tool results with the same
- * compressor Claude's PostToolUse hook runs and adds the compaction-summary style text. omp loads the DEFAULT
- * export only (the named exports are test seams).
+ * receipt) plus the `rm -rf` literals of Claude's deny list, denies the path tools on the read-deny globs of
+ * opencode/opencode.json (and withholds a read that resolved to such a file), runs judge-standards-gate on every
+ * task item, compresses bash tool results with the same compressor Claude's PostToolUse hook runs and adds the
+ * compaction-summary style text. omp loads the DEFAULT export only (the named exports are test seams).
  *
  * Error contract (non-negotiable): omp fails a `tool_call` CLOSED on a throw, a rejection or after 30 s, while
  * ecomono's gates fail OPEN. Every handler body therefore runs inside safe(): it catches everything, logs with
@@ -20,7 +21,7 @@ import type { ExtensionAPI } from "@oh-my-pi/pi-coding-agent"
 import { readFileSync, realpathSync } from "node:fs"
 import { createRequire } from "node:module"
 import { homedir } from "node:os"
-import { dirname, join, resolve } from "node:path"
+import { basename, dirname, join, resolve } from "node:path"
 import { fileURLToPath } from "node:url"
 // SP1 (spikes/results.json): .sp1.route is "static", so cross-tree TypeScript is a static relative import;
 // .sp1.cjs is "createRequire", so the CommonJS compressor loads through createRequire below.
@@ -62,6 +63,95 @@ function ompPath(cwd: string, raw: string): string | undefined {
   if (p.startsWith("~")) p = join(homedir(), p.slice(1)) // ~, ~/x and ~x, as expandTilde
   if (/^\/+$/.test(p)) return cwd
   return resolve(cwd, p)
+}
+
+// ---- path deny helpers (design.md 5.4 steps 1-4) -------------------------------------------------------------
+// Every helper below only ever ADDS a spelling to test. Over-matching is the safe direction: a spelling omp would
+// not read costs at most a false block on a path that already looks like a secret; a spelling omp does read and
+// the gate missed is a leak, with no valve to release it.
+
+/** Path tools the deny globs apply to; edit's hashline headers reach `path`/`paths` through omp's event normalizer. */
+const PATH_TOOLS = new Set(["read", "write", "edit", "grep", "glob", "find", "ast_grep", "ast_edit"])
+
+/** A string, or the strings of an array; anything else is ignored. */
+const strings = (v: unknown): string[] =>
+  typeof v === "string" ? [v] : Array.isArray(v) ? v.filter((s): s is string => typeof s === "string") : []
+
+/**
+ * The raw value plus the parts omp may split it into, plus each part with `\` as `/`.
+ * - read fans a missing `a;b` list out into separate reads, and splits a `;` list that mixes URLs and paths
+ *   before URL detection, so `skill://x;.env` reads `.env` (omp: tools/read.ts:1762-1767,2039-2045). The parts run
+ *   through the tool's own execute, so no per-part tool_call fires.
+ * - grep reads `path` or `paths`, each a string or an array, and splits a root on /[;,\s]+/
+ *   (omp: tools/grep.ts:568-571; tools/search-approval-targets.ts:23). The split here is that superset.
+ * - Search roots turn every `\` into `/` (normalizePathSeparators, omp: tools/path-utils.ts:571-575), so grep
+ *   `~\.ssh` searches `~/.ssh`; the backslash form is kept as well, since read does not rewrite it.
+ * - grep, glob and ast_grep decode a string that trims to a JSON string array (`'[".env"]'`) into its entries
+ *   before resolving (omp: tools/grep.ts:677, glob.ts:212, ast-grep.ts:217, via pi-tui render/render-utils.ts
+ *   toPathList). Each entry is added next to the raw value, whatever the tool: a decode omp would not do only
+ *   costs a false block.
+ */
+function pathParts(value: string): string[] {
+  const parts = new Set<string>()
+  const listed = [value]
+  const trimmed = value.trim()
+  if (trimmed.startsWith("[") && trimmed.endsWith("]")) {
+    try {
+      const decoded: unknown = JSON.parse(trimmed)
+      if (Array.isArray(decoded)) for (const entry of decoded) if (typeof entry === "string") listed.push(entry)
+    } catch {} // not JSON: a literal path
+  }
+  for (const text of listed) {
+    parts.add(text)
+    for (const part of text.split(/[;,\s]+/)) if (part) parts.add(part)
+  }
+  for (const part of [...parts]) if (part.includes("\\")) parts.add(part.replaceAll("\\", "/"))
+  return [...parts]
+}
+
+/**
+ * The local path a part reads. ompPath covers `file://` (omp: tools/read.ts:1756-1758), quotes, `@`/`:` prefixes
+ * and `~`; internal URLs (skill://, artifact://, xd://, http(s)://) resolve to undefined and are skipped.
+ * `ssh://` is not skipped: it reads, searches and writes files on whatever host OpenSSH resolves, `localhost`
+ * included, at the decoded URL pathname (omp: internal-urls/ssh-protocol.ts:76-106). That pathname is matched as
+ * text, never resolved against cwd and whatever the host, so a remote `.env` or `~/.ssh/*` is denied like a local
+ * one. It lives here and not in ompPath, which the bash cwd handling shares.
+ */
+function resolvePart(cwd: string, part: string): string | undefined {
+  let bare = part.trim()
+  if (bare.length > 1 && bare.startsWith('"') && bare.endsWith('"')) bare = bare.slice(1, -1)
+  if (!/^ssh:\/\//i.test(bare)) return ompPath(cwd, part)
+  try {
+    const pathname = new URL(bare).pathname
+    try {
+      return decodeURIComponent(pathname)
+    } catch {
+      return pathname
+    }
+  } catch {
+    return undefined
+  }
+}
+
+/**
+ * The path as given, with its `?query` cut and with the read selector cut. Read peels `:1-50`, `:raw` and the
+ * compound `:1-50:raw` / `:raw:1-50` down to the path (pi-tui: tools/read.ts:147-184, splitPathAndSel), so the cut
+ * is at the FIRST `:` of the last segment: a cut at the last `:` would leave `.env:1-5` or `.env:raw`, which no
+ * glob matches. A direct read sets no details target for the post-check either, so this is the only place that
+ * catches it.
+ */
+function candidates(path: string): string[] {
+  const cutSelector = (s: string) => {
+    const i = s.indexOf(":", s.lastIndexOf("/") + 1)
+    return i < 0 ? s : s.slice(0, i)
+  }
+  const q = path.indexOf("?")
+  const out = new Set<string>()
+  for (const base of q < 0 ? [path] : [path, path.slice(0, q)]) {
+    out.add(base)
+    out.add(cutSelector(base))
+  }
+  return [...out]
 }
 
 interface Compressor {
@@ -124,6 +214,56 @@ export function ecomono(o: { repo: string; hooksDir?: string; timeoutMs?: number
         }
       }
       return denyLiterals
+    }
+
+    // The keys of opencode/opencode.json permission.read whose value is "deny", each compiled once and cached.
+    // Derived from the file rather than copied, so the three hosts cannot drift. A file that cannot be read or
+    // parsed warns once and leaves the list empty: the gate then denies nothing.
+    let denyGlobs: { glob: string; matcher: { match(path: string): boolean } }[] | undefined
+    const globs = () => {
+      if (denyGlobs === undefined) {
+        denyGlobs = []
+        try {
+          const read = JSON.parse(readFileSync(join(o.repo, "opencode/opencode.json"), "utf8"))?.permission?.read
+          for (const [glob, value] of Object.entries(typeof read === "object" && read !== null ? read : {})) {
+            if (value === "deny") denyGlobs.push({ glob, matcher: new Bun.Glob(glob) })
+          }
+        } catch (e) {
+          denyGlobs = []
+          pi.logger.warn(
+            `ecomono: path deny disabled, cannot read opencode/opencode.json from ${o.repo}: ${
+              e instanceof Error ? e.message : String(e)
+            }`,
+          )
+        }
+      }
+      return denyGlobs
+    }
+
+    // Path deny, design.md 5.4 steps 2-5 on already-collected values: the first value whose parts, resolved
+    // against ctx.cwd, hit a deny glob. A glob without "/" matches the basename of the candidate; the others match
+    // the candidate without its leading "/". Each candidate is also tested with "/x" appended, because
+    // `**/.ssh/**` does not match the directory itself (F4), only what is below it. Shared by the tool_call path
+    // gate and the read post-check, so a target omp resolved gets the same verdict as one the model typed.
+    const deny = (ctx: any, values: string[]): { value: string; glob: string } | undefined => {
+      const list = globs()
+      if (list.length === 0) return undefined
+      for (const value of values) {
+        for (const part of pathParts(value)) {
+          const path = resolvePart(ctx.cwd, part)
+          if (path === undefined) continue
+          for (const candidate of candidates(path)) {
+            for (const probe of [candidate, `${candidate}/x`]) {
+              const name = basename(probe)
+              const hit = list.find(({ glob, matcher }) =>
+                glob.includes("/") ? matcher.match(probe.replace(/^\//, "")) : matcher.match(name),
+              )
+              if (hit) return { value, glob: hit.glob }
+            }
+          }
+        }
+      }
+      return undefined
     }
 
     const gate = (name: string, payload: unknown, cwd: string, ctx: any) =>
@@ -193,6 +333,48 @@ export function ecomono(o: { repo: string; hooksDir?: string; timeoutMs?: number
           const command = input.op === "pr_create" ? "gh pr create" : "git push"
           return runGates(["check-diff-size", "review-receipt-gate"], command, ctx.cwd, ctx)
         }
+
+        // Hard deny, no valve (neither host's read deny has one): the globs are opencode.json's own, the ones
+        // OpenCode enforces natively on its read tool.
+        // ecomono: the gate checks the roots a call names, never the walk beneath them. grep, glob, find and
+        // ast_grep over a parent directory, or over a root with glob characters, can still surface a denied file
+        // (design.md 5.4 ceiling list, F14e). Upgrade path: omp's tools.restrictedFolders, or filtering the result
+        // in tool_result, once a leak is observed.
+        if (PATH_TOOLS.has(event.toolName)) {
+          const values = [...strings(input.path), ...strings(input.paths)]
+          const hit = deny(ctx, values)
+          if (!hit) return undefined
+          return {
+            block: true,
+            reason: `Blocked: ${event.toolName} "${hit.value}" is denied by "${hit.glob}" in opencode/opencode.json (permission.read), which this omp extension enforces for path tools.`,
+          }
+        }
+
+        // Every item with an agent goes through the judge gate; the script alone knows which agents are judges,
+        // so there is no list of judge names here. The prompt is rebuilt from the two fields omp hands the child as
+        // text: the batch `context` (its subagent system prompt, omp: task/executor.ts:3971,4781) and the item's
+        // `task` (the initial prompt, executor.ts:2532). `solutionSpace` is left out on purpose: omp feeds it only
+        // to the auto-thinking classifier (session/agent-session-types.ts:457), so a heading that sits only there
+        // never reaches the judge. omp drops `context` when task.batch is off, but then it rejects a call that
+        // carries one (task/index.ts:229-241), so no judge launches without it.
+        // ecomono: an eval `agent()` spawn of a judge skips this gate. before_subagent_spawn carries no prompt
+        // (omp: extensibility/extensions/types.ts:1101-1113, F19), so there is nothing to hand the script. Upgrade
+        // path: when such a spawn is observed, run the script with an empty prompt from before_subagent_spawn.
+        if (event.toolName === "task") {
+          const items: unknown[] = Array.isArray(input.tasks) ? input.tasks : [input]
+          const name = "judge-standards-gate"
+          const results = await Promise.all(
+            items.flatMap((item: any) => {
+              if (typeof item?.agent !== "string") return []
+              const prompt = [input.context, item.task].filter((s) => typeof s === "string" && s).join("\n")
+              // omp trims the agent name before the lookup (task/index.ts spawnParamsFor), and the script matches
+              // it exactly, so a padded judge name would otherwise slip past.
+              const payload = { tool_input: { subagent_type: item.agent.trim(), prompt } }
+              return [gate(name, payload, ctx.cwd, ctx).then((r) => ({ name, r }))]
+            }),
+          )
+          return decide(ctx, results)
+        }
         return undefined
       }),
     )
@@ -227,7 +409,34 @@ export function ecomono(o: { repo: string; hooksDir?: string; timeoutMs?: number
     // minimized commands, and the "[raw output: artifact://N]" notice is peeled and re-appended like any other.
     pi.on(
       "tool_result",
-      safe(async (event: any) => {
+      safe(async (event: any, ctx: any) => {
+        // Read post-check (design.md 5.4, F15): omp resolves some reads to a file the model never named, and
+        // reports where in `details`. A suffix match (`read prod` -> `secrets/prod`, omp: tools/read.ts:2046-2059,
+        // details.suffixResolution.to) and the parts of a delimited list (details.displayReadTargets) never fire
+        // their own tool_call, so the path gate cannot see them. The targets go through the same deny check and a
+        // match withholds the content. A result is never rewritten otherwise: hashline anchors feed `edit`.
+        // ecomono: two ceilings. (1) `details` stays as omp produced it, so the TUI still renders the file to the
+        // user; upgrade path: replace `details` too once omp documents which fields the session persists.
+        // (2) An oversized read result is saved to artifact://N before tool_result fires (omp: tools/output-meta.ts
+        // spill; design.md F24), and `read artifact://N` is an internal URL the path gate skips, so it can still
+        // return the file; N is no longer shown to the model. Upgrade path: when such a read is observed, record N
+        // from the replaced content's artifact link and deny `read artifact://N`.
+        if (event?.toolName === "read") {
+          const d = event.details
+          const listed = Array.isArray(d?.displayReadTargets) ? d.displayReadTargets : []
+          const targets = [d?.suffixResolution?.to, ...listed].filter((t): t is string => typeof t === "string")
+          const hit = deny(ctx, targets)
+          if (!hit) return undefined
+          return {
+            content: [
+              {
+                type: "text",
+                text: `ecomono: read resolved to ${hit.value}, which ${hit.glob} in opencode/opencode.json denies; content withheld.`,
+              },
+            ],
+            isError: true,
+          }
+        }
         if (event?.toolName !== "bash") return undefined
         // Eval-bridged results go back to a script, which must see them whole.
         if (/^(?:js|prelude)-/.test(String(event.toolCallId))) return undefined
