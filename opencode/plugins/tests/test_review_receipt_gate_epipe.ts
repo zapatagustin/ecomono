@@ -1,5 +1,6 @@
-// The EPIPE guard in review-receipt-gate.ts. Reaching the last line IS the assertion:
-// an unguarded write into the stdin of an already-exited script kills the process.
+// The EPIPE guard in opencode/plugins/hook-runner/core.ts, which the plugin runs its
+// script through. Reaching the last line IS the assertion: an unguarded write into the
+// stdin of an already-exited script kills the process.
 //
 // ADD NOTHING BEFORE THE SPAWN — no import, no helper, no assert above the hook call.
 // The fault only surfaces while the event loop is cold, so pre-spawn work hides it:
@@ -22,9 +23,10 @@
 // this file five times rather than once, which takes the suite-level miss rate to
 // nothing — measured at 20/20 caught, 0/20 false, through the runner.
 //
-// Re-measure on any change: delete the `stdin?.on("error")` line, confirm `grep -c`
-// reports it gone, and run `run-tests.sh` twenty times. Anything short of catching it
-// every time means something was added above the call.
+// Re-measure on any change: delete the `stdin?.on("error")` line in
+// opencode/plugins/hook-runner/core.ts, confirm `grep -c` reports it gone, and run
+// `run-tests.sh` twenty times. Anything short of catching it every time means something
+// was added above the call.
 
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from "node:fs"
 import { tmpdir } from "node:os"

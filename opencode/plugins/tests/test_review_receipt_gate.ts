@@ -61,9 +61,10 @@ const event = (input: any, tool = "shell") => ({ tool, sessionID: "s", agent: "b
  */
 async function fireHook(fx: Fx, ev: any, env: Record<string, string> = {}): Promise<Error | null> {
   // Isolates the SCRIPT's own git calls, not just the ones made directly in this file.
-  // `runGate` spawns the script with `process.env` minus the release valve, so it sees
-  // exactly what is set here. Before these were set, the script's own `git diff` /
-  // `git merge-base` / `git config` read the operator's real global config. Verified:
+  // `runGate` (opencode/plugins/hook-runner/core.ts) spawns the script with `process.env`
+  // minus the release valve, so it sees exactly what is set here. Before these were set,
+  // the script's own `git diff` / `git merge-base` / `git config` read the operator's
+  // real global config. Verified:
   // with `XDG_CONFIG_HOME` pointed at a config containing `[diff] noprefix = true`, the
   // script computed a different subject hash than the one this file computes
   // independently, and the suite failed on a wrong-reason assertion. `XDG_STATE_HOME`
@@ -389,8 +390,8 @@ for (const [body, refused] of [
   //
   // That isolation used to cover only the `git` calls made directly below, through
   // `gitEnv` and `execFileSync`. It did NOT cover the gate SCRIPT itself, spawned by
-  // `runHook` through the plugin's `runGate`, which builds the script's env from ambient
-  // `process.env` — where only `HOME` was mutated. `fireHook` now sets
+  // `runHook` through `runGate` in opencode/plugins/hook-runner/core.ts, which builds the
+  // script's env from ambient `process.env` — where only `HOME` was mutated. `fireHook` now sets
   // `GIT_CONFIG_GLOBAL`, `GIT_CONFIG_SYSTEM`, `GIT_CONFIG_NOSYSTEM` and
   // `XDG_CONFIG_HOME` on `process.env` itself, restoring them the way `HOME` already
   // was, so the spawned script gets the same isolation as the direct calls below.

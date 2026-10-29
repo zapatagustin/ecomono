@@ -42,6 +42,7 @@ Mode stick until changed or session end.
 
 - **opencode**: say "stop ecomono" / "normal mode", or `/ecomono off`. Resume with `/ecomono`.
 - **Claude Code**: `/output-style neutral` (ecomono is the `Ecomono` output-style). Resume: `/output-style Ecomono`.
+- **omp**: say "stop ecomono" / "normal mode" for the session. Register loads every session from `PERSONALITY.md` + `RULES.md`. `personality: none` (omp setting) skips `PERSONALITY.md`, approximates the neutral style; `RULES.md` still loads.
 
 ## Configure Default Mode
 
@@ -60,6 +61,8 @@ Config file (`~/.config/ecomono/config.json`):
 `"off"` disables auto-activation on session start; still manual via `/ecomono`. Resolution: env var > config file > `full`.
 
 **Claude Code**: mode is the `Ecomono` output-style, set in `~/.claude/settings.json` (`"outputStyle"`). No env/config-file switching and no session-start auto-activation beyond the active output-style.
+
+**omp**: no env var, no config file. Default register = `PERSONALITY.md` + `RULES.md`, both linked by the installer. Intensity per session: `/skill:ecomono <level>` (`lite`, `ultra`, `wenyan-lite`, `wenyan`, `wenyan-ultra`).
 
 ## More
 
