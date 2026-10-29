@@ -238,6 +238,11 @@ ensure_omp_mcp() {
     return 0
   fi
 
+  # ecomono: this write is an unlocked read-modify-write. An omp dashboard write
+  # (`/mcp enable|disable`) landing between the jq read above and the mv below is
+  # overwritten; bash cannot join omp's per-file lock (on Linux an abstract Unix
+  # socket). Upgrade path: upsert through a bun helper that uses pi-utils
+  # withFileLock, or through an omp CLI once one exists.
   dir="$(dirname "$file")" || dir=.
   if ! mkdir -p "$dir" 2>/dev/null || ! tmp="$(mktemp "$dir/.mcp.json.XXXXXX" 2>/dev/null)"; then
     _mcp_warn "omp mcp $name not registered: cannot write in $dir"

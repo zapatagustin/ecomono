@@ -18,6 +18,10 @@
         { config, pkgs, lib, ... }:
         let
           homeDir = config.home.homeDirectory;
+          # ecomono: omp agent dir is hardcoded; PI_CODING_AGENT_DIR, PI_CONFIG_DIR
+          # and named profiles are not honoured (install.sh handles the first two).
+          # Upgrade path: a module option for the agent directory (DESIGN 'Deferred').
+          ompDir = ".omp/agent";
           # A couple of vendored files hardcode the authoring machine's home;
           # rewrite it to the target host so any username works.
           patch = builtins.replaceStrings [ "/home/agustin" ] [ homeDir ];
@@ -79,13 +83,13 @@
             # which home-manager links as-is, so the link lands in the full source
             # tree; `./omp/extensions/ecomono` would be copied into a store path of its
             # own, with none of those siblings next to it.
-            ".omp/agent/extensions/ecomono".source = "${self}/omp/extensions/ecomono";
-            ".omp/agent/RULES.md".source = ./opencode/AGENTS.md;
-            ".omp/agent/PERSONALITY.md".source = ./claude/output-styles/ecomono.md;
+            "${ompDir}/extensions/ecomono".source = "${self}/omp/extensions/ecomono";
+            "${ompDir}/RULES.md".source = ./opencode/AGENTS.md;
+            "${ompDir}/PERSONALITY.md".source = ./claude/output-styles/ecomono.md;
             # recursive = per-file links inside a real directory (omp writes agents/
             # itself), the same shape install.sh's link_children produces.
-            ".omp/agent/agents" = { source = ./claude/agents; recursive = true; };
-            ".omp/agent/commands" = { source = ./claude/commands; recursive = true; };
+            "${ompDir}/agents" = { source = ./claude/agents; recursive = true; };
+            "${ompDir}/commands" = { source = ./claude/commands; recursive = true; };
           };
 
           programs.opencode = {
@@ -290,7 +294,7 @@
             PATH="${pkgs.jq}/bin:$PATH"
             # shellcheck source=lib/mcp.sh
             . ${./lib/mcp.sh}
-            ecomono_omp_mcp="${config.home.homeDirectory}/.omp/agent/mcp.json"
+            ecomono_omp_mcp="${homeDir}/${ompDir}/mcp.json"
             ensure_omp_mcp "$ecomono_omp_mcp" ecomono-memory ${pkgs.bun}/bin/bun ${./opencode/plugins/storage/mcp-server.js}
             ensure_omp_mcp "$ecomono_omp_mcp" context7 "''${CONTEXT7_MCP[@]}"
           '';
