@@ -183,4 +183,21 @@ const bash = (text: string, over: Record<string, any> = {}) => ({
   assert.deepEqual(calls.warn, [], "safe() caught nothing: no handler threw")
 }
 
+{
+  // (12) A throw inside the handler leaves the result as omp produced it and is logged. The throwing getter sits
+  // inside content, which fake-pi passes by reference; on the event itself fake-pi's spread would hit it first.
+  const { fire, calls, ctx } = setup()
+  const content = [
+    {
+      type: "text",
+      get text(): string {
+        throw new Error("text gone")
+      },
+    },
+  ]
+  assert.equal(await fire("tool_result", bash("", { content }), ctx), undefined)
+  assert.ok(calls.warn.some((l) => l.includes("handler failed") && l.includes("text gone")), calls.warn.join("\n"))
+  assert.deepEqual(calls.failures, [])
+}
+
 console.log("test_compress: all assertions passed")

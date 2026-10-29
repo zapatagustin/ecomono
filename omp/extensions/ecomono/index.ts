@@ -1,14 +1,19 @@
 /**
  * ecomono extension for oh-my-pi (omp): the omp counterpart of the Claude hooks and the OpenCode plugins.
  *
- * Today it gates bash and github delivery through Claude's own hook scripts (secret access, diff size, review
- * receipt) plus the `rm -rf` literals of Claude's deny list, denies the path tools on the read-deny globs of
- * opencode/opencode.json (and withholds a read that resolved to such a file), runs judge-standards-gate on every
- * task item, compresses bash tool results with the same compressor Claude's PostToolUse hook runs and adds the
- * compaction-summary style text. It also maps the agents' haiku/sonnet/opus tiers to omp's @smol/@task/@slow
- * roles, blocks the ecomono-memory tools an agent's own `tools:` line does not list, and refreshes the skill
- * registry from the main session, in the main TUI session lists the open TODOs below the editor (org-todo.ts) and
- * saves each user prompt of the main session into the shared ecomono-memory DB.
+ * What it does:
+ * - Gates bash and github delivery through Claude's own hook scripts (secret access, diff size, review receipt),
+ *   plus the `rm -rf` literals of Claude's deny list.
+ * - Denies the path tools, the targets an edit names in its text input and the @-mentions of a task item on the
+ *   read-deny globs of opencode/opencode.json, and withholds a read that resolved to such a file.
+ * - Runs judge-standards-gate on every task item.
+ * - Compresses bash tool results with the same compressor Claude's PostToolUse hook runs, and adds the
+ *   compaction-summary style text.
+ * - Maps the agents' haiku/sonnet/opus tiers to omp's @smol/@task/@slow roles.
+ * - Blocks the ecomono-memory tools an agent's own `tools:` line does not list.
+ * - From the main session, refreshes the skill registry and saves each user prompt into the shared
+ *   ecomono-memory DB; in the main TUI session, lists the open TODOs below the editor (org-todo.ts).
+ *
  * omp loads the DEFAULT export only (the named exports are test seams).
  *
  * Error contract (non-negotiable): omp fails a `tool_call` CLOSED on a throw, a rejection or after 30 s, while
@@ -27,17 +32,18 @@ import { createRequire } from "node:module"
 import { homedir } from "node:os"
 import { basename, dirname, join, resolve } from "node:path"
 import { fileURLToPath } from "node:url"
-// SP1 (spikes/results.json): .sp1.route is "static", so cross-tree TypeScript is a static relative import;
-// .sp1.cjs is "createRequire", so the CommonJS compressor loads through createRequire below.
+// Spike 1 (docs/DESIGN.md, omp target > Spike results, row 1): static relative imports across trees resolve, so
+// cross-tree TypeScript is a static relative import; the CommonJS compressor loads through createRequire below.
 import { STYLE } from "../../../opencode/plugins/cave-compress/core.ts"
-import { type HookDecision, runHook } from "../../../opencode/plugins/hook-runner/core.ts"
+import { type HookDecision, logFailOpen, runHook, stateDir } from "../../../opencode/plugins/hook-runner/core.ts"
 import * as orgTodoCore from "../../../opencode/tui-plugins/org-todo/core.ts"
 import { startOrgTodo } from "./org-todo.ts"
 
 export const REPO = resolve(dirname(realpathSync(fileURLToPath(import.meta.url))), "../../..")
 
 // The agents' frontmatter `model:` tier -> the omp role that stands for it. The consumer binds each role to a real
-// model with omp's own modelRoles; ecomono ships no model ids (design.md 5.7).
+// model with omp's own modelRoles; ecomono ships no model ids (docs/DESIGN.md, omp target > Open questions,
+// resolved: provider and models).
 export const TIER_ROLE = { haiku: "@smol", sonnet: "@task", opus: "@slow" } as const
 
 // What omp does with each script claude/settings.template.json registers. omp/tests/test_contract.ts keeps this
@@ -77,13 +83,18 @@ function peel(text: string): [string, string] {
   return [body, text.slice(body.length)]
 }
 
+/** The message of a caught value, for a log line. */
+const errText = (e: unknown): string => (e instanceof Error ? e.message : String(e))
+
+/** One pair of outer double quotes removed, as omp's stripOuterDoubleQuotes (tools/path-utils.ts:577-578). */
+const unquote = (s: string): string => (s.length > 1 && s.startsWith('"') && s.endsWith('"') ? s.slice(1, -1) : s)
+
 // ecomono: mirrors omp's normalizePathLikeInput + expandPath + resolveToCwd
 // (tools/path-utils.ts:75-133,332-344,541-543,577-578), which extensions cannot import. Ceiling: a new omp path
 // shorthand is not mirrored until test_paths.ts gains its case; the smoke pins the omp version. Every step can
 // only widen what the deny check sees.
 function ompPath(cwd: string, raw: string): string | undefined {
-  let p = raw.trim()
-  if (p.length > 1 && p.startsWith('"') && p.endsWith('"')) p = p.slice(1, -1)
+  let p = unquote(raw.trim())
   if (/^[@:](?=[/~.])/.test(p)) p = p.slice(1)
   if (/^file:\/\//i.test(p)) {
     try {
@@ -96,13 +107,75 @@ function ompPath(cwd: string, raw: string): string | undefined {
   return resolve(cwd, p)
 }
 
-// ---- path deny helpers (design.md 5.4 steps 1-4) -------------------------------------------------------------
+// ---- path deny helpers (docs/DESIGN.md, omp target > Handler contracts: the path tools) ------------------------
 // Every helper below only ever ADDS a spelling to test. Over-matching is the safe direction: a spelling omp would
 // not read costs at most a false block on a path that already looks like a secret; a spelling omp does read and
 // the gate missed is a leak, with no valve to release it.
 
-/** Path tools the deny globs apply to; edit's hashline headers reach `path`/`paths` through omp's event normalizer. */
+/**
+ * Path tools the deny globs apply to, on `path` and `paths`. edit's hashline headers reach `path`/`paths` through
+ * omp's event normalizer only when the call has no `path`, so edit's text input is also read by editTargets().
+ */
 const PATH_TOOLS = new Set(["read", "write", "edit", "grep", "glob", "find", "ast_grep", "ast_edit"])
+
+// A header of omp's apply_patch form (`*** Update File: X`, `*** Move to: X`, ...), in the loose spelling the edit
+// engine strips from a header path (APPLY_PATCH_PATH_NOISE_RE, crates/pi-edit/src/modes/hashline/input.rs:28).
+const PATCH_HEADER = /^\*{1,3}\s*(?:add|update|delete|move)[^A-Za-z0-9]*(?:file|to)?[^A-Za-z0-9]*:/i
+// A snapshot tag at the end of a hashline header path: `#1A2B`, or a placeholder such as `#AUTO`, `#????` or a
+// bare `#` (the engine's RECOVERY_TAG_RE and PLACEHOLDER_TAG_RE, input.rs:33-39).
+const HEADER_TAG = /#[^\s#./\\:[\]]{0,16}(?=\s*(?:\]|$))/g
+
+/**
+ * The targets an `edit` call names in its text input (`input`, or `_input` as some hosts forward it), and the
+ * `rename` targets of patch mode's `edits[]`. omp's event normalizer fills `path`/`paths` from hashline headers
+ * only when the call has no `path` string, and from no other form (omp: extensibility/tool-event-input.ts:70-90),
+ * so a hashline input next to an unrelated `path`, an apply_patch input and a hashline `MV` destination would
+ * otherwise write a file the gate never sees. Header lines only, so a body line that mentions a secret path
+ * costs nothing:
+ * - `[PATH#TAG]`, an envelope-wrapped `[*** Begin Patch] [PATH#TAG]` too (the engine classifies any `[...]` line
+ *   as a header before a payload, crates/pi-edit/src/modes/hashline/tokenizer.rs classify_line), and the legacy
+ *   `¶PATH#TAG`;
+ * - the apply_patch headers `*** Add File:`, `*** Update File:`, `*** Delete File:` and `*** Move to:`;
+ * - `MV <dest>`, a hashline rename (tokenizer.rs parse_hunk_header).
+ * The tag, the header keyword, brackets, `¶` and quotes become spaces; deny() then also splits on whitespace, so a
+ * quoted path with a space is tested whole and in parts.
+ */
+function editTargets(input: any): string[] {
+  const out: string[] = []
+  for (const text of [input.input, input._input]) {
+    if (typeof text !== "string") continue
+    for (const raw of text.split("\n")) {
+      const line = raw.trim()
+      const header =
+        (line.startsWith("[") && line.endsWith("]")) || line.startsWith("¶") || PATCH_HEADER.test(line) || /^MV(?:[\s:]|$)/.test(line)
+      if (!header) continue
+      out.push(line.replace(HEADER_TAG, "").replace(PATCH_HEADER, " ").replace(/^MV:?/, " ").replace(/[[\]¶"']/g, " "))
+    }
+  }
+  for (const edit of Array.isArray(input.edits) ? input.edits : []) if (typeof edit?.rename === "string") out.push(edit.rename)
+  return out
+}
+
+/**
+ * The `@path` mentions of a prompt, exactly as omp's extractFileMentions finds them (omp: utils/file-mentions.ts:
+ * 33-55,168-186): a mention starts the text or follows whitespace or an opening bracket or quote; a quoted one is
+ * only trimmed, a bare one also loses leading and trailing punctuation. omp reads each mentioned file into the
+ * prompt with no tool_call of its own.
+ */
+function fileMentions(text: string): string[] {
+  const out = new Set<string>()
+  for (const m of text.matchAll(/@(?:"([^"]+)"|'([^']+)'|([^\s@]+))/g)) {
+    const i = m.index ?? 0
+    if (i > 0 && !/[\s([{<"'`]/.test(text[i - 1])) continue
+    const quoted = m[1] ?? m[2]
+    const path =
+      quoted !== undefined
+        ? quoted.trim()
+        : (m[3] ?? "").trim().replace(/^[`"'([{<]+/, "").replace(/[)\]}>.,;:!?"'`]+$/, "").trim()
+    if (path) out.add(path)
+  }
+  return [...out]
+}
 
 /** A string, or the strings of an array; anything else is ignored. */
 const strings = (v: unknown): string[] =>
@@ -141,16 +214,18 @@ function pathParts(value: string): string[] {
 }
 
 /**
- * The local path a part reads. ompPath covers `file://` (omp: tools/read.ts:1756-1758), quotes, `@`/`:` prefixes
- * and `~`; internal URLs (skill://, artifact://, xd://, http(s)://) resolve to undefined and are skipped.
+ * The local path a part reads. read's one `path` field takes a local path, an internal URI or a URL, selectors
+ * inline (omp: tools/read.ts:825); the search and write tools take the same spellings. ompPath covers `file://`
+ * (omp: tools/read.ts:1756-1758), quotes, `@`/`:` prefixes and `~`; internal URLs (skill://, artifact://, xd://,
+ * http(s)://) resolve to undefined and are skipped.
  * `ssh://` is not skipped: it reads, searches and writes files on whatever host OpenSSH resolves, `localhost`
  * included, at the decoded URL pathname (omp: internal-urls/ssh-protocol.ts:76-106). That pathname is matched as
  * text, never resolved against cwd and whatever the host, so a remote `.env` or `~/.ssh/*` is denied like a local
  * one. It lives here and not in ompPath, which the bash cwd handling shares.
  */
 function resolvePart(cwd: string, part: string): string | undefined {
-  let bare = part.trim()
-  if (bare.length > 1 && bare.startsWith('"') && bare.endsWith('"')) bare = bare.slice(1, -1)
+  const bare = unquote(part.trim())
+  // The original part, not `bare`: ompPath strips the quotes itself, once, as omp does.
   if (!/^ssh:\/\//i.test(bare)) return ompPath(cwd, part)
   try {
     const pathname = new URL(bare).pathname
@@ -170,6 +245,9 @@ function resolvePart(cwd: string, part: string): string | undefined {
  * is at the FIRST `:` of the last segment: a cut at the last `:` would leave `.env:1-5` or `.env:raw`, which no
  * glob matches. A direct read sets no details target for the post-check either, so this is the only place that
  * catches it.
+ * An archive member `b.zip:.ssh/k` (omp: prompts/tools/read.md:12; tools/grep.ts:308 and tools/write.ts:647 parse
+ * it too) has its `:` in a middle segment, where the cut above does not look, so the path is also tested with
+ * every `:` as a `/`: `b.zip/.ssh/k` meets the `.ssh` glob, stacked selectors and `::` included.
  */
 function candidates(path: string): string[] {
   const cutSelector = (s: string) => {
@@ -181,8 +259,33 @@ function candidates(path: string): string[] {
   for (const base of q < 0 ? [path] : [path, path.slice(0, q)]) {
     out.add(base)
     out.add(cutSelector(base))
+    if (base.includes(":")) out.add(base.replaceAll(":", "/"))
   }
   return [...out]
+}
+
+/**
+ * The path with the symlinks of its existing part resolved and the missing rest re-appended, as pi-utils'
+ * resolveEquivalentPath with throughMissing (dirs.ts). omp follows a link when it reads or writes, so a link
+ * committed to an untrusted repo (`docs/notes -> ~/.ssh/id_ed25519`), or a new file under a linked directory,
+ * must meet the globs at its target. deny() tests it next to the lexical spelling, never in its place: a Nix store
+ * link such as `~/.config/gh/hosts.yml` matches only by its name. The path itself when nothing resolves.
+ * ecomono: realpath fails on a dangling link, so a link to a missing file is not followed. Ceiling: a `write`
+ * through a dangling link to a denied path creates that file unchecked. Upgrade path: follow readlink on the first
+ * missing segment, or omp's tools.restrictedFolders.
+ */
+function realish(path: string): string {
+  const rest: string[] = []
+  for (let head = path; ; ) {
+    try {
+      return join(realpathSync(head), ...rest)
+    } catch {
+      const parent = dirname(head)
+      if (parent === head) return path
+      rest.unshift(basename(head))
+      head = parent
+    }
+  }
 }
 
 interface Compressor {
@@ -192,20 +295,35 @@ interface Compressor {
 
 // hooksDir and timeoutMs are test seams: the extension has no env knob for either. 20 s keeps the slowest gate
 // inside omp's 30 s per-handler budget, past which omp fails the call closed.
+// ecomono: the 20 s assumes omp's default extensionHandlers.toolCallTimeoutMs of 30 s (omp:
+// extensibility/settings.ts:152-154). Ceiling: a user who lowers that setting below about 20 s turns a slow gate
+// into a bash call failed CLOSED. Upgrade path: derive timeoutMs from the setting if extensions can ever read it.
 export function ecomono(o: { repo: string; hooksDir?: string; timeoutMs?: number }) {
   const hooksDir = o.hooksDir ?? join(o.repo, "claude/hooks")
   const timeoutMs = o.timeoutMs ?? 20_000
   return (pi: ExtensionAPI): void => {
+    // `onError`, when given, replaces the logger line for a caught fault; it must not throw.
     const safe =
-      <A extends unknown[], R>(fn: (...args: A) => R | Promise<R>) =>
+      <A extends unknown[], R>(fn: (...args: A) => R | Promise<R>, onError?: (why: string, ...args: A) => void) =>
       async (...args: A): Promise<R | undefined> => {
         try {
           return await fn(...args)
         } catch (e) {
-          pi.logger.warn(`ecomono: handler failed: ${e instanceof Error ? e.message : String(e)}`)
+          const why = `handler failed: ${errText(e)}`
+          if (onError) onError(why, ...args)
+          else pi.logger.warn(`ecomono: ${why}`)
           return undefined
         }
       }
+
+    // A warning notice where there is a UI. A notify that throws is logged, never raised.
+    const notify = (ctx: any, text: string): void => {
+      try {
+        ctx.ui.notify(text, "warning")
+      } catch (e) {
+        pi.logger.warn(`ecomono: notify failed: ${errText(e)}`)
+      }
+    }
 
     // Fail-open reporting, for the hook runner (which also appends the state log) and for faults found here.
     // Synchronous on purpose: runHook shields a report that throws but not one that returns a rejected promise.
@@ -215,12 +333,12 @@ export function ecomono(o: { repo: string; hooksDir?: string; timeoutMs?: number
       pi.logger.warn(line)
       if (notified || !ctx?.hasUI) return
       notified = true
-      try {
-        ctx.ui.notify("ecomono gate failed open: see ~/.local/state/ecomono/", "warning")
-      } catch (e) {
-        pi.logger.warn(`ecomono: notify failed: ${e instanceof Error ? e.message : String(e)}`)
-      }
+      notify(ctx, `ecomono gate failed open: see ${stateDir()}/`)
     }
+    // A fault found here rather than in a gate script: the same report, plus a line in <stateDir>/<name>.log
+    // written by the hook runner's own helper, so both kinds of fail-open leave the same trace. `name` is a file
+    // name.
+    const extensionFault = (ctx: any, name: string, why: string): void => logFailOpen(name, why, (l) => failOpen(ctx, l))
 
     // The `Bash(<literal>)` entries of Claude's deny list, whitespace-normalised, parsed on first use and
     // cached. Derived from the template rather than copied, so the two hosts cannot drift. A template that
@@ -238,9 +356,7 @@ export function ecomono(o: { repo: string; hooksDir?: string; timeoutMs?: number
           }
         } catch (e) {
           pi.logger.warn(
-            `ecomono: bash deny literals disabled, cannot read claude/settings.template.json from ${o.repo}: ${
-              e instanceof Error ? e.message : String(e)
-            }`,
+            `ecomono: bash deny literals disabled, cannot read claude/settings.template.json from ${o.repo}: ${errText(e)}`,
           )
         }
       }
@@ -262,20 +378,22 @@ export function ecomono(o: { repo: string; hooksDir?: string; timeoutMs?: number
         } catch (e) {
           denyGlobs = []
           pi.logger.warn(
-            `ecomono: path deny disabled, cannot read opencode/opencode.json from ${o.repo}: ${
-              e instanceof Error ? e.message : String(e)
-            }`,
+            `ecomono: path deny disabled, cannot read opencode/opencode.json from ${o.repo}: ${errText(e)}`,
           )
         }
       }
       return denyGlobs
     }
 
-    // Path deny, design.md 5.4 steps 2-5 on already-collected values: the first value whose parts, resolved
-    // against ctx.cwd, hit a deny glob. A glob without "/" matches the basename of the candidate; the others match
-    // the candidate without its leading "/". Each candidate is also tested with "/x" appended, because
-    // `**/.ssh/**` does not match the directory itself (F4), only what is below it. Shared by the tool_call path
-    // gate and the read post-check, so a target omp resolved gets the same verdict as one the model typed.
+    // Path deny (docs/DESIGN.md, omp target > Handler contracts) on already-collected values: the first value
+    // whose parts, resolved against ctx.cwd, hit a deny glob. A glob without "/" matches the basename of the
+    // candidate; the others match the candidate without its leading "/". Each candidate is also tested with "/x"
+    // appended, because `**/.ssh/**` does not match the directory itself, only what is below it, and so is its
+    // symlink-resolved form (realish). Shared by the tool_call path gate, the task @-mention check and the read
+    // post-check, so a target omp resolved gets the same verdict as one the model typed.
+    // ecomono: the match is case-sensitive (Bun.Glob has no nocase option), so on a case-insensitive filesystem
+    // `~/.SSH/id` or `.ENV` reads the file the glob means and passes. Ceiling: macOS and Windows hosts. Upgrade
+    // path: lowercase the candidate and the glob keys on darwin and win32, or omp's tools.restrictedFolders.
     const deny = (ctx: any, values: string[]): { value: string; glob: string } | undefined => {
       const list = globs()
       if (list.length === 0) return undefined
@@ -284,12 +402,15 @@ export function ecomono(o: { repo: string; hooksDir?: string; timeoutMs?: number
           const path = resolvePart(ctx.cwd, part)
           if (path === undefined) continue
           for (const candidate of candidates(path)) {
-            for (const probe of [candidate, `${candidate}/x`]) {
-              const name = basename(probe)
-              const hit = list.find(({ glob, matcher }) =>
-                glob.includes("/") ? matcher.match(probe.replace(/^\//, "")) : matcher.match(name),
-              )
-              if (hit) return { value, glob: hit.glob }
+            const real = realish(candidate)
+            for (const c of real === candidate ? [candidate] : [candidate, real]) {
+              for (const probe of [c, `${c}/x`]) {
+                const name = basename(probe)
+                const hit = list.find(({ glob, matcher }) =>
+                  glob.includes("/") ? matcher.match(probe.replace(/^\//, "")) : matcher.match(name),
+                )
+                if (hit) return { value, glob: hit.glob }
+              }
             }
           }
         }
@@ -326,9 +447,7 @@ export function ecomono(o: { repo: string; hooksDir?: string; timeoutMs?: number
         } catch (e) {
           if ((e as NodeJS.ErrnoException)?.code !== "ENOENT") {
             pi.logger.warn(
-              `ecomono: memory guard disabled for ${name}, cannot read claude/agents/${name}.md from ${o.repo}: ${
-                e instanceof Error ? e.message : String(e)
-              }`,
+              `ecomono: memory guard disabled for ${name}, cannot read claude/agents/${name}.md from ${o.repo}: ${errText(e)}`,
             )
           }
         }
@@ -340,14 +459,28 @@ export function ecomono(o: { repo: string; hooksDir?: string; timeoutMs?: number
     // Skill registry refresh, same generator, flags and timeout as OpenCode's skill-registry.ts. Fire and forget: the
     // generator exits 0 under --quiet and a failure must never hold a prompt, so the promise is never awaited and
     // never rejects. Main session only: a subagent shares the parent's project and would only repeat the work.
+    // A failed run warns once per session, since it runs on every prompt: pi.exec rejects when `node` is not on
+    // PATH (an omp-only host can lack it) and resolves with `killed` or a non-zero code on a timeout or a crash
+    // (omp: exec/exec.ts:41-64). `node` from PATH as in OpenCode; process.execPath is bun here.
     // ecomono: runs are not deduplicated, so a prompt during a slow refresh starts a second one. Add an in-flight
     // guard if overlapping runs ever cause harm.
+    let refreshWarned = false
+    const refreshFailed = (why: string): void => {
+      if (refreshWarned) return
+      refreshWarned = true
+      pi.logger.warn(`ecomono: skill registry not refreshed: ${why}`)
+    }
     const refresh = (ctx: any): void => {
       if (ctx?.agent?.kind !== "main") return
       pi.exec("node", [join(o.repo, "claude/hooks/ecomono-skill-registry.js"), "--quiet", "--cwd", ctx.cwd], {
         cwd: ctx.cwd,
         timeout: 30_000,
-      }).catch(() => {})
+      })
+        .then((r) => {
+          if (r?.killed) refreshFailed("the generator timed out")
+          else if (r?.code !== 0) refreshFailed(`the generator exited with ${r?.code}`)
+        })
+        .catch((e) => refreshFailed(e?.code === "ENOENT" ? "node not on PATH" : errText(e)))
     }
 
     const gate = (name: string, payload: unknown, cwd: string, ctx: any) =>
@@ -362,7 +495,8 @@ export function ecomono(o: { repo: string; hooksDir?: string; timeoutMs?: number
 
     // Merges the gates' answers: any deny blocks; otherwise the asks go to the user, or, with nobody to ask,
     // block, except that a headless ask from check-diff-size alone is dropped. It is a nudge, and omp's headless
-    // mode includes subagents, which Claude would prompt interactively.
+    // mode includes subagents, which Claude would prompt interactively. A confirm that rejects fails open like any
+    // other fault: the tool_call handler's extensionFault reports it to the logger, the state log and the UI.
     const decide = async (ctx: any, results: { name: string; r: HookDecision | undefined }[]) => {
       const reasons = (kind: "deny" | "ask") =>
         results.filter(({ r }) => r?.decision === kind).map(({ r }) => r!.reason)
@@ -384,6 +518,8 @@ export function ecomono(o: { repo: string; hooksDir?: string; timeoutMs?: number
         ),
       )
 
+    // A throw here (a rejected confirm, a malformed ctx) allows the call; it goes through extensionFault rather than
+    // the plain logger line, because an unchecked call must leave the same trace as a gate that failed open.
     pi.on(
       "tool_call",
       safe(async (event: any, ctx: any) => {
@@ -404,12 +540,13 @@ export function ecomono(o: { repo: string; hooksDir?: string; timeoutMs?: number
               }
             }
           }
+          // A cwd that is an internal URL (skill://, local://, ...) has no host directory to run a script in, yet omp
+          // still runs the command, in its embedded shell, which reads host files and runs external programs
+          // (omp: tools/bash.ts:1090-1110; internal-urls/url-filesystem.ts:4-6,268-273,480). Such a call is judged
+          // on the session cwd, like a call with no cwd: the secret gate reads only the command text, and the
+          // delivery gates then judge the session repository, which can only err toward a block.
           const raw = typeof input.cwd === "string" ? input.cwd : ""
-          const cwd = raw ? ompPath(ctx.cwd, raw) : ctx.cwd
-          if (cwd === undefined) {
-            failOpen(ctx, `[bash gates] failing open: the bash cwd ${raw} is not a directory path — this call was NOT checked`)
-            return undefined
-          }
+          const cwd = (raw ? ompPath(ctx.cwd, raw) : undefined) ?? ctx.cwd
           return runGates(["secret-access-gate", "check-diff-size", "review-receipt-gate"], command, cwd, ctx)
         }
 
@@ -422,10 +559,11 @@ export function ecomono(o: { repo: string; hooksDir?: string; timeoutMs?: number
         // OpenCode enforces natively on its read tool.
         // ecomono: the gate checks the roots a call names, never the walk beneath them. grep, glob, find and
         // ast_grep over a parent directory, or over a root with glob characters, can still surface a denied file
-        // (design.md 5.4 ceiling list, F14e). Upgrade path: omp's tools.restrictedFolders, or filtering the result
-        // in tool_result, once a leak is observed.
+        // (docs/DESIGN.md, omp target > Deferred, with triggers: parent-directory search leak). Upgrade path: omp's
+        // tools.restrictedFolders, or filtering the result in tool_result, once a leak is observed.
         if (PATH_TOOLS.has(event.toolName)) {
           const values = [...strings(input.path), ...strings(input.paths)]
+          if (event.toolName === "edit") values.push(...editTargets(input))
           const hit = deny(ctx, values)
           if (!hit) return undefined
           return {
@@ -442,10 +580,25 @@ export function ecomono(o: { repo: string; hooksDir?: string; timeoutMs?: number
         // never reaches the judge. omp drops `context` when task.batch is off, but then it rejects a call that
         // carries one (task/index.ts:229-241), so no judge launches without it.
         // ecomono: an eval `agent()` spawn of a judge skips this gate. before_subagent_spawn carries no prompt
-        // (omp: extensibility/extensions/types.ts:1101-1113, F19), so there is nothing to hand the script. Upgrade
+        // (omp: extensibility/extensions/types.ts:1101-1113), so there is nothing to hand the script. Upgrade
         // path: when such a spawn is observed, run the script with an empty prompt from before_subagent_spawn.
+        // Before the judge gate, the path deny on the @-mentions of every item's `task`, whatever its agent: omp
+        // reads each mentioned file into the child's first prompt with no tool_call (task/executor.ts:2499,2532;
+        // session/agent-session.ts:8848-8857). `context` becomes the system prompt and is never scanned for
+        // mentions, so it is not checked.
+        // ecomono: other text omp sends through the same prompt path, such as the queued hidden next-turn messages
+        // (session/agent-session.ts:9825-9840), has its mentions read too and is not seen here. Upgrade path: deny
+        // their mentions at the event that carries them, if one is ever exposed to extensions.
         if (event.toolName === "task") {
           const items: unknown[] = Array.isArray(input.tasks) ? input.tasks : [input]
+          const mentions = items.flatMap((item: any) => (typeof item?.task === "string" ? fileMentions(item.task) : []))
+          const mentioned = deny(ctx, mentions)
+          if (mentioned) {
+            return {
+              block: true,
+              reason: `Blocked: task mention "@${mentioned.value}" is denied by "${mentioned.glob}" in opencode/opencode.json (permission.read); omp reads @-mentioned files into the subagent's first prompt.`,
+            }
+          }
           const name = "judge-standards-gate"
           const results = await Promise.all(
             items.flatMap((item: any) => {
@@ -463,8 +616,8 @@ export function ecomono(o: { repo: string; hooksDir?: string; timeoutMs?: number
         // Memory write guard: Claude restricts a subagent to the memory tools its own `tools:` line lists, and omp
         // mounts every MCP tool on every agent, so the same line is enforced here. The tool arrives under its own
         // name even when the model reaches it through `write xd://mcp__ecomono_memory_<tool>`: omp fires a second
-        // tool_call for the inner call (spikes/results.json .sp2.innerToolCall is true), so this one branch
-        // covers both routes.
+        // tool_call for the inner call (spike 2, docs/DESIGN.md, omp target > Spike results, row 2), so this one
+        // branch covers both routes.
         if (typeof event.toolName === "string" && event.toolName.startsWith(MEMORY_TOOL)) {
           const agent = ctx?.agent
           if (agent?.kind !== "sub" || typeof agent.name !== "string") return undefined
@@ -476,7 +629,7 @@ export function ecomono(o: { repo: string; hooksDir?: string; timeoutMs?: number
           }
         }
         return undefined
-      }),
+      }, (why, _event, ctx) => extensionFault(ctx, "tool-call", why)),
     )
 
     // Loaded on first use and cached, also when loading fails: one warning per session, then pass-through.
@@ -493,24 +646,17 @@ export function ecomono(o: { repo: string; hooksDir?: string; timeoutMs?: number
         } catch (e) {
           compressor = null
           pi.logger.warn(
-            `ecomono: bash compression disabled, cannot load claude/hooks/ecomono-compress.js from ${o.repo}: ${
-              e instanceof Error ? e.message : String(e)
-            }`,
+            `ecomono: bash compression disabled, cannot load claude/hooks/ecomono-compress.js from ${o.repo}: ${errText(e)}`,
           )
         }
       }
       return compressor ?? undefined
     }
 
-    // shellMinimizer: coexist, not disabled. omp's minimizer runs inside the bash executor, before tool_result,
-    // and only for commands it has a filter for; it keeps the raw bytes as an artifact. compressBash then sees
-    // already-minimized text, usually short enough to pass through unchanged (no stats line). ecomono ships no
-    // config.yml, so it does not turn an omp default off. Consequences: stats.jsonl under-counts savings on
-    // minimized commands, and the "[raw output: artifact://N]" notice is peeled and re-appended like any other.
     pi.on(
       "tool_result",
       safe(async (event: any, ctx: any) => {
-        // Read post-check (design.md 5.4, F15): omp resolves some reads to a file the model never named, and
+        // Read post-check (docs/DESIGN.md, omp target > Handler contracts): omp resolves some reads to a file the model never named, and
         // reports where in `details`. A suffix match (`read prod` -> `secrets/prod`, omp: tools/read.ts:2046-2059,
         // details.suffixResolution.to) and the parts of a delimited list (details.displayReadTargets) never fire
         // their own tool_call, so the path gate cannot see them. The targets go through the same deny check and a
@@ -518,7 +664,7 @@ export function ecomono(o: { repo: string; hooksDir?: string; timeoutMs?: number
         // ecomono: two ceilings. (1) `details` stays as omp produced it, so the TUI still renders the file to the
         // user; upgrade path: replace `details` too once omp documents which fields the session persists.
         // (2) An oversized read result is saved to artifact://N before tool_result fires (omp: tools/output-meta.ts
-        // spill; design.md F24), and `read artifact://N` is an internal URL the path gate skips, so it can still
+        // spill), and `read artifact://N` is an internal URL the path gate skips, so it can still
         // return the file; N is no longer shown to the model. Upgrade path: when such a read is observed, record N
         // from the replaced content's artifact link and deny `read artifact://N`.
         if (event?.toolName === "read") {
@@ -537,6 +683,11 @@ export function ecomono(o: { repo: string; hooksDir?: string; timeoutMs?: number
             isError: true,
           }
         }
+        // shellMinimizer: coexist, not disabled. omp's minimizer runs inside the bash executor, before tool_result,
+        // and only for commands it has a filter for; it keeps the raw bytes as an artifact. compressBash then sees
+        // already-minimized text, usually short enough to pass through unchanged (no stats line). ecomono ships no
+        // config.yml, so it does not turn an omp default off. Consequences: stats.jsonl under-counts savings on
+        // minimized commands, and the "[raw output: artifact://N]" notice is peeled and re-appended like any other.
         if (event?.toolName !== "bash") return undefined
         // Eval-bridged results go back to a script, which must see them whole.
         if (/^(?:js|prelude)-/.test(String(event.toolCallId))) return undefined
@@ -577,7 +728,8 @@ export function ecomono(o: { repo: string; hooksDir?: string; timeoutMs?: number
     // inheritance (no role, and the one pattern is exactly the main model) goes to @task instead of the main
     // model. Same rule for a task spawn and an eval agent(). Anything else is left alone: a role, and an explicit
     // model or task.agentModelOverrides entry that names a model other than the main one.
-    // spikes/results.json .sp3.fallback is unset: the handler's `model` replacement was observed to take effect.
+    // Spike 3 (docs/DESIGN.md, omp target > Spike results, row 3): the handler's `model` replacement was observed to
+    // take effect, so no fallback was needed.
     // ecomono: ceiling. An override or explicit selector that is exactly the main model's `provider/id` reaches this
     // event as [mainModel] with modelRole undefined, identical to silent inheritance (the event carries no selection
     // source and extensions get no settings access), so it is rerouted to @task. Workaround: bind the override
@@ -609,21 +761,16 @@ export function ecomono(o: { repo: string; hooksDir?: string; timeoutMs?: number
     // Never throws: the file is a trace for headless runs, and a write failure must not cost the warning.
     const stateLog = (line: string): void => {
       try {
-        // `||`, not `??`: an empty XDG_STATE_HOME means unset, as in hook-runner/core.ts.
-        const dir = join(process.env.XDG_STATE_HOME || join(process.env.HOME || homedir(), ".local", "state"), "ecomono")
+        const dir = stateDir()
         mkdirSync(dir, { recursive: true })
         appendFileSync(join(dir, "ecomono.log"), `${new Date().toISOString()} ${line}\n`)
       } catch {}
     }
-    // Notify where there is a UI, else the logger.
+    // Notify where there is a UI, else the logger. notify() keeps a throwing UI from skipping the refresh and the
+    // widget that follow the jq warning in session_start.
     const warnOnce = (ctx: any, text: string): void => {
-      if (ctx.hasUI) {
-        try {
-          ctx.ui.notify(text, "warning")
-        } catch (e) {
-          pi.logger.warn(`ecomono: notify failed: ${e instanceof Error ? e.message : String(e)}`)
-        }
-      } else pi.logger.warn(text)
+      if (ctx.hasUI) notify(ctx, text)
+      else pi.logger.warn(text)
     }
     pi.on(
       "session_start",
@@ -659,9 +806,10 @@ export function ecomono(o: { repo: string; hooksDir?: string; timeoutMs?: number
       }),
     )
 
-    // Prompt capture (design.md 5.9), the counterpart of the prompt hook in opencode/plugins/memory.ts:108-117: the
+    // Prompt capture (docs/DESIGN.md, omp target > Handler contracts), the counterpart of the prompt hook in opencode/plugins/memory.ts:108-117: the
     // same DB (WAL + busy_timeout) and the same ensureSession + savePrompt pair, the project taken from the cwd.
-    // The storage modules load on first use and always dynamically, whatever spikes/results.json .sp1.route says:
+    // The storage modules load on first use and always dynamically, whatever spike 1 found (docs/DESIGN.md, omp
+    // target > Spike results, row 1):
     // a storage failure (bun:sqlite, an unopenable DB) then costs the capture and never the extension and its
     // gates. The load result is cached, failure included, and the first fault warns once per session; a later
     // prompt still attempts the capture. As in OpenCode, the session_id a model passes to the MCP tools is not
@@ -673,16 +821,22 @@ export function ecomono(o: { repo: string; hooksDir?: string; timeoutMs?: number
     // expanded body for the same reason: the event holds the already-transformed text. Upgrade path: capture from
     // `message_start` instead and keep `message.role === "user" && !message.synthetic && message.attribution !==
     // "agent"` (omp sends its own prompts as `developer` messages); omp/tests/fake-pi.ts must then accept the event.
+    // Queued steer and follow-up messages reach one before_agent_start with their texts joined by a blank line
+    // (omp: session/agent-session.ts:8546-8569), so N queued messages are stored as one row; the same upgrade path
+    // stores them one by one.
     // ecomono: the storage modules report a few faults with console.error (db.ts when stat fails, observations.ts
     // for a stranded legacy project key), which draws over the TUI. Upgrade path: pass them a sink backed by
     // pi.logger if that is ever observed.
+    // ecomono: a failed load is cached too (`storage ??=` keeps the null). Ceiling: after one failed load, for
+    // example a checkout updated while omp runs, capture stays off until omp restarts. Upgrade path: clear `storage`
+    // in the catch so the next prompt retries, still warning once.
     type Storage = { Sess: any; Prompts: any; Obs: any }
     let storage: Promise<Storage | null> | undefined
     let captureWarned = false
     const captureFailed = (e: unknown): void => {
       if (captureWarned) return
       captureWarned = true
-      pi.logger.warn(`ecomono: prompt capture failed: ${e instanceof Error ? e.message : String(e)}`)
+      pi.logger.warn(`ecomono: prompt capture failed: ${errText(e)}`)
     }
     const loadStorage = (): Promise<Storage | null> =>
       (storage ??= (async () => {

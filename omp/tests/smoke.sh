@@ -10,7 +10,7 @@
 # mcp.json entries), then omp runs with omp/tests/mock-provider.ts as its model, so no LLM and no network is
 # involved. Each scenario asserts on the dump the mock writes: what the real harness resolved (persona, style,
 # commands, skills, the memory bundle) and what it fed back to the model (the compression handler loading
-# through the symlinked extension). Layer 4 of the test plan in the design.
+# through the symlinked extension). The end-to-end layer above the bun suites of omp/tests/run-tests.sh.
 #
 # Skips (exit 0) without omp on PATH. The first statements are shell builtins on purpose: this guard runs
 # before anything that might not be installed.
@@ -154,7 +154,7 @@ expect "command skill:ecomono-commit is registered" \
 # the first request carries the command body with $ARGUMENTS substituted, not the literal slash text.
 expect "markdown command ecomono-sdd-new expanded with its arguments" \
   '[.[] | select(.ev == "request")][0].last | tostring | contains("Change name: smoke-change")'
-# spikes/results.json .sp2.storedShapes: the memory tool is either a bare tool name or reachable through its
+# Spike 2 (docs/DESIGN.md, omp target > Spike results, row 2): the memory tool is either a bare tool name or reachable through its
 # xd:// route in the system prompt.
 mem="mcp__ecomono_memory_mem_save"
 expect "memory tool reachable ($mem or xd://$mem)" \
@@ -190,11 +190,18 @@ if [ -z "$(pgit remote)" ]; then echo "ok: receipt: the project has no remote, n
 # tier word of the agent's frontmatter `model:`. The mock refuses the spawn (ECOMONO_OMP_BLOCK_SPAWN=1, set for
 # this call only), so no subagent ever runs; the step is a non-batch `task` call (schema: omp task/types.ts).
 # `task` runs as a background job and the spawn event fires inside it, so the scripted parent must `wait` for the
-# job; without that step it ends first and the event never fires (spikes/results.json .sp3.note).
+# job; without that step it ends first and the event never fires (spike 3, docs/DESIGN.md Spike results, row 3).
 ECOMONO_OMP_BLOCK_SPAWN=1 scenario spawn "smoke: spawn shape" \
   '[{"tool":"task","args":{"agent":"ecomono-explore","task":"say hi","solutionSpace":"n/a"}},{"tool":"wait","args":{}},{"text":"done"}]'
 expect "a spawn event for ecomono-explore has patterns [\"sonnet\"]" \
   '[.[] | select(.ev == "spawn" and .agent == "ecomono-explore")] | any(.patterns == ["sonnet"])'
+
+# (e) internal-URL cwd: omp runs such a bash call in its embedded shell, which reaches the host, so the bash gates
+# still judge it. Headless, the secret gate's ask blocks. The throwaway HOME has no such key; the path is only
+# command text.
+scenario urlcwd "smoke: url cwd" '[{"tool":"bash","args":{"command":"cat ~/.ssh/id_ed25519","cwd":"local://"}},{"text":"done"}]'
+expect "the bash result reaching the model has 'credential material'" \
+  '[.[] | select(.ev == "request" and .last.role == "toolResult")] | any(.last | tostring | contains("credential material"))'
 
 if [ "$fails" -ne 0 ]; then
   echo "smoke: $fails check(s) failed" >&2

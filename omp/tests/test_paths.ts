@@ -1,10 +1,10 @@
 // Path deny and read post-check of the omp extension, driven through fake-pi. Plain assert script. Nothing here
-// reads a file under test: the gate only matches path strings, so the real home directory is safe to use in
-// expectations. `~` is built from os.homedir(); HOME is never changed (Bun's os.homedir() ignores a runtime
-// change, design.md F16).
+// reads the content of a file under test: the gate matches path strings and resolves symlinks, so the real home
+// directory is safe to use in expectations, and the symlink fixtures are empty files in a temp tree. `~` is built
+// from os.homedir(); HOME is never changed (Bun's os.homedir() ignores a runtime change).
 import { ISOLATED, makeCtx, makePi } from "./fake-pi.ts"
 import assert from "node:assert/strict"
-import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs"
+import { mkdirSync, mkdtempSync, readFileSync, symlinkSync, writeFileSync } from "node:fs"
 import { homedir } from "node:os"
 import { join } from "node:path"
 import { REPO, ecomono } from "../extensions/ecomono/index.ts"
@@ -140,6 +140,20 @@ const sample = (glob: string) => glob.replace(/\*\*\//g, "/x/").replace(/\*\*/g,
     ["grep", { path: '["~\\/.ssh"]' }], // JSON-escaped slash: decodes to ~/.ssh
     ["grep", { path: ' [ "src" , "b.key" ] ' }], // padded
     ["grep", { paths: ['["src",".env"]'] }], // inside an array
+    // Each of these depends on exactly one normalisation step, so dropping that step fails here.
+    ["read", { path: ":~.ssh/id_rsa" }], // the `:` prefix before `~`
+    ["grep", { path: '".env"' }], // outer quotes
+    ["grep", { path: "src,secrets" }], // the `,` split
+    ["grep", { path: "src secrets" }], // the whitespace split
+    // Archive members: `archive.ext:member/path`.
+    ["read", { path: "x.zip:.ssh/k" }],
+    ["read", { path: "x.tar.gz:secrets/a" }],
+    ["read", { path: "x.zip:.aws/credentials" }],
+    ["read", { path: "x.tar.gz:secrets:raw" }], // stacked selector
+    ["grep", { path: "x.zip:.ssh/k" }],
+    ["grep", { path: "x.tar.gz:secrets/a" }],
+    ["write", { path: "x.zip:.aws/credentials" }],
+    ["write", { path: "x.zip:.ssh/k" }],
   ]
   for (const [tool, input] of denied) {
     const r = await fire("tool_call", call(tool, input), ctx)
@@ -167,6 +181,7 @@ const sample = (glob: string) => glob.replace(/\*\*\//g, "/x/").replace(/\*\*/g,
     ["grep", { path: 7, paths: [null, {}, 1] }],
     ["read", { path: "environment.ts" }],
     ["read", { path: "src/.envrc.ts" }],
+    ["read", { path: "x.zip:docs/readme.md" }], // an ordinary archive member
     ["grep", { path: '["src","lib"]' }], // a JSON array of ordinary paths
     ["grep", { path: '["src", 1, null]' }], // non-string entries are ignored
     ["grep", { path: "[not json" }],
@@ -176,6 +191,127 @@ const sample = (glob: string) => glob.replace(/\*\*\//g, "/x/").replace(/\*\*/g,
   for (const [tool, input] of allowed) {
     assert.equal(await fire("tool_call", call(tool, input), ctx), undefined, `${tool} ${JSON.stringify(input)}`)
   }
+}
+
+{
+  // The release valve of the bash secret gate never lifts the in-process path deny.
+  const { fire, ctx } = setup()
+  const saved = process.env.ECOMONO_ALLOW_SECRET_PATHS
+  process.env.ECOMONO_ALLOW_SECRET_PATHS = "1"
+  try {
+    assert.equal((await fire("tool_call", call("read", { path: ".env" }), ctx))?.block, true)
+  } finally {
+    if (saved === undefined) delete process.env.ECOMONO_ALLOW_SECRET_PATHS
+    else process.env.ECOMONO_ALLOW_SECRET_PATHS = saved
+  }
+}
+
+// ---- symlinks -------------------------------------------------------------------------------------------------
+
+{
+  // omp follows a link, so its target meets the globs: a link to a denied file, a link to a denied directory, and
+  // a new file below that linked directory. A link to an ordinary file still passes.
+  const { fire, calls, ctx } = setup()
+  const outside = dir("outside")
+  mkdirSync(join(outside, ".ssh"))
+  writeFileSync(join(outside, ".ssh/id_ed25519"), "")
+  writeFileSync(join(outside, "plain.txt"), "")
+  mkdirSync(join(ctx.cwd, "docs"))
+  symlinkSync(join(outside, ".ssh/id_ed25519"), join(ctx.cwd, "docs/notes"))
+  symlinkSync(join(outside, ".ssh"), join(ctx.cwd, "docs/sshdir"))
+  symlinkSync(join(outside, "plain.txt"), join(ctx.cwd, "docs/plain"))
+  for (const [tool, input] of [
+    ["read", { path: "docs/notes" }],
+    ["read", { path: "docs/notes:1-5" }],
+    ["grep", { path: "docs/sshdir" }],
+    ["write", { path: "docs/sshdir/newkey" }],
+    ["write", { path: "docs/sshdir/new/deeper" }],
+  ] as const) {
+    assert.equal((await fire("tool_call", call(tool, input), ctx))?.block, true, `${tool} ${JSON.stringify(input)}`)
+  }
+  assert.equal(await fire("tool_call", call("read", { path: "docs/plain" }), ctx), undefined)
+  // The read post-check uses the same check.
+  const r = await fire("tool_result", { toolName: "read", toolCallId: "c", input: { path: "notes" }, content: [], details: { displayReadTargets: ["docs/notes"] } }, ctx)
+  assert.equal(r?.isError, true)
+  assert.deepEqual(calls.warn, [])
+}
+
+// ---- edit: the targets in its text input ------------------------------------------------------------------------
+
+{
+  const { fire, ctx } = setup()
+  const denied: Array<Record<string, unknown>> = [
+    { path: "README.md", input: "[.env#1A2B]\n+x\n" }, // a hashline header next to an unrelated path
+    { input: "[~/.ssh/authorized_keys#ABCD]\nREM\n" },
+    { input: "[README.md#1A2B]\nMV ~/.ssh/authorized_keys\n" }, // a hashline rename
+    { input: "[README.md#1A2B]\nMV: secrets/moved\n" },
+    { input: "[*** Begin Patch] [.env#ABCD]\n+x\n" }, // envelope-wrapped header
+    { input: "[.env#AUTO]\n+x\n" }, // a placeholder tag
+    { input: '["secrets/a b.txt"#1A2B]\n+x\n' }, // quoted, with a space
+    { input: "\u00b6.env#1A2B\n+x\n" }, // legacy header
+    { _input: "[.env#1A2B]\n+x\n" },
+    { input: "*** Begin Patch\n*** Update File: .env\n@@\n+x\n*** End Patch\n" }, // apply_patch
+    { input: "*** Begin Patch\n*** Add File: secrets/new.txt\n+x\n*** End Patch\n" },
+    { input: "*** Begin Patch\n*** Delete File: ~/.ssh/id_rsa\n*** End Patch\n" },
+    { input: "*** Begin Patch\n*** Update File: src/a.ts\n*** Move to: ~/.ssh/config\n@@\n+x\n*** End Patch\n" },
+    { path: "src/a.ts", edits: [{ rename: ".env" }] }, // patch mode rename
+  ]
+  for (const input of denied) {
+    const r = await fire("tool_call", call("edit", input), ctx)
+    assert.equal(r?.block, true, JSON.stringify(input))
+    assert.match(r.reason, /opencode\/opencode\.json/, JSON.stringify(input))
+  }
+  // Body lines are content, not targets: an edit may mention a secret path.
+  const allowed: Array<Record<string, unknown>> = [
+    { path: "README.md", input: "[README.md#1A2B]\n+keep API keys in .env\n+see ~/.ssh/config\n" },
+    { input: "*** Begin Patch\n*** Update File: src/a.ts\n@@\n-[.env]: old\n+x\n*** End Patch\n" },
+    { path: "src/a.ts", edits: [{ rename: "src/b.ts", diff: "+.env" }] },
+    { path: "src/a.ts", input: 7, edits: "nope" },
+  ]
+  for (const input of allowed) assert.equal(await fire("tool_call", call("edit", input), ctx), undefined, JSON.stringify(input))
+  // Only edit reads `input`.
+  assert.equal(await fire("tool_call", call("write", { path: "src/a.ts", input: "[.env#1A2B]" }), ctx), undefined)
+}
+
+// ---- task: @-mentions in an item's task text ------------------------------------------------------------------
+
+{
+  const { fire, ctx } = setup()
+  const task = (input: unknown) => call("task", input)
+  const denied: unknown[] = [
+    { tasks: [{ agent: "task", task: "Summarize @.env" }] },
+    { tasks: [{ agent: "task", task: "look at @~/.ssh/id_ed25519 please" }] },
+    { tasks: [{ agent: "task", task: 'read @"secrets/a b.txt"' }] },
+    { tasks: [{ task: "check (@.env)." }] }, // no agent: omp still reads the mention
+    { tasks: [{ agent: "a", task: "fine" }, { agent: "b", task: "and @secrets/x" }] },
+    { agent: "task", task: "Summarize @'.env'" }, // non-batch
+  ]
+  for (const input of denied) {
+    const r = await fire("tool_call", task(input), ctx)
+    assert.equal(r?.block, true, JSON.stringify(input))
+    assert.match(r.reason, /task mention "@/, JSON.stringify(input))
+    assert.match(r.reason, /opencode\/opencode\.json/, JSON.stringify(input))
+  }
+  // No agent, so no judge script runs: the verdict is the mention check alone.
+  for (const input of [
+    { tasks: [{ task: "mail user@.env" }] }, // not at a mention boundary
+    { tasks: [{ task: "see @src/a.ts." }] },
+    { context: "@.env", tasks: [{ task: "x" }] }, // context is the system prompt: omp reads no mention there
+  ]) {
+    assert.equal(await fire("tool_call", task(input), ctx), undefined, JSON.stringify(input))
+  }
+}
+
+// ---- a handler fault fails open ---------------------------------------------------------------------------------
+
+{
+  // A ctx with no cwd makes path resolution throw inside the handler: the call is allowed (not failed closed by
+  // omp) and the fault is logged.
+  const { fire, calls } = setup()
+  const ctx = makeCtx({ cwd: undefined })
+  assert.equal(await fire("tool_call", call("read", { path: ".env" }), ctx), undefined)
+  assert.ok(calls.warn.some((l) => l.includes("[tool-call] failing open") && l.includes("handler failed")), calls.warn.join("\n"))
+  assert.deepEqual(calls.failures, [])
 }
 
 // ---- read post-check ----------------------------------------------------------------------------------------

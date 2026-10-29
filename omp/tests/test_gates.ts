@@ -259,6 +259,8 @@ const withEnv = async <T>(patch: Record<string, string | undefined>, fn: () => P
   assert.equal(ui.calls.warn.filter((l) => l.includes("failing open")).length, 2)
   assert.equal(ui.ctx.recorded.notify.length, 1)
   assert.match(ui.ctx.recorded.notify[0][0], /failed open/)
+  // The notice names the directory the lines went to, XDG_STATE_HOME included.
+  assert.ok(ui.ctx.recorded.notify[0][0].includes(join(process.env.XDG_STATE_HOME!, "ecomono")), ui.ctx.recorded.notify[0][0])
   assert.equal(ui.ctx.recorded.notify[0][1], "warning")
   assert.equal(ui.ctx.recorded.confirm.length, 0)
 
@@ -281,15 +283,42 @@ const withEnv = async <T>(patch: Record<string, string | undefined>, fn: () => P
 // ---- cwd resolution -----------------------------------------------------------------------------------------
 
 {
-  // An internal-URL cwd cannot host a gate script: fail open with a warning that names it.
-  const d = dir("rec")
-  const { fire, calls, ctx } = setup({ hooksDir: hooks(recording(d)) })
-  assert.equal(await fire("tool_call", bash("ls", { cwd: "skill://x" }), ctx), undefined)
-  assert.ok(calls.warn.some((l) => l.includes("failing open") && l.includes("skill://x")))
-  assert.equal(recorded(d, "secret-access-gate"), undefined, "no script ran")
+  // An internal-URL cwd has no host directory, but omp's embedded shell still reaches the host: every gate runs,
+  // in ctx.cwd, and nothing fails open.
+  for (const url of ["skill://x", "local://"]) {
+    const d = dir("rec")
+    const { fire, calls, ctx } = setup({ hooksDir: hooks(recording(d)) })
+    assert.equal(await fire("tool_call", bash("ls", { cwd: url }), ctx), undefined, url)
+    for (const g of GATES) assert.equal(recorded(d, g)?.pwd, realpathSync(ctx.cwd), `${url}: ${g} ran in ctx.cwd`)
+    assert.ok(!calls.warn.some((l) => l.includes("failing open")), url)
 
-  // The literal check still applies before the cwd is looked at.
-  assert.equal((await fire("tool_call", bash("rm -rf /", { cwd: "skill://x" }), ctx))?.block, true)
+    // The literal check still applies before the cwd is looked at.
+    assert.equal((await fire("tool_call", bash("rm -rf /", { cwd: url }), ctx))?.block, true, url)
+  }
+}
+
+{
+  // A cwd of "/" is the session cwd, as omp's resolveToCwd has it, not the filesystem root.
+  const d = dir("rec")
+  const { fire, ctx } = setup({ hooksDir: hooks(recording(d)) })
+  assert.equal(await fire("tool_call", bash("ls", { cwd: "/" }), ctx), undefined)
+  assert.equal(recorded(d, "secret-access-gate")?.pwd, realpathSync(ctx.cwd))
+}
+
+// ---- a handler fault fails open, traced like a gate ---------------------------------------------------------
+
+{
+  // A confirm that rejects: the call is allowed (the documented fail-open), and it leaves the logger line, a
+  // line in <XDG_STATE_HOME>/ecomono/tool-call.log and one notice that names that directory.
+  const before = stateLog("tool-call").length
+  const { fire, calls, ctx } = setup({ hooksDir: hooks({ "secret-access-gate": say("ask", "A-secret") }) }, { hasUI: true })
+  ctx.ui.confirm = () => Promise.reject(new Error("confirm broke"))
+  assert.equal(await fire("tool_call", bash("ls"), ctx), undefined)
+  assert.ok(calls.warn.some((l) => l.includes("[tool-call] failing open") && l.includes("handler failed: confirm broke")))
+  assert.equal(stateLog("tool-call").length, before + 1)
+  assert.match(stateLog("tool-call").at(-1)!, /handler failed: confirm broke/)
+  assert.equal(ctx.recorded.notify.length, 1)
+  assert.ok(ctx.recorded.notify[0][0].includes(join(process.env.XDG_STATE_HOME!, "ecomono")), ctx.recorded.notify[0][0])
 }
 
 {
@@ -401,6 +430,13 @@ const withEnv = async <T>(patch: Record<string, string | undefined>, fn: () => P
     const rs = await secret.fire("tool_call", bash("cat ~/.ssh/id_rsa"), secret.ctx)
     assert.equal(rs?.block, true)
     assert.match(rs.reason, /credential material/)
+
+    // The same with an internal-URL cwd: omp still runs the command on the host.
+    for (const url of ["skill://x", "local://"]) {
+      const ru = await secret.fire("tool_call", bash("cat ~/.ssh/id_ed25519", { cwd: url }), secret.ctx)
+      assert.equal(ru?.block, true, url)
+      assert.match(ru.reason, /credential material/, url)
+    }
   })
 
   // The release valve is inherited from the environment, not stripped as OpenCode does.

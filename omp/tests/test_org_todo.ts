@@ -31,6 +31,8 @@ const within = <T>(p: Promise<T>, ms = 2000): Promise<T> =>
 /** The grep calls of a run: session_start also execs the skill-registry generator, which is not under test here. */
 const greps = (calls: ReturnType<typeof makePi>["calls"]) => calls.exec.filter(([command]) => command === "grep")
 const grepOut = (stdout: string) => ({ stdout, stderr: "", code: stdout ? 0 : 1, killed: false })
+/** What the skill-registry exec answers here: a clean exit, so it adds no warning of its own. */
+const nodeOk = { stdout: "", stderr: "", code: 0, killed: false }
 const start = (ctx: any, fire: (name: string, event: any, ctx: any) => Promise<any>) =>
   within(fire("session_start", { reason: "start" }, ctx))
 
@@ -102,7 +104,7 @@ for (const [label, over] of [
   try {
     const cwd = dir("project")
     const rows = Array.from({ length: 12 }, (_, i) => `${cwd}/docs/n${i + 1}.md:${i + 1}:- [ ] item ${i + 1}`)
-    const { fire, calls, ctx } = setup({ cwd, mode: "tui", hasUI: true }, { exec: (command) => (command === "grep" ? grepOut(rows.join("\n")) : grepOut("")) })
+    const { fire, calls, ctx } = setup({ cwd, mode: "tui", hasUI: true }, { exec: (command) => (command === "grep" ? grepOut(rows.join("\n")) : nodeOk) })
     assert.equal(await start(ctx, fire), undefined)
     await settle()
 
@@ -155,7 +157,7 @@ for (const [label, over] of [
   // A long row is cut to 80 characters; the widget is cleared (content undefined) once the last todo is gone.
   const cwd = dir("project")
   let todos = `${cwd}/docs/long.md:3:- [ ] ${"x".repeat(200)}`
-  const { fire, ctx } = setup({ cwd, mode: "tui", hasUI: true }, { exec: (command) => grepOut(command === "grep" ? todos : "") })
+  const { fire, ctx } = setup({ cwd, mode: "tui", hasUI: true }, { exec: (command) => (command === "grep" ? grepOut(todos) : nodeOk) })
   await start(ctx, fire)
   await settle()
   const [, lines] = ctx.recorded.setWidget[0]!
@@ -191,7 +193,7 @@ for (const [label, over] of [
     const throwing = setup({ mode: "tui", hasUI: true }, {
       exec: (command) => {
         if (command === "grep") throw new Error("exec threw")
-        return grepOut("")
+        return nodeOk
       },
     })
     assert.equal(await start(throwing.ctx, throwing.fire), undefined)
@@ -202,6 +204,32 @@ for (const [label, over] of [
     process.off("unhandledRejection", onUnhandled)
   }
   assert.deepEqual(seen, [], "no unhandledRejection")
+}
+
+{
+  // pi.exec resolves on a timeout: a killed grep's partial stdout is not the answer, so the widget keeps its
+  // previous state and the logger says so once. grep -s exits 2 when a directory is missing, matches or not: that
+  // still renders.
+  const cwd = dir("project")
+  let result: any = grepOut(`${cwd}/docs/a.md:1:- [ ] one`)
+  const { fire, calls, ctx } = setup({ cwd, mode: "tui", hasUI: true }, { exec: (command) => (command === "grep" ? result : nodeOk) })
+  await start(ctx, fire)
+  await settle()
+  assert.equal(ctx.recorded.setWidget.length, 1)
+
+  result = { stdout: `${cwd}/docs/a.md:1:- [ ] one`, stderr: "", code: -1, killed: true }
+  await ctx.recorded.setInterval[0]![0]()
+  await ctx.recorded.setInterval[0]![0]()
+  await settle()
+  assert.equal(ctx.recorded.setWidget.length, 1, "a killed grep leaves the widget as it was")
+  assert.deepEqual(calls.warn, ["ecomono: org-todo grep timed out; keeping the previous widget"])
+
+  result = { stdout: `${cwd}/docs/a.md:1:- [ ] one\n${cwd}/docs/b.md:2:- [ ] two`, stderr: "", code: 2, killed: false }
+  await ctx.recorded.setInterval[0]![0]()
+  await settle()
+  assert.equal(ctx.recorded.setWidget.length, 2)
+  assert.equal(ctx.recorded.setWidget[1]![1][0], "todo 2")
+  assert.deepEqual(calls.failures, [])
 }
 
 console.log("test_org_todo: all assertions passed")

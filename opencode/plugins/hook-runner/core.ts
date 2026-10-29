@@ -62,18 +62,32 @@ const MAX_STDOUT_BYTES = 4 * 1024 * 1024
  * stderr is the default `report`; a host with its own log channel passes that instead.
  * `report` is swallowed for the same reason as the file write, and is tried first so a
  * throwing one cannot cost the line that survives.
+ *
+ * Exported for a host that finds a fault of its own outside a gate script (the omp
+ * extension), so both kinds of fail-open leave the same line in the same file. `name` is
+ * the log tag and the file name.
  */
-function failedOpen(o: Opts, why: string) {
-  const line = `[${o.name}] failing open: ${why} — this call was NOT checked`
+export function logFailOpen(name: string, why: string, report: (line: string) => void = console.error) {
+  const line = `[${name}] failing open: ${why} — this call was NOT checked`
   try {
-    ;(o.report ?? console.error)(line)
+    report(line)
   } catch {}
   try {
-    // `||`, not `??`: an empty XDG_STATE_HOME means unset, as `${XDG_STATE_HOME:-...}` does.
-    const dir = join(process.env.XDG_STATE_HOME || join(process.env.HOME || homedir(), ".local", "state"), "ecomono")
+    const dir = stateDir()
     mkdirSync(dir, { recursive: true })
-    appendFileSync(join(dir, `${o.name}.log`), `${new Date().toISOString()} ${line}\n`)
+    appendFileSync(join(dir, `${name}.log`), `${new Date().toISOString()} ${line}\n`)
   } catch {}
+}
+
+/** The directory fail-open lines go to: `${XDG_STATE_HOME:-~/.local/state}/ecomono`. */
+export function stateDir(): string {
+  // `||`, not `??`: an empty XDG_STATE_HOME means unset, as `${XDG_STATE_HOME:-...}` does.
+  return join(process.env.XDG_STATE_HOME || join(process.env.HOME || homedir(), ".local", "state"), "ecomono")
+}
+
+/** logFailOpen for one runHook call: its name, and its `report` or stderr. */
+function failedOpen(o: Opts, why: string) {
+  logFailOpen(o.name, why, o.report)
 }
 
 /**

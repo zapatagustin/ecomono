@@ -165,22 +165,30 @@ data above instead of restating it:
   `claude/settings.template.json`; and every `permission.read` deny glob in
   `opencode/opencode.json`, matched on `read`, `write`, `edit`, `grep`, `glob`, `find`,
   `ast_grep` and `ast_edit` across every path form omp accepts: `path` and `paths`,
-  `;` / `,` / whitespace lists, `~`, `@`, quotes, `file://`, `\` separators and `:1-5` /
-  `:raw` selectors. There is no valve. A `read` that omp resolved to a denied file
-  (suffix matching, delimited lists) has its result withheld and returned as an error.
+  `;` / `,` / whitespace lists, `~`, `@`, quotes, `file://`, `\` separators, `:1-5` /
+  `:raw` selectors and `archive.ext:member/path` members (matched as `archive.ext/member/path`),
+  each by its own name and by its symlink target. `edit` is also checked on the targets
+  in its text input (hashline `[PATH#TAG]` and `MV` lines, apply_patch `*** Add/Update/Delete
+  File:` and `*** Move to:` headers, patch-mode `rename`), and `task` on the `@path` mentions
+  in each item's `task` text, which omp reads into the subagent's first prompt. There is no
+  valve. A `read` that omp resolved to a denied file (suffix matching, delimited lists) has
+  its result withheld and returned as an error.
 - **Confirmed in the TUI, blocked headless** (print and json modes, subagents included,
   since nobody can answer): an ask from `secret-access-gate.sh` or
   `review-receipt-gate.sh`. `check-diff-size.sh` runs too; its ask is confirmed in the
   TUI and dropped headless, because it is a nudge. The `github` tool's `pr_create` and
   `pr_push` are judged as `gh pr create` and `git push`, and `task` spawns of the judges
-  go through `judge-standards-gate.sh`. A subagent of an ecomono agent whose
+  go through `judge-standards-gate.sh`. A bash call whose `cwd` is an internal URL
+  (`skill://`, `local://`) is judged on the session directory: omp still runs it on the
+  host. A subagent of an ecomono agent whose
   `claude/agents/<name>.md` has a `tools:` line can call only the ecomono-memory tools that
   line lists; bundled omp agents, `/tan` clones, the advisor and agents without a `tools:`
   line are unrestricted.
 - **Valves** work as on Claude: `ECOMONO_ALLOW_SECRET_PATHS=1` and
   `ECOMONO_ALLOW_UNREVIEWED_PUSH=1` are read by the scripts from the omp process
   environment, so set them per launch. A gate that cannot run (script missing, 20 s
-  timeout, unreadable output) fails open with a line in `~/.local/state/ecomono/` and one
+  timeout, unreadable output), or a gate handler that throws (a failed confirm prompt
+  included), fails open with a line in `${XDG_STATE_HOME:-~/.local/state}/ecomono/` and one
   notice per session; omp itself would fail a crashing handler closed. Without `jq` on
   omp's `PATH` three gate scripts exit 0 silently, so the extension warns once per
   session at start (notice, or logger when headless, plus a line in `ecomono.log` there).
@@ -214,6 +222,15 @@ Accepted ceilings. Where omp has a native switch it is named:
 - `ssh://host/path` reads, searches and writes on any host OpenSSH resolves. Its path
   part is matched against the same deny globs as text, whatever the host, so a remote
   `.env` is denied like a local one and `ssh://localhost/...` cannot reach a local secret.
+- The deny globs match case-sensitively, so on a case-insensitive filesystem (macOS,
+  Windows) `~/.SSH/id` or `.ENV` passes. A symlink counts only when its target exists, so
+  a `write` through a dangling link to a denied path passes. `tools.restrictedFolders`
+  resolves both natively.
+- `@path` mentions are checked in a `task` item's text only. Other text omp sends as a
+  prompt, such as queued hidden next-turn messages, has its mentions read with no tool
+  call.
+- The 20 s gate timeout assumes omp's default `extensionHandlers.toolCallTimeoutMs` of
+  30 s. Lowered below about 20 s, a slow gate fails the bash call closed.
 
 OpenCode's git ask-globs (`git commit *`, `git push`, `git push *`, `git push --force *`,
 `git rebase *`, `git reset --hard *` in `permission.bash`) are not ported to omp: the

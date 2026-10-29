@@ -788,10 +788,15 @@ either way the call was refused, so only the refusal text changes. This is not a
   20 s and run concurrently; there are no raw timers (`ctx.setInterval` only), no floating promises and no
   `console.error` (it draws over the TUI). No handler returns a `systemPrompt`.
 - **Fail-open reporting.** `runHook`'s `report` is `pi.logger.warn`, plus the state log written by the core, plus
-  one `ctx.ui.notify` per session when a UI exists.
+  one `ctx.ui.notify` per session when a UI exists. A `tool_call` handler that throws (a rejected confirm
+  included) is reported the same way through the core's exported `logFailOpen`, to `tool-call.log`, so an
+  unchecked call always leaves the same trace.
 - **`ompPath(cwd, raw)`** mirrors omp's path normalisation: trim, outer double quotes, a leading `@` or `:`,
   `file://`, `~` and `~x`, then `resolve`. An internal URL (`skill://`, `artifact://`, `xd://`, ...) returns
-  `undefined`. The path gate keeps `ssh://` parts and matches their URL path as text, whatever the host.
+  `undefined`. The path gate keeps `ssh://` parts and matches their URL path as text, whatever the host. A bash
+  call whose `cwd` is an internal URL is judged on the session cwd: omp runs it in its embedded shell, which reads
+  host files and runs external programs (`tools/bash.ts:1090-1110`, `internal-urls/url-filesystem.ts`), so
+  failing open there would let a credential read skip the secret gate.
 - **Handlers**, in registration order:
   - `tool_call` on `bash`: in-process `rm -rf` literal check, then `secret-access-gate`, `check-diff-size` and
     `review-receipt-gate` concurrently; any deny blocks, an ask is confirmed in the TUI and blocks headless,
@@ -799,8 +804,13 @@ either way the call was refused, so only the refusal text changes. This is not a
     includes subagents).
   - `tool_call` on `github` with `op` `pr_create` or `pr_push`: synthesises `gh pr create` / `git push` and runs
     the diff-size and receipt gates.
-  - `tool_call` on the path tools: the deny globs of `opencode/opencode.json`, selectors and lists peeled.
-  - `tool_call` on `task`: `judge-standards-gate` once per item; the script alone knows which agents are judges.
+  - `tool_call` on the path tools: the deny globs of `opencode/opencode.json`, selectors and lists peeled, archive
+    members tested with `:` as `/`, each candidate also tested at its symlink target. `edit` adds the targets
+    named in its text input (hashline and apply_patch headers, `MV`, patch-mode `rename`), because omp's event
+    normalizer derives `path` from hashline headers only when the call has none.
+  - `tool_call` on `task`: the deny globs on the `@path` mentions of every item's `task` text (omp reads them into
+    the child's first prompt with no tool call), then `judge-standards-gate` once per item; the script alone
+    knows which agents are judges.
   - `tool_call` on `mcp__ecomono_memory_*` from a subagent: allowed only for the tools in that agent's own
     `tools:` frontmatter. Bundled omp agents, `/tan` clones and the advisor have no file and pass.
   - `tool_result` on `bash`: peel the trailing notice block, `compressBash`, log to `stats.jsonl`; skipped for
@@ -908,6 +918,9 @@ Mirrored code, re-diffed on every omp upgrade:
 | Selector peel (`splitPathAndSel`) | pi-tui `tools/read.ts:147-184` |
 | `ssh://` path rule | omp `internal-urls/ssh-protocol.ts:76-106` |
 | Search-root splitter `/[;,\s]+/` | omp `tools/search-approval-targets.ts:23` |
+| `extractFileMentions` (task `@path` mentions) | omp `utils/file-mentions.ts:33-55,168-186` |
+| Edit header grammar (`[PATH#TAG]`, `¶`, `*** ... File:`, `*** Move to:`, `MV`) | omp `extensibility/tool-event-input.ts:35-90`; pi-edit `modes/hashline/input.rs`, `tokenizer.rs` |
+| Symlink resolution through a missing tail (`resolveEquivalentPath`) | pi-utils `dirs.ts` |
 
 Surfaces relied on:
 
@@ -928,14 +941,14 @@ Surfaces relied on:
 
 ### Spike results
 
-Recorded in `~/.cache/ecomono-omp-port/spikes/results.json` for omp 18.13.3. Every spike ran offline against a
+Recorded for omp 18.13.3; this table is the record the code comments cite. Every spike ran offline against a
 mock provider, in a temp tree, with the data and state directories isolated.
 
 | Spike | Result | Consumed as |
 |---|---|---|
 | 1, imports | Both layouts of the extension behind symlinks into a read-only tree resolve. `route: static`: relative static imports across trees work. `cjs: createRequire`: the CommonJS compressor loads through `createRequire` with a computed path. | Static imports for `STYLE`, the hook runner and the org-todo core; `createRequire` for the compressor. Prompt capture stays dynamic regardless, so a storage fault cannot stop the gates loading. |
 | 2, memory | MCP server instructions reached the system prompt. Two call shapes stored a row: `write` to `xd://mcp__ecomono_memory_mem_save` with a JSON body (observation 1) and the bare tool `mcp__ecomono_memory_mem_save` (observation 2). The `xd://` write fires `tool_call` for the outer `write`, then again with the inner name `mcp__ecomono_memory_mem_save` and the JSON body as input, before the outer `tool_result`. Skill previews observed: `ecomono-commit` "Ultra-compressed commit message generator.", `ecomono-tdd` "Write the failing check before the implementation." | The memory guard keys on the inner tool name; the `xd://` path-guard fallback was not needed. |
-| 3, tiers | Confirmed, no fallback. A spawn with patterns `["sonnet"]` and a spawn that inherits (`["fakellm/fake-1"]`, `modelRole` null) both resolved the handler's `@task` through `modelRoles.task`. | `before_subagent_spawn` returns the role. |
+| 3, tiers | Confirmed, no fallback. A spawn with patterns `["sonnet"]` and a spawn that inherits (`["fakellm/fake-1"]`, `modelRole` null) both resolved the handler's `@task` through `modelRoles.task`. `task` ran as an async background job, so the mock parent had to call `wait` to collect it before the spawn event fired. | `before_subagent_spawn` returns the role; the smoke's spawn scenario scripts the `wait`. |
 | 4, semantics | A throwing `tool_call` handler becomes a block (`Extension ... failed: ...`). A headless `confirm` returns false. The first block wins and a blocked call has no `tool_result`. A `tool_result` replacement of `content` with `isError` reaches the model. | The `safe()` wrapper, the fake-pi harness semantics, the read post-check (no ceiling fallback was taken). |
 
 ## Portability notes

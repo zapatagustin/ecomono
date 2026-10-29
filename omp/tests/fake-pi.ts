@@ -7,7 +7,7 @@ import { mkdtempSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 
-// Isolation (design.md F18). opencode/plugins/storage/db.ts reads ECOMONO_DATA_DIR and ECOMONO_LEGACY_DB at
+// Isolation. opencode/plugins/storage/db.ts reads ECOMONO_DATA_DIR and ECOMONO_LEGACY_DB at
 // import and would otherwise ATTACH and back up the real ~/.engram/engram.db; logStats and the hook runner read
 // XDG_CACHE_HOME and XDG_STATE_HOME on every call and would otherwise write under the real home. The legacy DB
 // path is deliberately never created. Tests never change HOME: Bun's os.homedir() ignores a runtime HOME change.
@@ -99,9 +99,10 @@ export function makePi(opts: PiOpts = {}) {
   }
 
   /**
-   * Dispatch an event with the semantics SP4 recorded for omp 18.13.3 (spikes/results.json .sp4):
+   * Dispatch an event with the semantics spike 4 recorded for omp 18.13.3 (docs/DESIGN.md, omp target > Spike
+   * results, row 4):
    *  - tool_call: handlers run sequentially; the first {block: true} wins (firstBlockWins); a throw or
-   *    rejection becomes a block (throwBlocks). SP4 recorded the reason "Extension <path> failed: <message>", so
+   *    rejection becomes a block (throwBlocks). Spike 4 recorded the reason "Extension <path> failed: <message>", so
    *    that is modelled, with the fake's name in place of the path. Other results: the last one wins.
    *  - tool_result: handlers chain, each seeing the previous content, details and isError; a throw is recorded
    *    in calls.failures and skipped. Returns {content, details, isError} when any handler changed something.
@@ -166,7 +167,7 @@ export function makePi(opts: PiOpts = {}) {
 /**
  * A fake ExtensionContext. `over` is shallow-merged on top. What the ui and timer stubs were called with is in
  * ctx.recorded; none of them ever fires on its own. ctx.recorded.confirmResult is what ui.confirm resolves to:
- * false by default, which is what a headless omp does (SP4 headlessConfirmFalse).
+ * false by default, which is what a headless omp does (spike 4).
  */
 export function makeCtx(over: Record<string, any> = {}) {
   const recorded = {

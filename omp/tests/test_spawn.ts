@@ -215,6 +215,21 @@ const sub = (name: string) => ({ agent: { kind: "sub", id: `0-${name}`, name, de
   assert.deepEqual(calls.failures, [])
 }
 
+{
+  // A throw inside the spawn handler (here a model whose provider getter throws) leaves the spawn alone and is
+  // logged; the handler never reaches omp as a failure.
+  const { fire, calls } = setup()
+  const model = {
+    id: "fake-1",
+    get provider(): string {
+      throw new Error("provider gone")
+    },
+  }
+  assert.equal(await fire("before_subagent_spawn", spawn(["x/y"]), makeCtx({ model })), undefined)
+  assert.ok(calls.warn.some((l) => l.includes("handler failed") && l.includes("provider gone")), calls.warn.join("\n"))
+  assert.deepEqual(calls.failures, [])
+}
+
 // ---- skill registry refresh ------------------------------------------------------------------------------------
 
 const REGISTRY = join(REPO, "claude/hooks/ecomono-skill-registry.js")
@@ -265,6 +280,33 @@ const never = () => new Promise(() => {})
     await within(rejecting.fire("before_agent_start", { reason: "prompt", prompt: "x" }, rejecting.ctx))
     assert.equal(rejecting.calls.exec.length, 2)
     assert.deepEqual(rejecting.calls.failures, [])
+    // Logged, once per session although it runs on every prompt.
+    await settle()
+    const refreshWarns = (c: typeof rejecting.calls) => c.warn.filter((l) => l.includes("skill registry not refreshed"))
+    assert.equal(refreshWarns(rejecting.calls).length, 1)
+    assert.ok(refreshWarns(rejecting.calls)[0].includes("exec rejected"))
+
+    // No node on PATH: pi.exec rejects with ENOENT, named as such.
+    const enoent = setup({}, { exec: () => Promise.reject(Object.assign(new Error("spawn node ENOENT"), { code: "ENOENT" })) })
+    await within(enoent.fire("before_agent_start", { reason: "prompt", prompt: "x" }, enoent.ctx))
+    await settle()
+    assert.deepEqual(refreshWarns(enoent.calls), ["ecomono: skill registry not refreshed: node not on PATH"])
+
+    // A timeout or a crash resolves instead of rejecting; both are failures too. Exit 0 is silent.
+    for (const [result, want] of [
+      [{ stdout: "", stderr: "", code: -1, killed: true }, "timed out"],
+      [{ stdout: "", stderr: "boom", code: 1, killed: false }, "exited with 1"],
+    ] as const) {
+      const t = setup({}, { exec: () => result })
+      await within(t.fire("before_agent_start", { reason: "prompt", prompt: "x" }, t.ctx))
+      await settle()
+      assert.equal(refreshWarns(t.calls).length, 1, want)
+      assert.ok(refreshWarns(t.calls)[0].includes(want), refreshWarns(t.calls)[0])
+    }
+    const ok = setup({}, { exec: () => ({ stdout: "", stderr: "", code: 0, killed: false }) })
+    await within(ok.fire("before_agent_start", { reason: "prompt", prompt: "x" }, ok.ctx))
+    await settle()
+    assert.deepEqual(refreshWarns(ok.calls), [])
 
     const throwing = setup({}, { exec: () => { throw new Error("exec threw") } })
     assert.equal(await within(throwing.fire("before_agent_start", { reason: "prompt", prompt: "x" }, throwing.ctx)), undefined)

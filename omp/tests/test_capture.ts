@@ -1,4 +1,4 @@
-// Prompt capture of the omp extension (design.md 5.9), driven through fake-pi. Plain assert script. fake-pi.ts, imported
+// Prompt capture of the omp extension, driven through fake-pi. Plain assert script. fake-pi.ts, imported
 // first, has already pointed ECOMONO_DATA_DIR and ECOMONO_LEGACY_DB at temp paths before any storage module loads, so
 // the DB written here is a throwaway and the legacy engram DB is never attached.
 import { ISOLATED, makeCtx, makePi } from "./fake-pi.ts"

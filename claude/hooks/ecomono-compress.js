@@ -650,7 +650,7 @@ function extractOverheadPatternsBlock(source) {
   return null; // never closed — malformed, treat as not found
 }
 
-// The omp extension (omp/extensions/ecomono/index.ts) loads these two through createRequire (design 5.3).
+// The omp extension (omp/extensions/ecomono/index.ts) loads these two through createRequire (docs/DESIGN.md, omp target).
 module.exports = { compressBash, logStats };
 
 if (require.main === module) {
