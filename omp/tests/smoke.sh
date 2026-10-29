@@ -186,6 +186,16 @@ expect "the bash result reaching the model has 'Review mode is armed'" \
   '[.[] | select(.ev == "request" and .last.role == "toolResult")] | any(.last | tostring | contains("Review mode is armed"))'
 if [ -z "$(pgit remote)" ]; then echo "ok: receipt: the project has no remote, nothing could be pushed"; else bad "receipt: the project has a remote"; fi
 
+# (d) spawn shape: the tier mapping in the extension reads one payload shape, `patterns` holding exactly the bare
+# tier word of the agent's frontmatter `model:`. The mock refuses the spawn (ECOMONO_OMP_BLOCK_SPAWN=1, set for
+# this call only), so no subagent ever runs; the step is a non-batch `task` call (schema: omp task/types.ts).
+# `task` runs as a background job and the spawn event fires inside it, so the scripted parent must `wait` for the
+# job; without that step it ends first and the event never fires (spikes/results.json .sp3.note).
+ECOMONO_OMP_BLOCK_SPAWN=1 scenario spawn "smoke: spawn shape" \
+  '[{"tool":"task","args":{"agent":"ecomono-explore","task":"say hi","solutionSpace":"n/a"}},{"tool":"wait","args":{}},{"text":"done"}]'
+expect "a spawn event for ecomono-explore has patterns [\"sonnet\"]" \
+  '[.[] | select(.ev == "spawn" and .agent == "ecomono-explore")] | any(.patterns == ["sonnet"])'
+
 if [ "$fails" -ne 0 ]; then
   echo "smoke: $fails check(s) failed" >&2
   exit 1
