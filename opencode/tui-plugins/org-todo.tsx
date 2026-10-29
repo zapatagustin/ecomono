@@ -2,42 +2,18 @@
 /** @jsxImportSource @opentui/solid */
 import { createSignal, For, onCleanup } from "solid-js"
 import type { TuiPlugin, TuiPluginModule } from "@opencode-ai/plugin/tui"
+import type { Todo } from "./org-todo/core.ts"
 
 // Node builtins: the Bun plugin runtime rejects top-level ESM imports of them.
 const { execFile } = require("node:child_process")
 const { homedir } = require("node:os")
+// The parser is loaded the same way, not imported: OpenCode and omp share org-todo/core.ts, while the Claude Code mod
+// (claude/plugins/org-todo) keeps its own copy.
+const { PATTERN, parse } = require("./org-todo/core.ts")
 
 const POLL_MS = 3000
 const MAX_ROWS = 12
 const MAX_CHARS = 48
-const ORG = /^(\*+) (TODO|BLOCKED) (.*)$/
-const MD = /^(\s*[-*] )\[ \] (.*)$/
-const PATTERN = "^\\*+ (TODO|BLOCKED) |^[[:space:]]*[-*] \\[ \\] "
-
-type Todo = { file: string; line: number; text: string; kind: "org" | "md"; src: string }
-
-// Same parser as the Claude Code mod (claude/plugins/org-todo): the two runtimes share no module.
-function parse(stdout: string, roots: string[]): Todo[] {
-  const out: Todo[] = []
-  for (const line of stdout.split("\n")) {
-    const m = /^(.+?):(\d+):(.*)$/.exec(line)
-    if (!m) continue
-    const [, file, n, raw] = m
-    const org = ORG.exec(raw)
-    const md = org ? null : MD.exec(raw)
-    if (!org && !md) continue
-    const root = roots.find((r) => file.startsWith(r + "/")) ?? ""
-    const text = org ? (org[2] === "BLOCKED" ? `BLOCKED: ${org[3]}` : org[3]) : md[2]
-    out.push({
-      file,
-      line: Number(n),
-      text: text.trim(),
-      kind: org ? "org" : "md",
-      src: root ? file.slice(root.length + 1) : file,
-    })
-  }
-  return out
-}
 
 // ecomono: one grep per poll; a missing docs/ dir is silenced by -s.
 function scan(dirs: string[]): Promise<Todo[]> {

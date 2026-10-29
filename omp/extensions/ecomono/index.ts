@@ -7,7 +7,8 @@
  * task item, compresses bash tool results with the same compressor Claude's PostToolUse hook runs and adds the
  * compaction-summary style text. It also maps the agents' haiku/sonnet/opus tiers to omp's @smol/@task/@slow
  * roles, blocks the ecomono-memory tools an agent's own `tools:` line does not list, and refreshes the skill
- * registry from the main session. omp loads the DEFAULT export only (the named exports are test seams).
+ * registry from the main session, and in the main TUI session lists the open TODOs below the editor (org-todo.ts).
+ * omp loads the DEFAULT export only (the named exports are test seams).
  *
  * Error contract (non-negotiable): omp fails a `tool_call` CLOSED on a throw, a rejection or after 30 s, while
  * ecomono's gates fail OPEN. Every handler body therefore runs inside safe(): it catches everything, logs with
@@ -29,6 +30,8 @@ import { fileURLToPath } from "node:url"
 // .sp1.cjs is "createRequire", so the CommonJS compressor loads through createRequire below.
 import { STYLE } from "../../../opencode/plugins/cave-compress/core.ts"
 import { type HookDecision, runHook } from "../../../opencode/plugins/hook-runner/core.ts"
+import * as orgTodoCore from "../../../opencode/tui-plugins/org-todo/core.ts"
+import { startOrgTodo } from "./org-todo.ts"
 
 export const REPO = resolve(dirname(realpathSync(fileURLToPath(import.meta.url))), "../../..")
 
@@ -604,6 +607,8 @@ export function ecomono(o: { repo: string; hooksDir?: string; timeoutMs?: number
       safe((_event: any, ctx: any) => {
         if (ctx?.agent?.kind !== "main") return undefined
         refresh(ctx)
+        // The org-todo widget, the counterpart of OpenCode's org-todo panel: the interactive main session only.
+        if (ctx.mode === "tui" && ctx.hasUI) startOrgTodo(pi, ctx, orgTodoCore)
         if (skillsWarned) return undefined
         // The remaining prose dependency: the ecomono-sdd-* commands and agents read ~/.claude/skills by path, and
         // omp reads skills only from ~/.agents/skills, so a missing tree is a silent half-working install.

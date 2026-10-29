@@ -22,6 +22,7 @@ export const IMPORTED_MODULES = [
   "opencode/plugins/hook-runner/core.ts",
   "opencode/plugins/cave-compress/core.ts",
   "claude/hooks/ecomono-compress.js",
+  "opencode/tui-plugins/org-todo/core.ts",
 ]
 
 /** Every repo-relative path the extension executes, parses or imports. Append here when it reads a new one. */
@@ -34,6 +35,7 @@ export const REPO_READS = [
   "claude/settings.template.json",
   "opencode/opencode.json",
   "claude/agents",
+  "omp/extensions/ecomono/org-todo.ts",
   ...IMPORTED_MODULES,
 ]
 
@@ -57,6 +59,14 @@ for (const p of IMPORTED_MODULES) {
   for (const s of specs) {
     assert.ok(selfContained(s), `${p}: imports "${s}"; cross-tree modules may import only a Node builtin, bun:* or a same-directory module`)
   }
+}
+// The shared org-todo parser is held to more than the rule above: OpenCode loads it with require() under a plugin
+// runtime of its own, so it may not import or require anything at all, not even a Node builtin.
+{
+  const core = "opencode/tui-plugins/org-todo/core.ts"
+  assert.ok(IMPORTED_MODULES.includes(core), `${core} is not in IMPORTED_MODULES`)
+  assert.deepEqual(specifiers(text(core)), [], `${core}: it must have no import or require at all`)
+  assert.ok(!/\b(?:import|require)\b/.test(text(core)), `${core}: the word import or require appears in it`)
 }
 // The pattern must see imports at all, or the loop above would pass on an unreadable file.
 assert.ok(specifiers(text(IMPORTED_MODULES[0]!)).length > 0, "specifiers() found no import in hook-runner/core.ts")
