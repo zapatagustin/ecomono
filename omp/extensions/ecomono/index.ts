@@ -1,8 +1,10 @@
 /**
  * ecomono extension for oh-my-pi (omp): the omp counterpart of the Claude hooks and the OpenCode plugins.
  *
- * Today it compresses bash tool results with the same compressor Claude's PostToolUse hook runs and adds the
- * compaction-summary style text. omp loads the DEFAULT export only (the named exports are test seams).
+ * Today it gates bash and github delivery through Claude's own hook scripts (secret access, diff size, review
+ * receipt) plus the `rm -rf` literals of Claude's deny list, compresses bash tool results with the same
+ * compressor Claude's PostToolUse hook runs and adds the compaction-summary style text. omp loads the DEFAULT
+ * export only (the named exports are test seams).
  *
  * Error contract (non-negotiable): omp fails a `tool_call` CLOSED on a throw, a rejection or after 30 s, while
  * ecomono's gates fail OPEN. Every handler body therefore runs inside safe(): it catches everything, logs with
@@ -15,13 +17,15 @@
  */
 
 import type { ExtensionAPI } from "@oh-my-pi/pi-coding-agent"
-import { realpathSync } from "node:fs"
+import { readFileSync, realpathSync } from "node:fs"
 import { createRequire } from "node:module"
+import { homedir } from "node:os"
 import { dirname, join, resolve } from "node:path"
 import { fileURLToPath } from "node:url"
 // SP1 (spikes/results.json): .sp1.route is "static", so cross-tree TypeScript is a static relative import;
 // .sp1.cjs is "createRequire", so the CommonJS compressor loads through createRequire below.
 import { STYLE } from "../../../opencode/plugins/cave-compress/core.ts"
+import { type HookDecision, runHook } from "../../../opencode/plugins/hook-runner/core.ts"
 
 export const REPO = resolve(dirname(realpathSync(fileURLToPath(import.meta.url))), "../../..")
 
@@ -41,12 +45,35 @@ function peel(text: string): [string, string] {
   return [body, text.slice(body.length)]
 }
 
+// ecomono: mirrors omp's normalizePathLikeInput + expandPath + resolveToCwd
+// (tools/path-utils.ts:75-133,332-344,541-543,577-578), which extensions cannot import. Ceiling: a new omp path
+// shorthand is not mirrored until test_paths.ts gains its case; the smoke pins the omp version. Every step can
+// only widen what the deny check sees.
+function ompPath(cwd: string, raw: string): string | undefined {
+  let p = raw.trim()
+  if (p.length > 1 && p.startsWith('"') && p.endsWith('"')) p = p.slice(1, -1)
+  if (/^[@:](?=[/~.])/.test(p)) p = p.slice(1)
+  if (/^file:\/\//i.test(p)) {
+    try {
+      p = fileURLToPath(p)
+    } catch {}
+  }
+  if (/^[a-z][a-z0-9+.-]*:\/\//i.test(p)) return undefined // skill://, artifact://, xd://, local://, http(s)://
+  if (p.startsWith("~")) p = join(homedir(), p.slice(1)) // ~, ~/x and ~x, as expandTilde
+  if (/^\/+$/.test(p)) return cwd
+  return resolve(cwd, p)
+}
+
 interface Compressor {
   compressBash(text: string, commandHint?: string): string
   logStats(tool: string, before: string, after: string): void
 }
 
-export function ecomono(o: { repo: string }) {
+// hooksDir and timeoutMs are test seams: the extension has no env knob for either. 20 s keeps the slowest gate
+// inside omp's 30 s per-handler budget, past which omp fails the call closed.
+export function ecomono(o: { repo: string; hooksDir?: string; timeoutMs?: number }) {
+  const hooksDir = o.hooksDir ?? join(o.repo, "claude/hooks")
+  const timeoutMs = o.timeoutMs ?? 20_000
   return (pi: ExtensionAPI): void => {
     const safe =
       <A extends unknown[], R>(fn: (...args: A) => R | Promise<R>) =>
@@ -58,6 +85,117 @@ export function ecomono(o: { repo: string }) {
           return undefined
         }
       }
+
+    // Fail-open reporting, for the hook runner (which also appends the state log) and for faults found here.
+    // Synchronous on purpose: runHook shields a report that throws but not one that returns a rejected promise.
+    // Notify once per session, and only where there is a UI to notify.
+    let notified = false
+    const failOpen = (ctx: any, line: string): void => {
+      pi.logger.warn(line)
+      if (notified || !ctx?.hasUI) return
+      notified = true
+      try {
+        ctx.ui.notify("ecomono gate failed open: see ~/.local/state/ecomono/", "warning")
+      } catch (e) {
+        pi.logger.warn(`ecomono: notify failed: ${e instanceof Error ? e.message : String(e)}`)
+      }
+    }
+
+    // The `Bash(<literal>)` entries of Claude's deny list, whitespace-normalised, parsed on first use and
+    // cached. Derived from the template rather than copied, so the two hosts cannot drift. A template that
+    // cannot be read or parsed warns once and leaves the list empty.
+    const normalize = (s: string) => s.trim().replace(/\s+/g, " ")
+    let denyLiterals: string[] | undefined
+    const literals = (): string[] => {
+      if (denyLiterals === undefined) {
+        denyLiterals = []
+        try {
+          const deny = JSON.parse(readFileSync(join(o.repo, "claude/settings.template.json"), "utf8"))?.permissions?.deny
+          for (const entry of Array.isArray(deny) ? deny : []) {
+            const m = typeof entry === "string" ? /^Bash\((.*)\)$/s.exec(entry) : null
+            if (m) denyLiterals.push(normalize(m[1]))
+          }
+        } catch (e) {
+          pi.logger.warn(
+            `ecomono: bash deny literals disabled, cannot read claude/settings.template.json from ${o.repo}: ${
+              e instanceof Error ? e.message : String(e)
+            }`,
+          )
+        }
+      }
+      return denyLiterals
+    }
+
+    const gate = (name: string, payload: unknown, cwd: string, ctx: any) =>
+      runHook({
+        name,
+        script: join(hooksDir, `${name}.sh`),
+        payload,
+        cwd,
+        timeoutMs,
+        report: (line) => failOpen(ctx, line),
+      })
+
+    // Merges the gates' answers: any deny blocks; otherwise the asks go to the user, or, with nobody to ask,
+    // block, except that a headless ask from check-diff-size alone is dropped. It is a nudge, and omp's headless
+    // mode includes subagents, which Claude would prompt interactively.
+    const decide = async (ctx: any, results: { name: string; r: HookDecision | undefined }[]) => {
+      const reasons = (kind: "deny" | "ask") =>
+        results.filter(({ r }) => r?.decision === kind).map(({ r }) => r!.reason)
+      const denied = reasons("deny")
+      if (denied.length > 0) return { block: true, reason: denied.join("\n\n") }
+      const asked = reasons("ask")
+      if (asked.length === 0) return undefined
+      const reason = asked.join("\n\n")
+      if (ctx.hasUI) return (await ctx.ui.confirm("ecomono", reason)) ? undefined : { block: true, reason }
+      if (results.every(({ name, r }) => r?.decision !== "ask" || name === "check-diff-size")) return undefined
+      return { block: true, reason }
+    }
+
+    const runGates = async (names: string[], command: string, cwd: string, ctx: any) =>
+      decide(
+        ctx,
+        await Promise.all(
+          names.map(async (name) => ({ name, r: await gate(name, { tool_input: { command } }, cwd, ctx) })),
+        ),
+      )
+
+    pi.on(
+      "tool_call",
+      safe(async (event: any, ctx: any) => {
+        const input = event?.input
+        if (typeof input !== "object" || input === null) return undefined
+
+        if (event.toolName === "bash") {
+          if (typeof input.command !== "string") return undefined
+          const command: string = input.command
+          const denied = literals()
+          if (denied.length > 0) {
+            for (const segment of command.split(/\|\||&&|[;|&\n]/).map(normalize)) {
+              if (denied.includes(segment)) {
+                return {
+                  block: true,
+                  reason: `Blocked: "${segment}" is on the deny list in claude/settings.template.json, which this omp extension enforces for bash.`,
+                }
+              }
+            }
+          }
+          const raw = typeof input.cwd === "string" ? input.cwd : ""
+          const cwd = raw ? ompPath(ctx.cwd, raw) : ctx.cwd
+          if (cwd === undefined) {
+            failOpen(ctx, `[bash gates] failing open: the bash cwd ${raw} is not a directory path — this call was NOT checked`)
+            return undefined
+          }
+          return runGates(["secret-access-gate", "check-diff-size", "review-receipt-gate"], command, cwd, ctx)
+        }
+
+        if (event.toolName === "github" && (input.op === "pr_create" || input.op === "pr_push")) {
+          const command = input.op === "pr_create" ? "gh pr create" : "git push"
+          return runGates(["check-diff-size", "review-receipt-gate"], command, ctx.cwd, ctx)
+        }
+        return undefined
+      }),
+    )
 
     // Loaded on first use and cached, also when loading fails: one warning per session, then pass-through.
     // Claude's hook is CommonJS and guards its CLI behind require.main, so loading it runs nothing.

@@ -33,9 +33,9 @@ const bash = (text: string, over: Record<string, any> = {}) => ({
 })
 
 {
-  // Registration: exactly the two events this slice owns.
+  // Registration: the events the extension owns so far (tool_call is the gates, covered by test_gates.ts).
   const { calls } = setup()
-  assert.deepEqual(calls.on.map(([name]) => name), ["tool_result", "session.compacting"])
+  assert.deepEqual(calls.on.map(([name]) => name), ["tool_call", "tool_result", "session.compacting"])
 }
 
 {
