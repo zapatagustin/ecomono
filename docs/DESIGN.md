@@ -745,7 +745,7 @@ Rejected:
 
 Single-source rules: executables are run, never re-derived; code is imported, never copied; data is parsed,
 never restated; prose is linked, never generated. Every shared asset is resolved from
-`REPO = resolve(dirname(realpathSync(import.meta.url)), "../../..")`. omp imports an extension from its realpath
+`REPO = resolve(dirname(realpathSync(fileURLToPath(import.meta.url))), "../../..")`. omp imports an extension from its realpath
 and both install paths put a complete ecomono tree behind it (the checkout, or the flake source `${self}`), so
 the extension never depends on `~/.claude/hooks`. That is also why the extension is linked from `${self}` on Nix
 rather than copied from its own subdirectory.
@@ -768,9 +768,9 @@ Two path resolvers exist on purpose, one per host. The OpenCode receipt gate kee
 (`tools/path-utils.ts`). They answer different questions, namely where each host runs a command, so sharing one
 would make one of them wrong. The mirror can only widen what the deny check sees.
 
-`hook-runner/core.ts` was moved out of `review-receipt-gate.ts` in its own commit, a move apart from two declared changes: `runGate`, its
+`hook-runner/core.ts` was moved out of `review-receipt-gate.ts` in its own commit, a move of `runGate`, its
 EPIPE guard and the stdout parsing (empty allows; unparsable output, a missing `permissionDecision` and any
-non-deny/ask decision fail open), with every comment moved unshortened. Only host values became parameters
+non-deny/ask decision fail open), apart from two declared changes, with every comment moved unshortened. Only host values became parameters
 (`name`, `script`, `payload`, `cwd`, `timeoutMs`, `stripEnv`, `report`, `defaultReason`), so OpenCode keeps
 its refusal text, its 30 s timeout and its env strip. Two OpenCode-visible changes are declared. The fail-open
 log line now ends `this call was NOT checked` instead of `this delivery was NOT checked`, because the core

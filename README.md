@@ -17,8 +17,8 @@ agent-skills/    Every skill (ecomono*, find-skills, proxy-manager) → ~/.claud
 claude/          CLAUDE.md, agents/, commands/, hooks/, output-styles/, plugins/, themes/,
                  settings.template.json
 opencode/        AGENTS.md, opencode.json, cli.json, commands/, plugins/, tui-plugins/
-omp/             extensions/ecomono (the one omp extension: compression, gates, tier
-                 routing, memory guard) and tests/ (fake-pi suites, smoke.sh)
+omp/             extensions/ecomono (the one omp extension, see ## omp) and tests/
+                 (fake-pi suites, smoke.sh)
 lib/common.sh    installer helpers
 install.sh       Arch/Debian/generic-Linux installer
 flake.nix        NixOS / home-manager module
@@ -305,7 +305,7 @@ forgetting, not against intent. Real enforcement belongs in CI or branch protect
 | `ECOMONO_SKIP_PLUGINS=1` | skip Claude plugin/MCP registration (omp's `mcp.json` entries are still written) |
 | `ECOMONO_ALLOW_SECRET_PATHS=1` | stand down `secret-access-gate.sh`, for headless runs that must touch a credential path; on omp it never lifts the in-process path deny |
 | `ECOMONO_ALLOW_UNREVIEWED_PUSH=1` | stand down `review-receipt-gate.sh` for one delivery, in a repo where review mode is armed |
-| `ECOMONO_COMPRESS=off` | turn bash-output compression off (Claude hook, opencode plugin and omp extension) |
+| `ECOMONO_COMPRESS=off` | turn bash-output compression off (Claude hook, opencode plugin and omp extension; opencode reads it from its managed service environment: export it, then run `opencode service restart`) |
 | `ECOMONO_ORG_DIR=<dir>` | org directory the omp org-todo widget scans (default `~/work/org`) |
 | `PI_CODING_AGENT_DIR` / `PI_CONFIG_DIR` | where `install.sh` puts the omp config, as omp itself reads them (default `~/.omp/agent`) |
 | `ECOMONO_TARGET=<id>` | override detected `OS_ID` (e.g. `nixos`, `arch`, `debian`, `ubuntu`) for unrecognized distros |
@@ -373,19 +373,20 @@ file each, and upserts `ecomono-memory` and `context7` into `~/.omp/agent/mcp.js
 activation. The flake hardcodes `.omp/agent`; installing omp and its credentials stays in
 your own config.
 
-To try an unpushed tree on the machine that builds it, use the pre-push route. `git+file`
-only sees tracked files, so mark the new paths intent-to-add first (nothing is staged):
+To try an unpushed checkout on the machine that builds it, override the flake input.
+`git+file` only sees tracked files; intent-to-add marks new ones without staging them.
+`<input-name>` is whatever your flake calls this repo (`ecomono` in the author's):
 
 ```sh
-cd ~/personal/ecomono && git add -N omp opencode/plugins/hook-runner opencode/tui-plugins/org-todo
-sudo nixos-rebuild switch --flake ~/personal/nixos-config#surface \
-  --override-input ecomono git+file://$HOME/personal/ecomono --no-write-lock-file
+cd <checkout> && git add -N .
+sudo nixos-rebuild switch --flake <your-config>#<host> \
+  --override-input <input-name> git+file://<checkout> --no-write-lock-file
 bash omp/tests/smoke.sh --installed
 ```
 
-Roll back with the plain `sudo nixos-rebuild switch --flake ~/personal/nixos-config#surface`
-(the locked github ecomono). After the push, in nixos-config: `nix flake update ecomono`,
-switch, then `bash omp/tests/smoke.sh --installed` again.
+Roll back with the plain `sudo nixos-rebuild switch --flake <your-config>#<host>` (the
+locked github input). After the push, run `nix flake update <input-name>`, switch, then
+`bash omp/tests/smoke.sh --installed` again.
 
 ## omp (oh-my-pi)
 
@@ -430,8 +431,8 @@ Notes:
 
 Upgrade protocol. The tested version is **omp 18.13.3**; the smoke exits non-zero on any
 other unless `ECOMONO_OMP_UNTESTED=1` is set.
-nixos-config pins omp in its `flake.lock`. After `nix flake update oh-my-pi` and a switch,
-run `ECOMONO_OMP_UNTESTED=1 bash omp/tests/smoke.sh` and
+After updating whatever pins omp in your config and switching, run
+`ECOMONO_OMP_UNTESTED=1 bash omp/tests/smoke.sh` and
 `ECOMONO_OMP_UNTESTED=1 bash omp/tests/smoke.sh --installed` before relying on
 the gates, and diff the code the extension mirrors (`tools/path-utils.ts` and
 `internal-urls/ssh-protocol.ts` in omp, `tools/read.ts` in pi-tui; `docs/DESIGN.md`
