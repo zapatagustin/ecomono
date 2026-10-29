@@ -23,6 +23,11 @@ export const IMPORTED_MODULES = [
   "opencode/plugins/cave-compress/core.ts",
   "claude/hooks/ecomono-compress.js",
   "opencode/tui-plugins/org-todo/core.ts",
+  // Loaded lazily by prompt capture (design.md 5.9); db.ts is imported again at session_shutdown to close it.
+  "opencode/plugins/storage/sessions.ts",
+  "opencode/plugins/storage/prompts.ts",
+  "opencode/plugins/storage/observations.ts",
+  "opencode/plugins/storage/db.ts",
 ]
 
 /** Every repo-relative path the extension executes, parses or imports. Append here when it reads a new one. */

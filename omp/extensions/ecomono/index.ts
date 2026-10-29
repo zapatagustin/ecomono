@@ -7,7 +7,8 @@
  * task item, compresses bash tool results with the same compressor Claude's PostToolUse hook runs and adds the
  * compaction-summary style text. It also maps the agents' haiku/sonnet/opus tiers to omp's @smol/@task/@slow
  * roles, blocks the ecomono-memory tools an agent's own `tools:` line does not list, and refreshes the skill
- * registry from the main session, and in the main TUI session lists the open TODOs below the editor (org-todo.ts).
+ * registry from the main session, in the main TUI session lists the open TODOs below the editor (org-todo.ts) and
+ * saves each user prompt of the main session into the shared ecomono-memory DB.
  * omp loads the DEFAULT export only (the named exports are test seams).
  *
  * Error contract (non-negotiable): omp fails a `tool_call` CLOSED on a throw, a rejection or after 30 s, while
@@ -627,12 +628,87 @@ export function ecomono(o: { repo: string; hooksDir?: string; timeoutMs?: number
       }),
     )
 
-    // Every prompt, so a skill added mid-session is in the registry by the next one. A revive replays no prompt.
+    // Prompt capture (design.md 5.9), the counterpart of the prompt hook in opencode/plugins/memory.ts:108-117: the
+    // same DB (WAL + busy_timeout) and the same ensureSession + savePrompt pair, the project taken from the cwd.
+    // The storage modules load on first use and always dynamically, whatever spikes/results.json .sp1.route says:
+    // a storage failure (bun:sqlite, an unopenable DB) then costs the capture and never the extension and its
+    // gates. The load result is cached, failure included, and the first fault warns once per session; a later
+    // prompt still attempts the capture. As in OpenCode, the session_id a model passes to the MCP tools is not
+    // joined to this omp session id.
+    // ecomono: ceiling. before_agent_start (reason "prompt") also fires for the prompts omp sends on its own
+    // behalf (the `.`/`c` continue key, plan execution, mode kickoffs, compaction and task prompts) and carries the
+    // text only, with no synthetic or attribution field, so those are stored as if the user had typed them;
+    // OpenCode's hook skips non-user text for that reason (memory.ts:109-114). A prompt template is stored as its
+    // expanded body for the same reason: the event holds the already-transformed text. Upgrade path: capture from
+    // `message_start` instead and keep `message.role === "user" && !message.synthetic && message.attribution !==
+    // "agent"` (omp sends its own prompts as `developer` messages); omp/tests/fake-pi.ts must then accept the event.
+    // ecomono: the storage modules report a few faults with console.error (db.ts when stat fails, observations.ts
+    // for a stranded legacy project key), which draws over the TUI. Upgrade path: pass them a sink backed by
+    // pi.logger if that is ever observed.
+    type Storage = { Sess: any; Prompts: any; Obs: any }
+    let storage: Promise<Storage | null> | undefined
+    let captureWarned = false
+    const captureFailed = (e: unknown): void => {
+      if (captureWarned) return
+      captureWarned = true
+      pi.logger.warn(`ecomono: prompt capture failed: ${e instanceof Error ? e.message : String(e)}`)
+    }
+    const loadStorage = (): Promise<Storage | null> =>
+      (storage ??= (async () => {
+        try {
+          const dir = join(o.repo, "opencode/plugins/storage")
+          const [Sess, Prompts, Obs] = await Promise.all([
+            import(join(dir, "sessions.ts")),
+            import(join(dir, "prompts.ts")),
+            import(join(dir, "observations.ts")),
+          ])
+          return { Sess, Prompts, Obs }
+        } catch (e) {
+          captureFailed(e)
+          return null
+        }
+      })())
+    // The project key is read once per cwd: currentProject runs two synchronous git calls (no timeout) on omp's
+    // event loop, before the prompt is sent, and a session's cwd is stable. OpenCode derives it once at plugin init.
+    const projects = new Map<string, string>()
+    const capture = async (event: any, ctx: any): Promise<void> => {
+      if (ctx?.agent?.kind !== "main" || typeof event?.prompt !== "string") return
+      const text = event.prompt.trim()
+      if (!text) return
+      const s = await loadStorage()
+      if (!s) return
+      try {
+        const sid: string = ctx.sessionManager.getSessionId()
+        let project = projects.get(ctx.cwd)
+        if (project === undefined) projects.set(ctx.cwd, (project = s.Obs.currentProject(ctx.cwd).project))
+        s.Sess.ensureSession(sid, project)
+        s.Prompts.savePrompt(sid, text)
+      } catch (e) {
+        captureFailed(e)
+      }
+    }
+
+    // Every prompt, so a skill added mid-session is in the registry by the next one, and so the prompt is saved.
+    // A revive replays no prompt.
     pi.on(
       "before_agent_start",
-      safe((event: any, ctx: any) => {
-        if (event?.reason === "prompt") refresh(ctx)
+      safe(async (event: any, ctx: any) => {
+        if (event?.reason === "prompt") {
+          refresh(ctx)
+          await capture(event, ctx)
+        }
         return undefined
+      }),
+    )
+
+    // Release the memory DB handle. Only a factory that loaded the storage modules has anything to close; db.ts
+    // keeps one handle per process, and every module imported above shares it through the same resolved path.
+    pi.on(
+      "session_shutdown",
+      safe(async () => {
+        if (!(await storage)) return
+        const { closeDb } = await import(join(o.repo, "opencode/plugins/storage/db.ts"))
+        closeDb()
       }),
     )
   }

@@ -42,6 +42,7 @@ const bash = (text: string, over: Record<string, any> = {}) => ({
     "before_subagent_spawn",
     "session_start",
     "before_agent_start",
+    "session_shutdown",
   ])
 }
 
