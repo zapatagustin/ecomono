@@ -11,11 +11,6 @@ export function sessionEnd(id: string, summary?: string) {
   db.run("UPDATE sessions SET ended_at = datetime('now'), summary = ? WHERE id = ?", [summary || null, id])
 }
 
-export function sessionSummary(sessionId: string, content: string) {
-  const db = getDb()
-  db.run("UPDATE sessions SET summary = ? WHERE id = ?", [content, sessionId])
-}
-
 export function ensureSession(id: string, project?: string) {
   const db = getDb()
   const existing = db.query("SELECT * FROM sessions WHERE id = ?").get(id) as any

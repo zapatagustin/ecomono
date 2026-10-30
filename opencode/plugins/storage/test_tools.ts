@@ -129,13 +129,15 @@ assert(typeof (call("mem_search", { query: "nonexistentxyz" }) as any).nudge ===
 call("mem_save", { title: "reset nudge state", project: "nudgeproj" })
 assert(!(call("mem_search", { query: "nonexistentxyz" }) as any).nudge, "mem_save resets the nudge counter and timer")
 
-// --- mem_session_summary records the calls-vs-saves ratio ---
-const Sess = await import("./sessions")
-Sess.sessionStart("sess-tools", "nudgeproj")
-call("mem_session_summary", { session_id: "sess-tools", content: "Goal: test\nAccomplished: stuff" })
-const summary = Sess.getSession("sess-tools").summary as string
-assert(/calls_vs_saves: \d+\/\d+/.test(summary), "session summary records the calls-vs-saves ratio")
-assert(summary.includes("Accomplished: stuff"), "session summary keeps the agent-authored content")
+// --- mem_session_summary is stored as an observation mem_context returns ---
+call("mem_session_summary", { content: "Goal: test\nAccomplished: stuff", project: "nudgeproj" })
+const summaryCtx = (call("mem_context", { project: "nudgeproj" }) as any).context as string
+assert(summaryCtx.includes("(session_summary,"), "session summary is a session_summary observation")
+assert(/calls_vs_saves: \d+\/\d+/.test(summaryCtx), "session summary records the calls-vs-saves ratio")
+assert(summaryCtx.includes("Accomplished: stuff"), "session summary keeps the agent-authored content")
+// session_id stays accepted for older callers; an id with no sessions row still stores.
+call("mem_session_summary", { session_id: "no-such-session", content: "Accomplished: orphan", project: "nudgeproj" })
+assert((call("mem_context", { project: "nudgeproj" }) as any).context.includes("Accomplished: orphan"), "unknown session_id still stores the summary")
 
 // --- missing id / expected_project guard (engram #1575) ---
 assert(call("mem_update", { id: 999999, title: "x" }).updated === false, "mem_update on a missing id reports false")

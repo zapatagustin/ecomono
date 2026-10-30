@@ -113,10 +113,8 @@ assert(Obs.search({ query: "endpoint", project: "proj1" }).length === 0, "delete
 const st = Obs.stats("proj1")
 assert(st.observations === 1, `stats counts project observations (got ${st.observations})`)
 
-// --- sessions + summary + context ---
+// --- sessions + context ---
 Sess.sessionStart("sess-1", "proj1")
-Sess.sessionSummary("sess-1", "did the migration")
-assert(Sess.getSession("sess-1").summary === "did the migration", "session summary persists")
 const ctx = Sess.context("proj1")
 assert(ctx.context.includes("jotai"), "context includes recent observation")
 

@@ -19944,10 +19944,6 @@ function detectProject() {
 }
 
 // sessions.ts
-function sessionSummary(sessionId, content) {
-  const db = getDb();
-  db.run("UPDATE sessions SET summary = ? WHERE id = ?", [content, sessionId]);
-}
 function context(project, limit) {
   const db = getDb();
   const lim = limit || 10;
@@ -20255,14 +20251,11 @@ var rawRegistry = [
   },
   {
     name: "mem_session_summary",
-    description: "Store an end-of-session summary for a session id.",
-    args: { session_id: string2(), content: string2() },
-    handler: (a) => {
-      sessionSummary(a.session_id, `${a.content}
+    description: "Store an end-of-session summary as a session_summary observation; mem_context and mem_search return it.",
+    args: { content: string2(), project: string2().optional(), session_id: string2().optional() },
+    handler: (a) => save({ title: "Session summary", type: "session_summary", content: `${a.content}
 
-calls_vs_saves: ${callsVsSaves()}`);
-      return { ok: true };
-    }
+calls_vs_saves: ${callsVsSaves()}`, project: proj(a.project) })
   },
   {
     name: "mem_save_prompt",

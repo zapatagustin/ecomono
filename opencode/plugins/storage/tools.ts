@@ -245,12 +245,11 @@ const rawRegistry: MemTool[] = [
   },
   {
     name: "mem_session_summary",
-    description: "Store an end-of-session summary for a session id.",
-    args: { session_id: z.string(), content: z.string() },
-    handler: (a) => {
-      Sess.sessionSummary(a.session_id, `${a.content}\n\ncalls_vs_saves: ${callsVsSaves()}`)
-      return { ok: true }
-    },
+    description: "Store an end-of-session summary as a session_summary observation; mem_context and mem_search return it.",
+    // session_id is accepted and ignored so callers that still pass it validate.
+    args: { content: z.string(), project: z.string().optional(), session_id: z.string().optional() },
+    // Obs.save, not saveWithJudgment: a session close must never start a judgment loop.
+    handler: (a) => Obs.save({ title: "Session summary", type: "session_summary", content: `${a.content}\n\ncalls_vs_saves: ${callsVsSaves()}`, project: proj(a.project) }),
   },
   {
     name: "mem_save_prompt",
