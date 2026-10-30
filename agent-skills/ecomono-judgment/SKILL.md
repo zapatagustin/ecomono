@@ -296,9 +296,11 @@ the path or the first line wrong and the gate finds nothing and refuses.
 On opencode the same script runs: `opencode/plugins/review-receipt-gate.ts` intercepts the
 `shell` tool and shells out to it rather than reimplementing it, so there is one hash formula
 and one detector on Claude Code, opencode and omp (whose extension runs the script too). The
-one behavioural difference is that opencode has no
-`ask`, so the two states where the gate cannot run — no base resolves, `git diff` failed —
-refuse there instead of prompting.
+behavioural differences are in the `ask` of the two states where the gate cannot run — no
+base resolves, `git diff` failed. On Claude Code those ask in the prompting modes and are
+advisory under `bypassPermissions` (the command runs). opencode has no `ask`, so those refuse
+there instead of prompting. omp confirms an `ask` in its TUI and, with nobody to answer (print
+or json mode, and every subagent, which Claude Code would prompt interactively), blocks it.
 
 `ecomono: two gates read a receipt — that hook, and one of `ecomono-sdd-archive`'s four,
 which reads the memory copy because the archive agent has no `Bash`. Upstream validates at

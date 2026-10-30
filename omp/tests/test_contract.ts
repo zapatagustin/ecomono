@@ -22,6 +22,7 @@ export const IMPORTED_MODULES = [
   "opencode/plugins/hook-runner/core.ts",
   "opencode/plugins/cave-compress/core.ts",
   "claude/hooks/ecomono-compress.js",
+  // Loaded lazily by the org-todo widget at session_start, with omp/extensions/ecomono/org-todo.ts.
   "opencode/tui-plugins/org-todo/core.ts",
   // Loaded lazily by prompt capture; db.ts is imported again at session_shutdown to close it.
   "opencode/plugins/storage/sessions.ts",
@@ -170,7 +171,7 @@ function frontmatter(src: string, rel: string): Record<string, unknown> {
 const toolList = (v: unknown): string[] =>
   (Array.isArray(v) ? v.map(String) : typeof v === "string" ? v.split(",") : []).map((t) => t.trim()).filter(Boolean)
 
-// WebFetch and WebSearch are accepted but dropped by omp (omp: sdk.ts:4252); the agent just has no web tools there.
+// WebFetch and WebSearch are accepted but dropped by omp (omp: sdk.ts:4300); the agent just has no web tools there.
 const OMP_TOOLS = new Set(["Read", "Grep", "Glob", "Bash", "Edit", "Write"])
 const DROPPED_TOOLS = new Set(["WebFetch", "WebSearch"])
 

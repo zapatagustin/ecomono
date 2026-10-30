@@ -152,11 +152,14 @@ there is a model that knows it touched a secret, not a user who approved it. Swi
   gate's `"deny"` (armed repo, no receipt) is unchanged in every mode: a block the model can
   act on is not a prompt.
 
-`opencode.json` gets the same paths under `permission.bash`, omp's `agent.db` and its
-`omp auth export` / `omp token` commands included. That side is glob-only with no safe way to
+`opencode.json` gets the same paths under `permission.bash`, omp's `agent.db`, its
+`auth-broker.token` / `auth-gateway.token` and the commands that print credentials included
+(`omp auth export`, `omp token`, `omp auth-broker token`, `omp auth-gateway token`, each also
+after a leading long flag such as `--profile=work`). That side is glob-only with no safe way to
 express an exception (an allow glob for `.env.example` would also pass a command that names
 `.env.local` next to it), so `cat .env.example` prompts there while the Claude Code hook stays
-quiet on it, and `*agent.db*` also asks on a file such as `agent.db.ts`.
+quiet on it, `*agent.db*` also asks on a file such as `agent.db.ts`, `*omp token*` also asks on
+`omp tokens`, and a doubled space (`omp auth  export`) passes unasked.
 
 So treat this as "the agent can do anything a shell can do on this machine, minus two
 `rm -rf` spellings and a prompt on obvious credential paths", not as credential protection.
@@ -180,18 +183,27 @@ data above instead of restating it:
   each by its own name and by its symlink target. `edit` is also checked on the targets
   in its text input (hashline `[PATH#TAG]` and `MV` lines, apply_patch `*** Add/Update/Delete
   File:` and `*** Move to:` headers, the sloppy mode's `*** Edit File:`, patch-mode `rename`),
-  and `task` on the `@path` mentions in each item's `task` text, which omp reads into the
-  subagent's first prompt. There is no valve. A `read` that omp resolved to a denied file
+  and `task` on the `@path` mentions in each item's `task` text and on its `taskFile` (omp's
+  `task.file`, off by default), both of which omp reads into the subagent's first prompt.
+  There is no valve. A `read` that omp resolved to a denied file
   (suffix matching, delimited lists, the `resolvedPath` it reports) has its result withheld and
   returned as an error, and so does a `grep`, `ast_grep`, `glob`, `find` or `ast_edit` result
-  that lists one, such as a `grep` with no `path`. The notice names the glob, never the file,
-  and omp's `details` (which the session file keeps and the TUI renders) are cut to their
-  counts and flags. As in OpenCode the last matching key wins, so the `.env` templates the
-  bash gate lets through (`.env.example`, `.sample`, `.template`, `.dist`, `.defaults`,
-  `.schema`) are `allow` entries after the `.env` denies. The globs include omp's own
-  credential store, `agent.db` and its `-wal` / `-shm` / `-journal` siblings
-  (`secret-access-gate.sh` names it for bash, plus `omp auth export` and `omp token`, which
-  print the credentials): omp keeps provider credentials in plaintext there.
+  that lists one, such as a `grep` with no `path`, and the `xd://resolve` or `xd://reject`
+  result that settles an `ast_edit` preview listing one. The notice names the glob, never the
+  file, and omp's `details` (which the session file keeps and the TUI renders) are cut to their
+  counts and flags. As in OpenCode the last matching key wins. The deny is a read guard: the
+  model never sees a denied file's content, nor learns a denied path, through any result
+  channel (content, `details`, notices, the details omp persists in the session file). Writes
+  to a denied file the path gate cannot see are a ceiling, below. A file named for one of the
+  `.env` templates the bash gate lets through (`.env.example`, `.sample`, `.template`, `.dist`,
+  `.defaults`, `.schema`, read from the gate's own list) is not denied by its name, though a
+  denied directory still covers it. OpenCode itself denies those templates: an allow key for
+  them would, under its `*`-matches-`/` wildcard, also lift `secrets/` and `.ssh/`. The
+  globs include omp's own credential store, `agent.db` and its `-wal` / `-shm` / `-journal`
+  siblings, and its `auth-broker.token` / `auth-gateway.token` bearer tokens
+  (`secret-access-gate.sh` names them for bash, plus `omp auth export`, `omp token`,
+  `omp auth-broker token` and `omp auth-gateway token`, which print them): omp keeps
+  provider credentials in plaintext there.
 - **Confirmed in the TUI, blocked headless** (print and json modes, subagents included,
   since nobody can answer): an ask from `secret-access-gate.sh` or
   `review-receipt-gate.sh`. `check-diff-size.sh` runs too; its ask is confirmed in the
@@ -220,6 +232,13 @@ Accepted ceilings. Where omp has a native switch it is named:
   `eval.py: false` and `eval.js: false` to turn it off.
 - `debug` (on by default) launches any program with any args and cwd through a DAP
   adapter, with no bash event. Set `debug.enabled: false`.
+- Writes to denied files: the path deny guards reads, so a write it cannot see goes
+  through. That covers `ast_edit` + `xd://resolve` (a pathless or parent-rooted `ast_edit`
+  stages edits to a denied file; its preview is withheld, but `xd://resolve` still applies
+  them, and only that result is withheld), `eval`, `debug`, and bash outside the secret gate's
+  patterns. Set `astEdit.enabled: false`, `eval.py: false` and `eval.js: false`,
+  `debug.enabled: false`, or list the folders in `tools.restrictedFolders` (an approval
+  prompt, blocking headless).
 - `lsp` (on by default) takes a `file` argument the path gate does not see: hover,
   definition, references or symbols on a denied file can surface its lines, and `rename`
   / `code_actions` with `apply` can edit it. Set `lsp.enabled: false`.
@@ -227,8 +246,8 @@ Accepted ceilings. Where omp has a native switch it is named:
   `ssh://`), a root with glob characters such as `~/.ss*/*`, or no `path` are not blocked up
   front: the gate sees the roots a call names, not the walk. The search post-check withholds a
   result whose `details` lists a denied file, a whole result and not just that file's lines,
-  and it sees only what omp lists there. A pathless `ast_edit` that reached a denied file has
-  already applied its edits by then; only its diff is withheld.
+  and it sees only what omp lists there. An `ast_edit` result is only a staged preview, and
+  withholding it does not discard it (the write ceiling above).
 - That whole-result withhold over-blocks: a tracked file under a deny glob (a fixture
   `.pem`, a `secrets/` doc, a template inside `secrets/`) withholds every repo-wide search
   that lists it. Narrow `path` to the directories you mean.
@@ -253,7 +272,10 @@ Accepted ceilings. Where omp has a native switch it is named:
   resolves both natively.
 - `@path` mentions are checked in a `task` item's text only, as typed and as omp's
   double-encoding repair decodes it. Other text omp sends as a prompt, such as queued hidden
-  next-turn messages, has its mentions read with no tool call.
+  next-turn messages, has its mentions read with no tool call. So does a `taskFile`'s
+  contents, which omp reads at dispatch, after the gate: its mentions, and for a judge its
+  headings, are not checked. Keep `task.file` off (omp's default), or rely on
+  `tools.restrictedFolders`, which covers task files.
 - The 20 s gate timeout assumes omp's default `extensionHandlers.toolCallTimeoutMs` of
   30 s. Lowered below about 20 s, a slow gate fails the bash call closed.
 
@@ -456,7 +478,7 @@ Notes:
   prompt template as its expanded body. The session id a model passes to the memory tools
   is not joined to the omp session id, as in OpenCode.
 
-Upgrade protocol. The tested version is **omp 18.13.3**; the smoke exits non-zero on any
+Upgrade protocol. The tested version is **omp 18.14.0**; the smoke exits non-zero on any
 other unless `ECOMONO_OMP_UNTESTED=1` is set.
 After updating whatever pins omp in your config and switching, run
 `ECOMONO_OMP_UNTESTED=1 bash omp/tests/smoke.sh` and

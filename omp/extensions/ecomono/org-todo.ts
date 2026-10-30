@@ -26,7 +26,8 @@ const clip = (s: string): string => (s.length > MAX_CHARS ? `${s.slice(0, MAX_CH
 
 /**
  * Tick once now, then every POLL_MS through ctx.setInterval (omp contains a throw there and clears the timer on
- * session_shutdown). Every failure is logged and leaves the previous widget in place; nothing here rejects.
+ * session_shutdown). Every failure leaves the previous widget in place and is logged, once per kind and session;
+ * nothing here rejects.
  * pi.exec resolves on a timeout instead of rejecting (omp: exec/exec.ts:57-64), with `killed` set and whatever
  * stdout came before the kill, so a killed grep is a failure too: its partial output is not the answer. The exit
  * code is not checked: `grep -s` exits 2 whenever one of the directories is missing, matches or not.
@@ -36,7 +37,14 @@ const clip = (s: string): string => (s.length > MAX_CHARS ? `${s.slice(0, MAX_CH
 export function startOrgTodo(pi: ExtensionAPI, ctx: any, core: OrgTodoCore): void {
   const orgDir = process.env.ECOMONO_ORG_DIR || join(homedir(), "work/org")
   const dirs = [`${ctx.cwd}/docs`, orgDir]
-  let warned = false
+  // One warning per kind and session: a tick runs every POLL_MS, so a failure that repeats would otherwise flood the
+  // log. Separate kinds, so a timeout does not hide a failure or the other way round.
+  const warned = new Set<string>()
+  const warnOnce = (kind: string, text: string): void => {
+    if (warned.has(kind)) return
+    warned.add(kind)
+    pi.logger.warn(text)
+  }
   const tick = (): void => {
     pi.exec("grep", ["-rnHsE", "--include=*.org", "--include=*.md", core.PATTERN, ...dirs], {
       cwd: ctx.cwd,
@@ -44,10 +52,7 @@ export function startOrgTodo(pi: ExtensionAPI, ctx: any, core: OrgTodoCore): voi
     })
       .then((result) => {
         if (result?.killed) {
-          if (!warned) {
-            warned = true
-            pi.logger.warn("ecomono: org-todo grep timed out; keeping the previous widget")
-          }
+          warnOnce("timeout", "ecomono: org-todo grep timed out; keeping the previous widget")
           return
         }
         const todos = core.parse(String(result?.stdout ?? ""), dirs)
@@ -57,7 +62,7 @@ export function startOrgTodo(pi: ExtensionAPI, ctx: any, core: OrgTodoCore): voi
           ctx.ui.setWidget(KEY, [`todo ${todos.length}`, ...rows], { placement: "belowEditor" })
         }
       })
-      .catch((e) => pi.logger.warn(`ecomono: org-todo tick failed: ${e instanceof Error ? e.message : String(e)}`))
+      .catch((e) => warnOnce("failure", `ecomono: org-todo tick failed: ${e instanceof Error ? e.message : String(e)}`))
   }
   tick()
   ctx.setInterval(tick, POLL_MS)

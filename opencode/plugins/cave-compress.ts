@@ -340,9 +340,10 @@ function measureOverheadChars(text: string): number {
 // On by default; set ECOMONO_COMPRESS_STATS=off to disable — same convention
 // as the Claude-side hook (claude/hooks/ecomono-compress.js). Appends one JSONL
 // record per compressed tool result to ~/.cache/ecomono-compress/stats.jsonl —
-// the same file the Claude-side hook writes, so savings across both harnesses
-// accumulate in one place. Local file only — never enters the model context,
-// so it costs zero tokens.
+// the same file the Claude-side hook writes (omp's extension logs through that
+// hook's logStats), so savings across all three harnesses accumulate in one
+// place. Local file only — never enters the model context, so it costs zero
+// tokens.
 //
 // gross = before - after (the naive reduction, which silently counts the
 // hook's own markers as "saved" chars since they're baked into `after`).

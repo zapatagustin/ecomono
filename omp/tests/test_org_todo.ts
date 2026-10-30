@@ -174,11 +174,15 @@ for (const [label, over] of [
     const rejecting = setup({ mode: "tui", hasUI: true }, { exec: () => Promise.reject(new Error("grep rejected")) })
     await start(rejecting.ctx, rejecting.fire)
     await rejecting.ctx.recorded.setInterval[0]![0]()
+    await rejecting.ctx.recorded.setInterval[0]![0]()
     await tick()
-    assert.equal(greps(rejecting.calls).length, 2)
+    assert.equal(greps(rejecting.calls).length, 3)
     assert.equal(rejecting.ctx.recorded.setWidget.length, 0)
     assert.deepEqual(rejecting.calls.failures, [])
-    assert.ok(rejecting.calls.warn.some((l) => l.includes("org-todo tick failed") && l.includes("grep rejected")))
+    // Once per session, however many ticks fail: the timer runs every 3 s.
+    const failed = rejecting.calls.warn.filter((l) => l.includes("org-todo tick failed"))
+    assert.equal(failed.length, 1, failed.join("\n"))
+    assert.ok(failed[0]!.includes("grep rejected"))
 
     const throwing = setup({ mode: "tui", hasUI: true }, {
       exec: (command) => {
@@ -214,12 +218,45 @@ for (const [label, over] of [
   assert.equal(ctx.recorded.setWidget.length, 1, "a killed grep leaves the widget as it was")
   assert.deepEqual(calls.warn, ["ecomono: org-todo grep timed out; keeping the previous widget"])
 
+  // A failure of another kind still warns once after the timeout warning: separate kinds.
+  result = Promise.reject(new Error("grep gone"))
+  result.catch(() => {})
+  await ctx.recorded.setInterval[0]![0]()
+  await ctx.recorded.setInterval[0]![0]()
+  await tick()
+  assert.equal(calls.warn.length, 2, calls.warn.join("\n"))
+  assert.ok(calls.warn[1]!.includes("org-todo tick failed: grep gone"), calls.warn[1])
+
   result = { stdout: `${cwd}/docs/a.md:1:- [ ] one\n${cwd}/docs/b.md:2:- [ ] two`, stderr: "", code: 2, killed: false }
   await ctx.recorded.setInterval[0]![0]()
   await tick()
   assert.equal(ctx.recorded.setWidget.length, 2)
   assert.equal(ctx.recorded.setWidget[1]![1][0], "todo 2")
   assert.deepEqual(calls.failures, [])
+}
+
+{
+  // The widget and its parser load on first use, from the extension's own tree: a tree without the org-todo files
+  // costs the widget only. The extension loads, session_start resolves with one warning and still runs the skills
+  // check after it, and the path gate (here a one-key deny list) still blocks.
+  const repo = dir("repo")
+  mkdirSync(join(repo, "opencode"), { recursive: true })
+  writeFileSync(join(repo, "opencode/opencode.json"), JSON.stringify({ permission: { read: { "*": "allow", "**/.env": "deny" } } }))
+  const { pi, fire, calls } = makePi({ exec: () => nodeOk })
+  ecomono({ repo })(pi)
+  const ctx = makeCtx({ mode: "tui", hasUI: true })
+  await withEnv({ HOME: dir("home") }, async () => {
+    assert.equal(await start(ctx, fire), undefined)
+  })
+  await tick()
+  assert.equal(greps(calls).length, 0)
+  assert.equal(ctx.recorded.setInterval.length, 0)
+  const notStarted = calls.warn.filter((l) => l.includes("org-todo widget not started"))
+  assert.equal(notStarted.length, 1, calls.warn.join("\n"))
+  assert.ok(notStarted[0]!.includes("org-todo"), notStarted[0])
+  assert.ok(ctx.recorded.notify.some(([text]: [string]) => text.includes("ecomono-sdd-shared")), "the skills check still ran")
+  assert.deepEqual(calls.failures, [])
+  assert.equal((await fire("tool_call", { toolName: "read", toolCallId: "c", input: { path: ".env" } }, ctx))?.block, true)
 }
 
 if (hostHome === undefined) delete process.env.HOME

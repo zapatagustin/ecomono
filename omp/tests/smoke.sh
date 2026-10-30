@@ -95,12 +95,12 @@ echo "omp: $version"
 # every other check stays green. ECOMONO_OMP_UNTESTED=1 runs it anyway, for the upgrade protocol in README.md: the
 # scenarios below are what vets a new version, after which this number is bumped.
 case "$version" in
-  *18.13.3*) ;;
+  *18.14.0*) ;;
   *)
     if [ "${ECOMONO_OMP_UNTESTED:-}" = 1 ]; then
-      echo "warn: tested against omp 18.13.3, running $version (ECOMONO_OMP_UNTESTED=1)" >&2
+      echo "warn: tested against omp 18.14.0, running $version (ECOMONO_OMP_UNTESTED=1)" >&2
     else
-      echo "error: tested against omp 18.13.3, running $version; run with ECOMONO_OMP_UNTESTED=1 to vet it (README.md, upgrade protocol)" >&2
+      echo "error: tested against omp 18.14.0, running $version; run with ECOMONO_OMP_UNTESTED=1 to vet it (README.md, upgrade protocol)" >&2
       exit 1
     fi
     ;;
@@ -271,7 +271,7 @@ fi
 scenario child "smoke: child session" \
   '{"main":[{"tool":"task","args":{"agent":"ecomono-explore","task":"ecomono-smoke-child: save a memory","solutionSpace":"n/a"}},{"tool":"wait","args":{}},{"text":"done"}],"sub":[{"tool":"mcp__ecomono_memory_mem_save","args":{"title":"smoke","content":"smoke","type":"learning"}},{"text":"child done"}]}'
 expect "the child's memory call was refused by the guard" \
-  '[.[] | select(.ev == "request" and .session == "sub" and .last.role == "toolResult")] | any(.last | tostring | contains("has no memory write access"))'
+  '[.[] | select(.ev == "request" and .session == "sub" and .last.role == "toolResult")] | any(.last | tostring | contains("memory tool mcp__ecomono-memory__mem_save is not listed in its tools:"))'
 # The child's first request is omp's own background call on the smol role; the agent loop's requests carry a tool result.
 expect "the child's agent-loop requests name the @task model" \
   '[.[] | select(.ev == "request" and .session == "sub" and .last.role == "toolResult")] | length > 0 and all(.model == "fakellm/fake-task")'

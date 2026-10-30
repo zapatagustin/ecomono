@@ -13,6 +13,13 @@ const hostHome = process.env.HOME
 const fileHome = dir("home")
 mkdirSync(join(fileHome, ".claude/skills/ecomono-sdd-shared"), { recursive: true })
 process.env.HOME = fileHome
+// The same session_start warns when jq is not on PATH, so the file also runs with a stub jq first on PATH: the
+// host's jq (or its absence) cannot change a result either. The block that tests the jq warning empties PATH itself.
+// The stub is never run; Bun.which only needs an executable file of that name. Restored at the end.
+const hostPath = process.env.PATH
+const stubBin = dir("bin")
+writeFileSync(join(stubBin, "jq"), "#!/bin/sh\nexit 0\n", { mode: 0o755 })
+process.env.PATH = `${stubBin}:${hostPath ?? ""}`
 
 const setup = (over: Record<string, any> = {}, opts: Parameters<typeof makePi>[0] = {}, repo = REPO) => {
   const { pi, fire, calls } = makePi(opts)
@@ -114,8 +121,13 @@ const sub = (name: string) => ({ agent: { kind: "sub", id: `0-${name}`, name, de
   assert.equal(blocked.block, true)
   assert.equal(
     blocked.reason,
-    "ecomono-judge-a has no memory write access (claude/agents/ecomono-judge-a.md tools:); report it to the parent instead",
+    "ecomono-judge-a: memory tool mcp__ecomono-memory__mem_save is not listed in its tools: (claude/agents/ecomono-judge-a.md); report it to the parent instead",
   )
+  // A read the agent does not list is refused in the same words: the reason is about the list, not about writing.
+  const read = await fire("tool_call", mem("mcp__ecomono_memory_mem_context"), ctx("ecomono-judge-a"))
+  assert.equal(read.block, true)
+  assert.ok(read.reason.includes("memory tool mcp__ecomono-memory__mem_context is not listed in its tools:"), read.reason)
+  assert.ok(!/write/.test(read.reason), read.reason)
   assert.equal(await fire("tool_call", mem(SEARCH), ctx("ecomono-judge-a")), undefined)
   assert.equal(await fire("tool_call", mem("mcp__ecomono_memory_mem_get_observation"), ctx("ecomono-judge-a")), undefined)
   assert.equal((await fire("tool_call", mem("mcp__ecomono_memory_mem_update"), ctx("ecomono-judge-b"))).block, true)
@@ -168,9 +180,10 @@ const sub = (name: string) => ({ agent: { kind: "sub", id: `0-${name}`, name, de
 }
 
 {
-  // Frontmatter parsing: only the block between the first two `---` lines counts, entries are comma-split and
-  // trimmed, and only the memory entries are kept. A file without a `tools:` line inherits every tool (Claude),
-  // so it is not restricted. The verdict is cached per name.
+  // Frontmatter parsing, as omp parses it: only the block between a leading `---` and the next `\n---` counts, it is
+  // YAML (Bun.YAML), `tools:` is a list or a comma-separated string whose entries are trimmed, and only the memory
+  // entries are kept. A file without a `tools:` (or with a null one) inherits every tool (Claude), so it is not
+  // restricted; any other value restricts to nothing, as omp does. The verdict is cached per name.
   const repo = dir("repo")
   const agents = join(repo, "claude/agents")
   mkdirSync(agents, { recursive: true })
@@ -183,6 +196,14 @@ const sub = (name: string) => ({ agent: { kind: "sub", id: `0-${name}`, name, de
   agent("nofront", "tools: Read\n")
   agent("unclosed", "---\ntools: Read\n")
   agent("othermcp", "---\nname: othermcp\ntools: mcp__context7__query-docs, mcp__ecomono-memory-x__mem_save, mcp__ecomono_memory__mem_save\n---\n")
+  // The YAML spellings omp accepts, which a line scan would miss or misread.
+  agent("yamllist", "---\nname: yamllist\ntools:\n  - Read\n  - mcp__ecomono-memory__mem_save\n---\n")
+  agent("flowlist", "---\nname: flowlist\ntools: [Read, mcp__ecomono-memory__mem_search]\n---\n")
+  agent("quoted", '---\nname: quoted\ntools: "Read, mcp__ecomono-memory__mem_save"\n---\n')
+  agent("folded", "---\nname: folded\ndescription: >\n  tools: mcp__ecomono-memory__mem_save\ntools: Read\n---\n")
+  agent("nulltools", "---\nname: nulltools\ntools:\n---\n")
+  agent("numtools", "---\nname: numtools\ntools: 5\n---\n")
+  agent("indented", "---\nname: indented\nmeta:\n  tools: Read\n---\n")
   const { fire, calls } = setup({}, {}, repo)
   const call = (name: string, tool = SAVE) => fire("tool_call", mem(tool), makeCtx(sub(name)))
 
@@ -196,6 +217,15 @@ const sub = (name: string) => ({ agent: { kind: "sub", id: `0-${name}`, name, de
   assert.equal(await call("nofront"), undefined)
   assert.equal(await call("unclosed"), undefined)
   assert.equal((await call("othermcp")).block, true, "only mcp__ecomono-memory__ entries count")
+  assert.equal(await call("yamllist"), undefined, "a YAML block list is a list")
+  assert.equal((await call("yamllist", SEARCH)).block, true)
+  assert.equal(await call("flowlist", SEARCH), undefined, "a YAML flow list is a list")
+  assert.equal((await call("flowlist")).block, true)
+  assert.equal(await call("quoted"), undefined, "a quoted string is comma-split like a plain one")
+  assert.equal((await call("folded")).block, true, "a tools: line inside a folded description is not the key")
+  assert.equal(await call("nulltools"), undefined, "a null tools: inherits every tool")
+  assert.equal((await call("numtools")).block, true, "a malformed tools: restricts to nothing, as omp makes it")
+  assert.equal(await call("indented"), undefined, "a nested tools: key is not the agent's")
 
   // Cached: the file is read once per name, so an edit mid-session does not change the verdict.
   agent("lister", "---\nname: lister\ntools: Read\n---\n")
@@ -214,6 +244,20 @@ const sub = (name: string) => ({ agent: { kind: "sub", id: `0-${name}`, name, de
   assert.equal(calls.warn.length, 1)
   assert.ok(calls.warn[0].includes("claude/agents/broken.md"))
   assert.deepEqual(calls.failures, [])
+
+  // A frontmatter Bun.YAML rejects is read as omp's fallback reads it, one `key: value` line at a time, so its
+  // `tools:` still restricts, with one warning (test_contract.ts check (e) keeps the real agents parseable).
+  writeFileSync(join(repo, "claude/agents/badyaml.md"), "---\nname: [unclosed\ntools: Read\n---\n")
+  assert.equal((await fire("tool_call", mem(SAVE), makeCtx(sub("badyaml")))).block, true)
+  assert.equal(calls.warn.length, 2)
+  assert.ok(calls.warn[1].includes("claude/agents/badyaml.md frontmatter is not valid YAML"), calls.warn[1])
+  writeFileSync(join(repo, "claude/agents/badlist.md"), "---\nname: [unclosed\ntools: [Read, mcp__ecomono-memory__mem_save]\n---\n")
+  assert.equal(await fire("tool_call", mem(SAVE), makeCtx(sub("badlist"))), undefined, "a flow list on the line is a list")
+  assert.equal((await fire("tool_call", mem(SEARCH), makeCtx(sub("badlist")))).block, true)
+  writeFileSync(join(repo, "claude/agents/badnone.md"), "---\nname: [unclosed\ndescription: d\n---\n")
+  assert.equal(await fire("tool_call", mem(SAVE), makeCtx(sub("badnone"))), undefined, "no tools: line, no restriction")
+  writeFileSync(join(repo, "claude/agents/badempty.md"), "---\nname: [unclosed\ntools:\n---\n")
+  assert.equal((await fire("tool_call", mem(SAVE), makeCtx(sub("badempty")))).block, true, "an empty tools: on the line restricts, as omp reads it")
 }
 
 {
@@ -380,7 +424,7 @@ const never = () => new Promise(() => {})
 // read per call, so an empty directory stands in for "jq not installed".
 
 {
-  const realPath = process.env.PATH
+  const jqPath = process.env.PATH // the stub jq first, set at the top of the file
   const stateLog = join(process.env.XDG_STATE_HOME!, "ecomono", "ecomono.log")
   // A healthy skills tree must not hide the jq warning: the two checks have separate once-flags.
   const full = dir("home")
@@ -393,7 +437,7 @@ const never = () => new Promise(() => {})
     const [text, level] = a.ctx.recorded.notify[0]
     assert.equal(level, "warning")
     assert.ok(text.includes("jq") && text.includes("secret-path") && text.includes("review") && text.includes("judge"), text)
-    assert.ok(readFileSync(stateLog, "utf8").includes(text), "a headless run leaves a trace too")
+    assert.ok(readFileSync(stateLog, "utf8").includes(text), "the UI session's warning is in the state log too")
 
     // Headless: the logger, not the UI. The skills warning (tree absent) still fires on its own flag.
     process.env.HOME = dir("home")
@@ -409,18 +453,18 @@ const never = () => new Promise(() => {})
     const s = setup({ hasUI: true, ...sub("ecomono-explore") })
     await s.fire("session_start", { reason: "start" }, s.ctx)
     assert.equal(s.ctx.recorded.notify.length, 0)
-    process.env.PATH = realPath
+    process.env.PATH = jqPath
     process.env.HOME = full
     const p = setup({ hasUI: true })
     await p.fire("session_start", { reason: "start" }, p.ctx)
     assert.equal(p.ctx.recorded.notify.length, 0)
     assert.deepEqual(p.calls.warn, [])
   })
-  assert.equal(process.env.PATH, realPath, "withEnv restored PATH")
+  assert.equal(process.env.PATH, jqPath, "withEnv restored PATH")
 }
 
 // ---- shape drift ---------------------------------------------------------------------------------------------------
-// An event or ctx field that is not the shape omp 18.13.3 sends skips the check that reads it. The extension still
+// An event or ctx field that is not the shape omp 18.14.0 sends skips the check that reads it. The extension still
 // allows, and says so once per kind and session, so a renamed field does not switch a gate off in silence.
 
 {
@@ -462,5 +506,7 @@ const never = () => new Promise(() => {})
 
 if (hostHome === undefined) delete process.env.HOME
 else process.env.HOME = hostHome
+if (hostPath === undefined) delete process.env.PATH
+else process.env.PATH = hostPath
 
 console.log("test_spawn: all assertions passed")

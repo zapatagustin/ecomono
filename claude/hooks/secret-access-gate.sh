@@ -42,7 +42,9 @@
 # name, so a sweep of the agent dir that never spells it — `cat ~/.omp/agent/*.db`,
 # `cp -r ~/.omp/agent /tmp`, `tar czf x.tgz ~/.omp`, an `rsync` or `find -exec` over
 # it — copies the credential store unprompted. Gating the directory instead would fire
-# on every `omp` config edit and session lookup there.
+# on every `omp` config edit and session lookup there. The omp commands that print
+# credentials match only when `omp` is spelled as a plain word: `$(which omp) token`,
+# `"omp" auth export` and `bunx @oh-my-pi/pi-coding-agent auth export` run unprompted.
 
 set -uo pipefail
 
@@ -62,6 +64,8 @@ mode=$(printf '%s' "$input" | jq -r '.permission_mode // empty' 2>/dev/null)
 # Drop the benign `.env` siblings before matching, so `cat .env.example` stays
 # silent while `cat .env.production` does not. Bash ERE has no lookahead, so
 # scrubbing the exceptions out is how "all of these except those" gets expressed.
+# The omp extension reads the `for benign in` line below as the template names its
+# read gate lets through, so keep it on one line in this form.
 scrubbed=$cmd
 for benign in .env.example .env.sample .env.template .env.dist .env.defaults .env.schema; do
   scrubbed=${scrubbed//"$benign"/}
@@ -90,9 +94,13 @@ patterns=(
   # globs in opencode/opencode.json.
   '(^|[^A-Za-z0-9_.-])agent\.db($|[^A-Za-z0-9_.])'
   # omp prints those credentials itself: `omp auth export` dumps every one as JSON, `omp token <provider>` one
-  # key or OAuth token. Neither names agent.db. Long flags before the subcommand (`--profile=work`,
-  # `--profile work`) are skipped over.
-  '(^|[^A-Za-z0-9_.-])omp([[:space:]]+--[A-Za-z][^[:space:]]*([[:space:]]+[^-[:space:]][^[:space:]]*)?)*[[:space:]]+(auth[[:space:]]+export|token)($|[^A-Za-z0-9_-])'
+  # key or OAuth token, and `omp auth-broker token` / `omp auth-gateway token` the broker's and the gateway's
+  # bearer token. None names agent.db. Long flags before the subcommand (`--profile=work`, `--profile work`)
+  # are skipped over.
+  '(^|[^A-Za-z0-9_.-])omp([[:space:]]+--[A-Za-z][^[:space:]]*([[:space:]]+[^-[:space:]][^[:space:]]*)?)*[[:space:]]+(auth[[:space:]]+export|token|auth-(broker|gateway)[[:space:]]+token)($|[^A-Za-z0-9_-])'
+  # Those two bearer tokens, as files in omp's config root (~/.omp; omp: cli/auth-broker-cli.ts,
+  # cli/auth-gateway-cli.ts). Same names as the `**/auth-broker.token` and `**/auth-gateway.token` read globs.
+  'auth-(broker|gateway)\.token'
   'Library/Keychains/'
   '(^|[^A-Za-z0-9_.-])secrets/'
 )

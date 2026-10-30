@@ -722,7 +722,7 @@ repo is hooks and drift checks rather than prose.
 
 ## omp target
 
-omp (oh-my-pi) is the third harness, tested against 18.13.3. The README carries the user-facing side
+omp (oh-my-pi) is the third harness, tested against 18.14.0. The README carries the user-facing side
 (install paths, posture, every accepted ceiling, the opt-ins, the upgrade protocol); this section records
 why the target is built the way it is. Evidence paths below are relative to the omp package sources.
 
@@ -795,7 +795,7 @@ either way the call was refused, so only the refusal text changes. This is not a
   `file://`, `~` and `~x`, then `resolve`. An internal URL (`skill://`, `artifact://`, `xd://`, ...) returns
   `undefined`. The path gate keeps `ssh://` parts and matches their URL path as text, whatever the host. A bash
   call whose `cwd` is an internal URL is judged on the session cwd: omp runs it in its embedded shell, which reads
-  host files and runs external programs (`tools/bash.ts:1090-1110`, `internal-urls/url-filesystem.ts`), so
+  host files and runs external programs (`tools/bash.ts:1127-1147`, `internal-urls/url-filesystem.ts`), so
   failing open there would let a credential read skip the secret gate.
 - **Handlers**, in registration order:
   - `tool_call` on `bash`: in-process `rm -rf` literal check, then `secret-access-gate`, `check-diff-size` and
@@ -805,37 +805,78 @@ either way the call was refused, so only the refusal text changes. This is not a
   - `tool_call` on `github` with `op` `pr_create` or `pr_push`: synthesises `gh pr create` / `git push` and runs
     the diff-size and receipt gates.
   - `tool_call` on the path tools: the deny globs of `opencode/opencode.json`, selectors and lists peeled, archive
-    members tested with `:` as `/`, each candidate also tested at its symlink target. `edit` adds the targets
-    named in its text input (hashline and apply_patch headers, `MV`, patch-mode `rename`), because omp's event
-    normalizer derives `path` from hashline headers only when the call has none. The globs include
-    `**/agent.db*`: omp keeps every provider credential in plaintext in `<agentDir>/agent.db` (table
-    `auth_credentials`, plus its `-wal` and `-shm`), and the agent dir moves (`~/.omp/agent`,
-    `~/.omp/profiles/<name>/agent`, `PI_CODING_AGENT_DIR`, XDG), so the glob keys on the file name, which omp
-    fixes (`getAgentDbPath`), and covers the live agent dir with no env read. `secret-access-gate.sh` has the
-    same pattern for bash.
-  - `tool_call` on `task`: the deny globs on the `@path` mentions of every item's `task` text (omp reads them into
-    the child's first prompt with no tool call), then `judge-standards-gate` once per item; the script alone
-    knows which agents are judges. omp repairs a double-encoded `task` or `context` after this event
+    members tested with `:` as `/`, a SQLite path cut after its `.db` wherever the selector has a `/`, each
+    candidate also tested at its symlink target. The last matching key wins, as in OpenCode, and
+    `test_paths.ts` holds the keys in byte order, the order the Nix deploy gives OpenCode. A file whose name ends
+    in one of the six template names `secret-access-gate.sh` scrubs (its `for benign in` line, read by the
+    extension) is not denied by that name, while a directory glob still denies it, so the read gate lets through
+    the exact template names the bash gate does. The bash scrub drops the name anywhere in the command, so
+    `cat .env.example.local` passes it while the read gate denies that file. The templates are not `allow` keys
+    in `opencode.json`: OpenCode turns `*` and `**` alike into `.*`, which matches `/`, and its last matching key
+    wins (`packages/core/src/util/wildcard.ts`, `permission` `evaluate`), so `*.env.example` there would also
+    lift `**/secrets/**` and `**/.ssh/**`. OpenCode therefore denies the templates; `test_paths.ts` evaluates the
+    keys with OpenCode's semantics and pins both hosts' verdicts. `edit` adds the targets named in its text input
+    (hashline, apply_patch and sloppy `*** Edit File:` headers, `MV`, patch-mode `rename`), because omp's event
+    normalizer derives `path` from hashline headers only when the call has none. The globs include `**/agent.db` and
+    `**/agent.db-*`: omp keeps every provider credential in plaintext in `<agentDir>/agent.db` (table
+    `auth_credentials`, plus its `-wal`, `-shm` and `-journal`), and the agent dir moves (`~/.omp/agent`,
+    `~/.omp/profiles/<name>/agent`, `PI_CODING_AGENT_DIR`, XDG), so the globs key on the file name, which omp
+    fixes (`getAgentDbPath`), and cover the live agent dir with no env read; `agent.db.ts` stays readable.
+    `secret-access-gate.sh` has the same name for bash, plus `omp auth export` and `omp token`, which print the
+    credentials without naming the file. omp's broker and gateway bearer tokens get the same treatment: the
+    `**/auth-broker.token` and `**/auth-gateway.token` globs, the same names in the bash gate, and the
+    `omp auth-broker token` / `omp auth-gateway token` commands that print them. `permission.bash` asks on all
+    of these, with the glob-only gaps the README lists.
+  - `tool_call` on `task`: the deny globs on every `taskFile` (omp 18.14.0's `task.file`, off by default: an
+    absolute path or `local://` URL whose contents omp reads at dispatch as the item's `task`) and on the `@path`
+    mentions of every item's `task` text (omp reads them into the child's first prompt with no tool call; an item
+    has no other file field, see the mirror table), then `judge-standards-gate` once per item that names an agent; the
+    script alone knows which agents are judges. omp repairs a double-encoded `task` or `context` after this event
     (`repairTaskParams`), so the extension mirrors that repair (`repairedTask`): mentions are scanned in the raw
     text and its decode, and the judge prompt is built from the decoded fields, which is where the child reads
-    the heading.
+    the heading. A `taskFile`'s contents are read after this event, so their mentions and headings are a ceiling,
+    like the other prompt text omp reads with no tool call; `task.file` stays off unless the user turns it on.
   - `tool_call` on `mcp__ecomono_memory_*` from a subagent: allowed only for the tools in that agent's own
     `tools:` frontmatter. Bundled omp agents, `/tan` clones and the advisor have no file and pass.
   - `tool_result` on `bash`: peel the trailing notice block, `compressBash`, log to `stats.jsonl`; skipped for
     eval-bridged results and under `ECOMONO_COMPRESS=off`. Failing commands are compressed too (OpenCode does;
     head and tail keep the first error and the summary).
-  - `tool_result` on `read`: the read post-check, which withholds content omp resolved to a denied file.
-  - `tool_result` on `grep`, `ast_grep`, `glob` and `find`: the search post-check. The path gate sees only the
-    roots a call names, and a grep with no `path` returned lines of tracked `server.key`, `secrets/a.txt` and
-    `.env` on omp 18.13.3. The paths omp lists in `details` (`files` and `fileMatches[].path` for grep and
-    `ast_grep`, `files` for glob, `hits[].rel` for find) go through the same deny check, and a match withholds the
-    whole result as an error, the way the read post-check does. A result is not filtered per file, because the
-    text is not parsed.
+  - `tool_result` on `read`: the read post-check, which withholds content omp resolved to a denied file
+    (`suffixResolution.to`, `displayReadTargets`, `resolvedPath`).
+  - `tool_result` on `grep`, `ast_grep`, `glob`, `find` and `ast_edit`: the search post-check. The path gate sees
+    only the roots a call names, and a grep with no `path` returned lines of tracked `server.key`, `secrets/a.txt`
+    and `.env` on omp 18.13.3. The paths omp lists in `details` (`files` and `fileMatches[].path` for grep and
+    `ast_grep`, `files` for glob, `hits[].rel` for find, `files` and `fileReplacements[].path` for `ast_edit`) go
+    through the same deny check, and a match withholds the whole result as an error, the way the read post-check
+    does. A result is not filtered per file, because the text is not parsed. `ast_edit` writes nothing at the
+    event: it runs as a dry run (`dryRun: true`), returns the diff as a preview and stages the apply, which runs
+    when the model writes a reason to `xd://resolve`. Withholding a preview hides the diff and leaves the apply
+    staged; the notice steers the model to `xd://reject`, which is advice, not a guard.
+  - `tool_result` on `write` to `xd://resolve` or `xd://reject`: the result that settles a staged preview carries
+    the source tool's own apply or reject result in `details.xdev.inner.sourceResultDetails` (for `ast_edit`, its
+    `files` and `fileReplacements`), which goes through the same deny check and is withheld like a search result.
+  - **The deny is a read guard.** Its contract: the model never sees a denied file's content, nor learns a denied
+    path, through any result channel (content, `details`, notices, the `details` omp persists in the session
+    file). Writes to a denied file the path gate cannot see are an accepted ceiling, in the class of `eval` and
+    `debug`, which already read and write anything: `ast_edit` + `xd://resolve`, `eval`, `debug`, and bash outside
+    the secret gate's patterns. Refusing `xd://resolve` after a withheld preview was tried and cannot converge:
+    `ast_edit` runs as the `xd://ast_edit` device by default, so its `tool_call` fires nested, after a resolve in
+    the same message was already judged; `xd://resolve` has spellings (tab, LF, CR inside it) a text match misses;
+    and abort and `turn_start` ordering leave windows. omp's switches cover it instead: `astEdit.enabled: false`,
+    `eval.py: false` and `eval.js: false`, `debug.enabled: false`, or `tools.restrictedFolders`, an approval prompt
+    for any call at or below a listed folder (`tools/approval.ts` `restrictedFolderReason`), which blocks headless.
+  - Both post-checks name the glob in their notice, never the file: naming it would tell the model, one call at a
+    time, which denied files exist where it never looked. Both replace `details` with its number and boolean
+    fields: omp persists `details` in the session file (`session-manager.ts` `appendMessage`) and the TUI renders
+    `displayContent` from it, and omp keeps the original when a handler returns `undefined` or `null` for it
+    (`extensibility/extensions/wrapper.ts`, `resultResult.details ?? result.details`), so an object is always
+    returned.
   - `session.compacting`: the compression style hint. `before_subagent_spawn`: tier and inheritance routing.
   - `session_start` and `before_agent_start` (main only): skill-registry refresh, a one-time warning when `jq` is not on
     PATH (three gate scripts exit 0 silently without it), a one-time warning when
     `~/.claude/skills/ecomono-sdd-shared` is missing, the org-todo widget, prompt capture. `session_shutdown`
-    closes the memory DB.
+    closes the memory DB. The widget and its parser are imported on first use from `REPO`, inside their own
+    `safe()`: a static import that failed would fail the whole extension and every gate with it.
 
 ### Settings mapping
 
@@ -897,6 +938,7 @@ to hide them.
 | `PI_CODING_AGENT_DIR` and profiles | `install.sh` honours `PI_CODING_AGENT_DIR`, else `$HOME/${PI_CONFIG_DIR:-.omp}/agent`; a named profile is a re-run with its directory. The flake hardcodes `.omp/agent`. |
 | omp-only machines | Not a v1 target. The extension has no `~/.claude/hooks` dependency and warns once when `~/.claude/skills/ecomono-sdd-shared`, the remaining prose dependency, is missing. |
 | org-todo and prompt capture | Both shipped at OpenCode parity as optional, independently droppable slices. |
+| `jq` on Nix | The flake adds `pkgs.jq` to `home.packages`, next to `nodejs` and `bun`. The gate scripts run from the harness's own `PATH`, which the activation scripts' `${pkgs.jq}` does not reach, and three of them exit 0 silently without it, so a missing `jq` turns them off with no trace but the extension's one warning at session start. A user package is the smallest thing that puts it on that `PATH`; wrapping each script with an absolute `jq` would fork the scripts per platform. |
 
 ### Deferred, with triggers
 
@@ -906,9 +948,11 @@ to hide them.
 | Claude-only persona tail | Autonomous delegation is missed on omp | Write an omp tail and generalise `check-persona-drift.sh` to N carriers |
 | Skill description routing sentence | Routing misses observed on omp | Front-load a routing sentence repo-wide |
 | Judge gate for eval `agent()` | An eval judge spawn observed | Run the script with an empty prompt from `before_subagent_spawn` |
-| Search leak the post-check cannot see | A denied file's lines observed in a search result the post-check passed (its `details` lacked the path) | `tools.restrictedFolders`, which filters inside the search |
+| Search leak the post-check cannot see | A denied file's lines observed in a search result the post-check passed (its `details` lacked the path) | `tools.restrictedFolders`: an approval prompt for any call at or below a listed folder and for a recursive search rooted above one, in every approval mode, blocking headless (`tools/approval.ts` `restrictedFolderReason`); it does not filter inside the search |
 | `lsp` file argument | A leak observed | Add `lsp` `input.file` to the path gate, or `lsp.enabled: false` |
 | `debug` launch | A `launch` observed in a session | Run the bash scripts on `[program, ...args].join(' ')` |
+| Writes to denied files | A denied file written through `ast_edit` + `xd://resolve` in a session | `astEdit.enabled: false`, or `tools.restrictedFolders` |
+| `taskFile` contents | `task.file` turned on | `tools.restrictedFolders`; a gate-time read of the file would still miss a same-message write |
 | `artifact://` read of a withheld result | One observed | Record N from the replaced content and deny `read artifact://N` |
 | Prompt capture of omp's own prompts | Synthetic prompts observed in the memory database | Capture from `message_start` and keep `role === "user" && !synthetic && attribution !== "agent"` (needs `message_start` in `fake-pi.ts`) |
 | omp-only machines | Requested | Repoint prose from `~/.claude/skills` to `~/.agents/skills` |
@@ -919,7 +963,7 @@ to hide them.
 
 ### Version coupling
 
-The extension relies on these omp 18.13.3 surfaces. A change to one of them is caught by one of three nets, in
+The extension relies on these omp 18.14.0 surfaces. A change to one of them is caught by one of three nets, in
 this order of strength:
 
 - **The smoke** (`omp/tests/smoke.sh`), which drives real omp offline and fails on any other omp version unless
@@ -931,12 +975,14 @@ this order of strength:
 - **A shape warning.** Where the extension reads a field by name and finds none, it still allows (failing
   closed would brick every session after an upgrade) and logs `ecomono: unexpected omp shape, <kind>: ...` once
   per kind and session: a `read` call with no `path`/`paths`, a `task` call with neither `tasks[]` nor `agent`,
-  `ctx.agent` without a `kind` or a subagent without a `name`, and a spawn without an array `patterns`.
+  `ctx.agent` without a `kind` or a subagent without a `name`, a spawn without an array `patterns`, and a
+  non-error search result whose `details` has none of `files`, `fileMatches`, `fileReplacements` and `hits`.
 - **The mirror table** below, re-diffed on every upgrade.
 
-Not covered by the smoke, and so resting on the fake-pi tests (events built by hand to the 18.13.3 shape) and the
-mirror table: the read post-check (`details.{suffixResolution,displayReadTargets}`), the search post-check
-(`details.{files,fileMatches,hits}`), edit and `ast_edit` inputs,
+Not covered by the smoke, and so resting on the fake-pi tests (events built by hand to the 18.14.0 shape) and the
+mirror table: the read post-check (`details.{suffixResolution,displayReadTargets,resolvedPath}`), the search
+post-check (`details.{files,fileMatches,fileReplacements,hits}`) and the `details` it replaces, the resolve
+result withhold (`write` `details.xdev.inner.sourceResultDetails`), the `taskFile` deny, edit and `ast_edit` inputs,
 prompt capture, the compaction style, the org-todo widget and the `ui.confirm` flow. The upgrade protocol in the
 README starts here. Ranges are relative to the omp
 package sources (`path-utils.ts`, `ssh-protocol.ts`, `search-approval-targets.ts`) and to pi-tui (`read.ts`);
@@ -951,27 +997,44 @@ Mirrored code, re-diffed on every omp upgrade:
 | `ssh://` path rule | omp `internal-urls/ssh-protocol.ts:76-106` |
 | Search-root splitter `/[;,\s]+/` | omp `tools/search-approval-targets.ts:23` |
 | `extractFileMentions` (task `@path` mentions) | omp `utils/file-mentions.ts:33-55,168-186` |
-| `repairDoubleEncodedJsonString` (`repairedTask`, the double-encoded `task` and `context`) | pi-tui `tools/task-repair-args.ts`, called from omp `task/index.ts:373` |
-| Edit header grammar (`[PATH#TAG]`, `¶`, `*** ... File:`, `*** Move to:`, `MV`) | omp `extensibility/tool-event-input.ts:35-90`; pi-edit `modes/hashline/input.rs`, `tokenizer.rs` |
+| Task items carry one file field, `taskFile` (setting `task.file`, off by default, new in 18.14.0: an absolute path or `local://` URL read at dispatch), so it and the mentions are the only task paths to deny: `taskItemSchema` and its siblings have no other and delete unknown keys (`"+": "delete"`) | omp `task/types.ts:75-117`, `task/index.ts:372-408` |
+| `repairDoubleEncodedJsonString` (`repairedTask`, the double-encoded `task` and `context`) | pi-tui `tools/task-repair-args.ts`, called from omp `task/index.ts:460` |
+| Edit header grammar (`[PATH#TAG]`, `¶`, `*** ... File:`, `*** Move to:`, `MV`, sloppy `*** Edit File`) | omp `extensibility/tool-event-input.ts:35-90`; pi-edit `modes/hashline/input.rs`, `tokenizer.rs`, `modes/sloppy/parse.rs:48` |
+| SQLite path end (`SQLITE_PATH_PATTERN`, `parseSqlitePathCandidates`) | omp `tools/sqlite-reader.ts:63,547-570` |
+| Agent frontmatter (`parseFrontmatter` on Bun.YAML, `tools:` through `parseArrayOrCSV`) | pi-utils `frontmatter.ts`; omp `discovery/helpers.ts` `parseArrayOrCSV`, `parseAgentFields` |
 | Symlink resolution through a missing tail (`resolveEquivalentPath`) | pi-utils `dirs.ts` |
-| Handler budget `EXTENSION_HANDLER_TIMEOUT_MS = 30_000`, which the gate timeout (`GATE_TIMEOUT_MS`, 20 s) must stay under | omp `extensibility/extensions/runner.ts:133` |
+| Handler budget `EXTENSION_HANDLER_TIMEOUT_MS = 30_000`, which the gate timeout (`GATE_TIMEOUT_MS`, 20 s) must stay under | omp `extensibility/extensions/runner.ts:136` |
 
 Surfaces relied on:
 
 - Loader: `extensions/<name>/index.ts` discovery, realpath import, default-export factory (awaited), factories
   re-run per subagent session, relative graph resolution, `createRequire` with a computed path.
-- Events: `tool_call` (fail-closed, 30 s, first block wins), `tool_result` (chained, `{content, isError}`),
+- Events: `tool_call` (fail-closed, 30 s, first block wins, fired for every call of a message before any runs),
+  `tool_result` (chained, `{content, details, isError}`, an `undefined` or `null` `details` keeping omp's own),
   `before_subagent_spawn` (`patterns`, `modelRole`, `invocationKind`; `{model, note}` with role expansion),
   `session.compacting` (`{context}`), `before_agent_start` (`reason`), `session_start`, `session_shutdown`.
 - `ctx` and `pi`: `agent.{kind,id,name}`, `hasUI`, `mode`, `model.{provider,id}`, `ui.{confirm,notify,setWidget}`,
   `setInterval`, `sessionManager.getSessionId()`; `pi.exec`, `pi.logger`.
 - Tool inputs: `bash.{command,cwd}`, `read.path` (selectors, `;` lists, `file://`), `grep`/`glob`/`find`/`write`/
-  `ast_grep.path`, `edit.{path,paths}`, `ast_edit.paths`, `github.op`, `task.{context,tasks[].agent,task}`; read
-  `details.{suffixResolution,displayReadTargets}`.
+  `ast_grep.path`, `edit.{path,paths,input}`, `ast_edit.paths`, `github.op`, `task.{context,agent,task,taskFile,tasks[]}`; read
+  `details.{suffixResolution,displayReadTargets,resolvedPath}`; search `details.{files,fileMatches,hits}` and
+  `ast_edit` `details.{files,fileReplacements}`; the `xd://resolve` / `xd://reject` write result
+  `details.xdev.{tool,inner.sourceResultDetails}`.
 - Output notices, MCP tool naming `mcp__ecomono_memory_<tool>`, MCP file discovery and the dashboard writer,
   `RULES.md`/`PERSONALITY.md`/agents/commands discovery, skills from `~/.agents/skills`, Handlebars command
   rendering, role aliases `@smol`/`@task`/`@slow`, `model.toolCallLoopGuard`, `shellMinimizer.enabled`, the
-  `debug.enabled` / `eval.py` / `eval.js` / `lsp.enabled` defaults behind the accepted ceilings, `bash.patterns`.
+  `debug.enabled` / `eval.py` / `eval.js` / `lsp.enabled` / `astEdit.enabled` / `task.file` defaults behind the
+  accepted ceilings, `tools.restrictedFolders`, `bash.patterns`.
+
+Last re-diff, 18.13.3 to 18.14.0 (the omp, pi-tui, pi-utils, pi-ai and pi-agent-core package sources, plus the
+pi-edit grammar files from the tagged repository). Changed: task items gained `taskFile` behind `task.file`, now
+denied as a path, with its contents a ceiling; `read` also fans a `;` list out on `ENAMETOOLONG`, and an opaque
+`name:rest` that no MCP server advertises falls back to a plain path, both still under the same split and selector
+cut; `out://` (a write-only reply channel) is new; the extension API only gained members (among them `link_activate`,
+`registerAssistantTextRenderer`, `registerLinkScheme`, `startLive`). Every mirror in the table, the result
+`details` the post-checks read, the event names and payloads the extension subscribes to, the MCP tool naming and
+the pi-edit header grammar are unchanged (the Rust files changed by refactor only); the cited line ranges moved and
+were re-pinned.
 
 ### Spike results
 
@@ -1245,7 +1308,7 @@ rows say what each idea's state is; counting them is the reader's business.
 | Candidate freeze, bound to a hash of the reviewed bytes | shipped |
 | Reviewer tier from risk evidence, not diff size | shipped |
 | A kill switch that is structurally absent when off | shipped, once the gate became a hook that can actually block — the `ecomono/review-mode` marker |
-| A refusal may name a command only if running it resolves the block | followed by the push gate's refusal, asserted by its test on both harnesses. Not enforced anywhere as a rule, and deliberately not: upstream's version is an AST test over refusal strings, which is a question about what a sentence means — the shape this document has already buried twice |
+| A refusal may name a command only if running it resolves the block | followed by the push gate's refusal, asserted by its test on Claude Code and on opencode; omp runs the same script, and its smoke checks only that the refusal reaches the model. Not enforced anywhere as a rule, and deliberately not: upstream's version is an AST test over refusal strings, which is a question about what a sentence means — the shape this document has already buried twice |
 | One receipt validated identically at **every** delivery gate | **shipped at every boundary that delivers, and declined at the rest.** `pre-push` and `pre-pr` are two of upstream's five and are the only two ways bytes leave this machine; archive is this repo's own boundary and not one of the five. `post-apply`, `pre-commit` and `release` have no reader and will not get one — the reasons are below and they are properties of those boundaries, not work left over |
 
 Upstream validates a receipt at `post-apply`, `pre-commit`, `pre-push`, `pre-pr` and
@@ -1914,11 +1977,13 @@ off-session sees nothing — and it was used to carry a broader one it did not s
 So `claude/hooks/judge-standards-gate.sh` now denies the launch of `ecomono-judge-a`, `-b` or
 `-fix` when the prompt carries no `## Skills to load before work` heading. Denying beats reporting
 for one reason: a report arrives after the round is paid for and can be read past, and this one
-was, eight times. A denial cannot be forgotten — **on Claude Code.** opencode defines the same
-three judge agents and launches them through its `task` tool, and no gate of this shape has been
-ported there, exactly as `agent-model-gate.sh` was never ported. Both judges named it in the same
-round, and the first version of this sentence claimed the property without the qualifier. What
-holds on one harness and not the other is an asymmetry, not an enforcement.
+was, eight times. A denial cannot be forgotten — **on Claude Code, and on omp, whose extension
+runs the same script on each `task` item that names an agent (not on an eval `agent()` spawn,
+which carries no prompt).** opencode defines the same three judge agents and launches them through
+its `task` tool, and no gate of this shape has been ported there, exactly as `agent-model-gate.sh`
+was never ported. Both judges named it in the same round, and the first version of this sentence
+claimed the property without the qualifier. What holds on some harnesses and not on another is an
+asymmetry, not an enforcement.
 
 **The gate asks one question — is the heading present — and arriving at one took three designs in
 three review rounds.** The arc is worth the space, because it is this document's recurring lesson

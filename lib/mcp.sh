@@ -154,7 +154,8 @@ remove_mcp() {
 #
 # The one context7 pin, shared by the Claude registration (ensure_context7_mcp below)
 # and the omp one (install.sh and flake.nix call ensure_omp_mcp with "${CONTEXT7_MCP[@]}").
-# A bump is a one-line edit here and reaches both harnesses.
+# A bump is a one-line edit here and reaches both registrations, Claude Code's and omp's; opencode
+# reaches context7 as the remote server in opencode/opencode.json and takes no pin.
 CONTEXT7_MCP=(npx -y --package=@upstash/context7-mcp@2.2.5 -- context7-mcp)
 
 ensure_context7_mcp() {

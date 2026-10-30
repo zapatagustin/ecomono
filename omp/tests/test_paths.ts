@@ -61,6 +61,65 @@ const sample = (glob: string) => glob.replace(/\*\*\//g, "/x/").replace(/\*\*/g,
     assert.equal(await t.fire("tool_call", call("read", { path: p }), t.ctx), undefined, p)
   }
 
+  // The last matching key wins, as in OpenCode: an "allow" after a "deny" lifts it, a "deny" after an "allow" holds,
+  // and an "ask" (or any other value) is skipped, so it never lifts a deny before it.
+  const order = (read: Record<string, unknown>) => {
+    const r = dir("repo")
+    mkdirSync(join(r, "opencode"))
+    writeFileSync(join(r, "opencode/opencode.json"), JSON.stringify({ permission: { read } }))
+    return setup(r)
+  }
+  const last = order({ "*": "allow", "*.foo": "deny", "ok.foo": "allow", "ask.foo": "ask" })
+  assert.equal((await last.fire("tool_call", call("read", { path: "a.foo" }), last.ctx))?.block, true)
+  assert.equal(await last.fire("tool_call", call("read", { path: "ok.foo" }), last.ctx), undefined)
+  assert.equal((await last.fire("tool_call", call("read", { path: "ask.foo" }), last.ctx))?.block, true)
+  const flipped = order({ "*": "allow", "ok.foo": "allow", "*.foo": "deny" })
+  assert.equal((await flipped.fire("tool_call", call("read", { path: "ok.foo" }), flipped.ctx))?.block, true)
+  // Allow entries alone deny nothing.
+  const allowOnly = order({ "*": "allow", "*.foo": "allow" })
+  assert.equal(await allowOnly.fire("tool_call", call("read", { path: "a.foo" }), allowOnly.ctx), undefined)
+
+  // The extension reads the keys in file order and OpenCode gets them in byte order on the Nix deploy (builtins.toJSON
+  // sorts attribute names), so the file keeps them in byte order: both hosts then see the same last match.
+  const keys = Object.keys(readRules)
+  assert.deepEqual(keys, [...keys].sort(), "opencode.json permission.read keys are not in byte order")
+
+  // OpenCode reads the same keys its own way: `*` and `**` both become `.*`, so they match "/", the whole value must
+  // match, and the last matching key wins. Mirrored from OpenCode packages/core/src/util/wildcard.ts match() (its
+  // trailing " *" case is for bash commands only) and permission evaluate() (findLast), over the keys in byte order.
+  // So an "allow" for a name such as `*.env.example` would lift `**/secrets/**` there: the file has none besides "*",
+  // and the extension takes the templates from the bash gate's `for benign in` line instead.
+  assert.deepEqual(Object.entries(readRules).filter(([k, v]) => v === "allow" && k !== "*"), [])
+  const ocMatch = (input: string, key: string) =>
+    new RegExp(`^${key.replace(/[.+^${}()|[\]\\]/g, "\\$&").replace(/\*/g, ".*").replace(/\?/g, ".")}$`, "s").test(input)
+  const ocVerdict = (path: string) => readRules[keys.findLast((k) => ocMatch(path, k)) ?? "*"]
+  const ompVerdict = async (path: string) =>
+    (await real.fire("tool_call", call("read", { path }), real.ctx))?.block === true ? "deny" : "allow"
+  // Both hosts agree on a template inside a denied directory, on the `.env` names, and on omp's credential store.
+  const agreed: Array<[string, string]> = [
+    ["x/secrets/.env.example", "deny"],
+    ["/h/.ssh/x.env.sample", "deny"],
+    ["/h/.credentials/a.env.dist", "deny"],
+    ["/U/Library/Keychains/k.env.template", "deny"],
+    ["config/.env", "deny"],
+    [".env.example.local", "deny"],
+    ["/h/.omp/agent/agent.db", "deny"],
+    ["/h/.omp/agent/agent.db-wal", "deny"],
+    ["/h/.omp/auth-broker.token", "deny"],
+    ["/h/.omp/auth-gateway.token", "deny"],
+    ["src/agent.db.ts", "allow"],
+    ["src/a.ts", "allow"],
+  ]
+  for (const [path, verdict] of agreed) {
+    assert.equal(ocVerdict(path), verdict, `OpenCode: ${path}`)
+    assert.equal(await ompVerdict(path), verdict, `omp: ${path}`)
+  }
+  // The one drift, documented: OpenCode denies a template the omp extension and the bash gate let through.
+  for (const path of [".env.example", "config/.env.sample"]) {
+    assert.equal(ocVerdict(path), "deny", `OpenCode: ${path}`)
+    assert.equal(await ompVerdict(path), "allow", `omp: ${path}`)
+  }
+
   // A file that is missing, unparseable, or has no permission.read: one warning, nothing denied.
   const bad = dir("repo")
   mkdirSync(join(bad, "opencode"))
@@ -158,6 +217,14 @@ const sample = (glob: string) => glob.replace(/\*\*\//g, "/x/").replace(/\*\*/g,
     ["read", { path: "~/.local/share/omp/agent.db" }],
     ["write", { path: "~/.omp/agent/agent.db" }],
     ["read", { path: "agent.db" }],
+    ["read", { path: "~/.omp/agent/agent.db-journal" }],
+    // A sqlite selector whose key holds a `/`: omp still reads agent.db (SQLITE_PATH_PATTERN).
+    ["read", { path: "~/.omp/agent/agent.db:auth_credentials:a/b" }],
+    ["read", { path: "~/.omp/agent/agent.db:auth_credentials?q=1/2" }],
+    ["grep", { path: "/srv/omp/agent.db:t:x/y/z" }],
+    // A template name inside a denied directory: the directory's glob still holds.
+    ["read", { path: "secrets/.env.example" }],
+    ["read", { path: ".env.example.local" }], // not a template name: `*.env.*` is the last match
   ]
   for (const [tool, input] of denied) {
     const r = await fire("tool_call", call(tool, input), ctx)
@@ -191,6 +258,17 @@ const sample = (glob: string) => glob.replace(/\*\*\//g, "/x/").replace(/\*\*/g,
     ["grep", { path: "[not json" }],
     ["read", { path: "src/myagent.db" }], // agent.db is a whole file name
     ["read", { path: "src/agent.ts" }],
+    ["read", { path: "src/agent.db.ts" }], // and has a right boundary
+    ["read", { path: "agent.dbx" }],
+    ["read", { path: "src/agent.db.ts:1-5" }],
+    // The `.env` templates the bash gate also lets through, read from its `for benign in` line.
+    ["read", { path: ".env.example" }],
+    ["read", { path: "config/.env.sample" }],
+    ["grep", { path: `${home}/x/.env.template` }],
+    ["read", { path: ".env.dist" }],
+    ["read", { path: ".env.defaults" }],
+    ["read", { path: ".env.schema" }],
+    ["read", { path: "app.env.example" }],
     ["read", { path: "~/.omp/agent/config.yml" }], // the rest of the agent dir is not credential storage
     ["bash", { command: "ls" }], // not a path tool
     ["lsp", { file: ".env" }], // not a path tool (documented ceiling)
@@ -198,6 +276,24 @@ const sample = (glob: string) => glob.replace(/\*\*\//g, "/x/").replace(/\*\*/g,
   for (const [tool, input] of allowed) {
     assert.equal(await fire("tool_call", call(tool, input), ctx), undefined, `${tool} ${JSON.stringify(input)}`)
   }
+}
+
+{
+  // A doubled or trailing space in the gate's `for benign in` line leaves no empty template, which every name ends in
+  // and so would lift the deny on every file.
+  const repo = dir("repo")
+  mkdirSync(join(repo, "opencode"))
+  mkdirSync(join(repo, "claude/hooks"), { recursive: true })
+  writeFileSync(join(repo, "opencode/opencode.json"), readFileSync(join(REPO, "opencode/opencode.json")))
+  writeFileSync(join(repo, "claude/hooks/secret-access-gate.sh"), "#!/bin/sh\nfor benign in  .env.example   .env.sample ; do\n  :\ndone\n")
+  const { fire, calls, ctx } = setup(repo)
+  for (const path of [".env", "server.key", "id.pem", "credentials.json", "~/.omp/agent/agent.db", ".env.local"]) {
+    assert.equal((await fire("tool_call", call("read", { path }), ctx))?.block, true, path)
+  }
+  for (const path of [".env.example", "config/.env.sample"]) {
+    assert.equal(await fire("tool_call", call("read", { path }), ctx), undefined, path)
+  }
+  assert.deepEqual(calls.warn, [])
 }
 
 {
@@ -209,7 +305,7 @@ const sample = (glob: string) => glob.replace(/\*\*\//g, "/x/").replace(/\*\*/g,
 }
 
 {
-  // A read whose input names no path under either key is a shape omp 18.13.3 never sends: it is allowed, and the
+  // A read whose input names no path under either key is a shape omp 18.14.0 never sends: it is allowed, and the
   // warning says the path deny skipped it, once. A well-formed read stays silent.
   const { fire, calls, ctx } = setup()
   for (const input of [{}, { file: ".env" }, { path: 7 }]) {
@@ -273,6 +369,11 @@ const sample = (glob: string) => glob.replace(/\*\*\//g, "/x/").replace(/\*\*/g,
     { input: "*** Begin Patch\n*** Delete File: ~/.ssh/id_rsa\n*** End Patch\n" },
     { input: "*** Begin Patch\n*** Update File: src/a.ts\n*** Move to: ~/.ssh/config\n@@\n+x\n*** End Patch\n" },
     { path: "src/a.ts", edits: [{ rename: ".env" }] }, // patch mode rename
+    // The sloppy mode's header: `*** Edit File: X`, the `:` optional, a trailing ` all` allowed.
+    { input: "*** Edit File: .env\n*** Find\nA=1\n*** Replace\nA=2\n" },
+    { input: "*** Edit File secrets/a.txt all\n*** Find\nx\n*** Replace\ny\n" },
+    { input: '*** edit file: "secrets/a b.txt"\n*** Insert After\nx\n' },
+    { path: "README.md", input: "*** Edit File: ~/.ssh/config\n*** Find\nx\n" },
   ]
   for (const input of denied) {
     const r = await fire("tool_call", call("edit", input), ctx)
@@ -285,8 +386,15 @@ const sample = (glob: string) => glob.replace(/\*\*\//g, "/x/").replace(/\*\*/g,
     { input: "*** Begin Patch\n*** Update File: src/a.ts\n@@\n-[.env]: old\n+x\n*** End Patch\n" },
     { path: "src/a.ts", edits: [{ rename: "src/b.ts", diff: "+.env" }] },
     { path: "src/a.ts", input: 7, edits: "nope" },
+    { input: "*** Edit File: src/a.ts\n*** Find\n.env\n*** Replace\nsecrets/x\n" }, // the sloppy body is content
+    { input: "*** Edit File: src/a.ts all\n*** Find\nx\n*** Replace\ny\n" },
   ]
   for (const input of allowed) assert.equal(await fire("tool_call", call("edit", input), ctx), undefined, JSON.stringify(input))
+  // A long header-like line with no `:` is linear work: the engine's own spelling of the header regex, run by
+  // JavaScript's backtracking engine, is quadratic on it (seconds at this length), the one here is not.
+  const started = performance.now()
+  await fire("tool_call", call("edit", { path: "src/a.ts", input: `*** add${" ".repeat(100_000)}x\n` }), ctx)
+  assert.ok(performance.now() - started < 1000, `a 100k-character header line took ${Math.round(performance.now() - started)} ms`)
   // Only edit reads `input`.
   assert.equal(await fire("tool_call", call("write", { path: "src/a.ts", input: "[.env#1A2B]" }), ctx), undefined)
 }
@@ -330,6 +438,38 @@ const sample = (glob: string) => glob.replace(/\*\*\//g, "/x/").replace(/\*\*/g,
   }
 }
 
+// ---- task: taskFile -----------------------------------------------------------------------------------------
+
+{
+  // omp 18.14.0's task.file (off by default) lets an item, or the flat call, name an absolute path or local:// URL
+  // whose contents omp reads into the child's first prompt (task/index.ts resolveTaskFile). The path is denied like
+  // a path tool's; the reason names the path the model typed, never one it did not.
+  const { fire, calls, ctx } = setup()
+  const task = (input: unknown) => call("task", input)
+  for (const input of [
+    { tasks: [{ taskFile: `${ctx.cwd}/.env` }] },
+    { tasks: [{ agent: "a", task: "fine" }, { agent: "b", taskFile: `${home}/.ssh/id_ed25519` }] },
+    { tasks: [{ taskFile: `${ctx.cwd}/secrets/brief.md` }] }, // inside a denied directory
+    { agent: "task", taskFile: `${home}/.omp/agent/agent.db` }, // flat
+    { taskFile: `${ctx.cwd}/.env`, tasks: [{ task: "x" }] }, // top-level next to tasks[]: checked too
+  ]) {
+    const r = await fire("tool_call", task(input), ctx)
+    assert.equal(r?.block, true, JSON.stringify(input))
+    assert.match(r.reason, /^Blocked: taskFile "/, JSON.stringify(input))
+    assert.match(r.reason, /opencode\/opencode\.json \(permission\.read\)/, JSON.stringify(input))
+  }
+  // No agent, so no judge script runs: the verdict is the taskFile check alone. local:// is an internal URL.
+  for (const input of [
+    { tasks: [{ taskFile: `${ctx.cwd}/src/brief.md` }] },
+    { tasks: [{ taskFile: "local://brief.md" }] },
+    { tasks: [{ taskFile: `${ctx.cwd}/.env.example` }] }, // a template the bash gate lets through
+    { tasks: [{ taskFile: 7 }] }, // not a string: omp rejects it
+  ]) {
+    assert.equal(await fire("tool_call", task(input), ctx), undefined, JSON.stringify(input))
+  }
+  assert.deepEqual(calls.warn, [])
+}
+
 // ---- a handler fault fails open ---------------------------------------------------------------------------------
 
 {
@@ -357,8 +497,16 @@ const sample = (glob: string) => glob.replace(/\*\*\//g, "/x/").replace(/\*\*/g,
     ...over,
   })
 
-  // A suffix resolution into a denied file: content withheld, details untouched.
-  const sr = { suffixResolution: { from: "prod", to: "secrets/prod" } }
+  // A suffix resolution into a denied file: content withheld, and the notice names the glob, never the file.
+  const sr = {
+    suffixResolution: { from: "prod", to: "secrets/prod" },
+    resolvedPath: `${ctx.cwd}/secrets/prod`,
+    displayContent: { text: "FILE CONTENT", startLine: 1 },
+    fileSize: 12,
+    totalLines: 1,
+    raw: false,
+    meta: { artifactId: "7" },
+  }
   const r = await fire("tool_result", result(sr), ctx)
   assert.equal(r?.isError, true)
   assert.equal(r.content.length, 1)
@@ -366,15 +514,18 @@ const sample = (glob: string) => glob.replace(/\*\*\//g, "/x/").replace(/\*\*/g,
   assert.match(r.content[0].text, /withheld/)
   assert.equal(
     r.content[0].text,
-    "ecomono: read resolved to secrets/prod, which **/secrets/** in opencode/opencode.json denies; content withheld.",
+    "ecomono: read resolved to a file that **/secrets/** in opencode/opencode.json denies; content withheld.",
   )
   assert.ok(!JSON.stringify(r.content).includes("FILE CONTENT"))
-  assert.deepEqual(r.details, sr, "details are left as omp produced them")
+  // details: the counts and flags survive, the content, the paths and the spill link do not. omp persists details in
+  // the session file and keeps the original ones when a handler returns none, so they are always replaced.
+  assert.deepEqual(r.details, { fileSize: 12, totalLines: 1, raw: false })
+  assert.deepEqual((await fire("tool_result", result({ suffixResolution: sr.suffixResolution }), ctx))?.details, {})
 
-  // Delimited parts: one denied target is enough.
+  // Delimited parts: one denied target is enough, and none of them is named.
   const dr = await fire("tool_result", result({ displayReadTargets: ["src/a.ts", "config/.env"] }), ctx)
   assert.equal(dr?.isError, true)
-  assert.match(dr.content[0].text, /config\/\.env/)
+  assert.ok(!dr.content[0].text.includes("config/"), dr.content[0].text)
   assert.match(dr.content[0].text, /withheld/)
 
   // The same helper as the path gate: selectors, tilde and absolute targets count too.
@@ -383,16 +534,25 @@ const sample = (glob: string) => glob.replace(/\*\*\//g, "/x/").replace(/\*\*/g,
     assert.equal(t?.isError, true, target)
   }
 
+  // resolvedPath, the absolute file omp read (a link or an internal URL's backing file), is checked too.
+  for (const resolvedPath of [`${home}/.ssh/id_rsa`, `${home}/.omp/agent/agent.db`, `${ctx.cwd}/config/.env`]) {
+    const t = await fire("tool_result", result({ resolvedPath }), ctx)
+    assert.equal(t?.isError, true, resolvedPath)
+    assert.ok(!t.content[0].text.includes(resolvedPath), t.content[0].text)
+  }
+  assert.equal(await fire("tool_result", result({ resolvedPath: `${ctx.cwd}/src/a.ts` }), ctx), undefined)
+  assert.equal(await fire("tool_result", result({ resolvedPath: `${ctx.cwd}/.env.example` }), ctx), undefined)
+
   // Allowed targets, and shapes that carry none: the result is not touched.
   assert.equal(await fire("tool_result", result({ suffixResolution: { from: "prod", to: "src/prod.ts" } }), ctx), undefined)
   assert.equal(await fire("tool_result", result({ displayReadTargets: ["src/a.ts", "src/b.ts"] }), ctx), undefined)
   assert.equal(await fire("tool_result", result(undefined), ctx), undefined)
-  for (const details of [null, "secrets/prod", 3, [], {}, { suffixResolution: null }, { suffixResolution: { to: 5 } }, { displayReadTargets: "secrets/x" }, { displayReadTargets: [1, null, {}] }]) {
+  for (const details of [null, "secrets/prod", 3, [], {}, { suffixResolution: null }, { suffixResolution: { to: 5 } }, { displayReadTargets: "secrets/x" }, { displayReadTargets: [1, null, {}] }, { resolvedPath: 7 }]) {
     assert.equal(await fire("tool_result", result(details), ctx), undefined, JSON.stringify(details))
   }
 
   // Only `read`: another tool's details are not looked at.
-  assert.equal(await fire("tool_result", result(sr, { toolName: "grep" }), ctx), undefined)
+  assert.equal(await fire("tool_result", result(sr, { toolName: "lsp" }), ctx), undefined)
   assert.deepEqual(calls.warn, [], "safe() caught nothing: no handler threw")
 }
 
@@ -413,6 +573,7 @@ const sample = (glob: string) => glob.replace(/\*\*\//g, "/x/").replace(/\*\*/g,
   })
   const files = (...paths: string[]) => ({ files: paths, fileMatches: paths.map((path) => ({ path, count: 1 })) })
 
+  const edited = (...paths: string[]) => ({ files: paths, fileReplacements: paths.map((path) => ({ path, count: 1 })) })
   const denied: Array<[string, unknown, string]> = [
     ["grep", files("src/a.ts", "server.key"), "server.key"],
     ["grep", files("secrets/a.txt"), "secrets/a.txt"],
@@ -427,7 +588,16 @@ const sample = (glob: string) => glob.replace(/\*\*\//g, "/x/").replace(/\*\*/g,
     ["glob", { files: ["docs/prod.env"] }, "docs/prod.env"],
     ["find", { hits: [{ rel: "src/a.ts" }, { rel: "secrets/a.txt" }] }, "secrets/a.txt"],
     ["find", { hits: [{ rel: ".env" }] }, ".env"],
+    // ast_edit: its result is the staged diff of every file it would touch (a dry run, applied: false).
+    ["ast_edit", edited("src/a.ts", "config/.env"), "config/.env"],
+    ["ast_edit", { files: [], fileReplacements: [{ path: "secrets/a.ts", count: 2 }], applied: false }, "secrets/a.ts"],
   ]
+  // The notice names the glob, never the file: it is the template below with a deny key of the file in the slot.
+  // An ast_edit notice also asks for xd://reject, since its preview stays staged in omp (steering only: the apply is
+  // the documented write ceiling).
+  const notice = (tool: string, glob: string) =>
+    `ecomono: ${tool} listed a file that ${glob} in opencode/opencode.json denies; result withheld. Narrow \`path\` or the pattern so the result lists no file that glob matches.` +
+    (tool === "ast_edit" ? " Its edits stay staged: write a reason to xd://reject to discard them." : "")
   for (const [tool, details, listed] of denied) {
     const label = `${tool} ${JSON.stringify(details)}`
     const r = await fire("tool_result", result(tool, details), ctx)
@@ -435,10 +605,34 @@ const sample = (glob: string) => glob.replace(/\*\*\//g, "/x/").replace(/\*\*/g,
     assert.equal(r.content.length, 1, label)
     assert.equal(r.content[0].type, "text", label)
     assert.match(r.content[0].text, /withheld/, label)
-    assert.ok(r.content[0].text.startsWith(`ecomono: ${tool} listed ${listed}, which `), `${label}: ${r.content[0].text}`)
-    assert.match(r.content[0].text, /in opencode\/opencode\.json denies/, label)
+    assert.ok(denyKeys.some((k) => r.content[0].text === notice(tool, k)), `${label}: ${r.content[0].text}`)
     assert.ok(!JSON.stringify(r.content).includes("LINE CONTENT"), label)
-    assert.deepEqual(r.details, details, `${label}: details are left as omp produced them`)
+    assert.ok(!JSON.stringify(r.details).includes(listed), `${label}: details still name ${listed}: ${JSON.stringify(r.details)}`)
+  }
+  // An error result is checked too: one that still carries `details` is cut like any other.
+  const stale = await fire("tool_result", { ...result("ast_edit", edited(".env")), isError: true }, ctx)
+  assert.equal(stale?.isError, true)
+
+  // details keep their counts and flags; the lines, the snippets, the diff and the path lists go.
+  const grepDetails = {
+    ...files("src/a.ts", "secrets/a.txt"),
+    matchCount: 3,
+    fileCount: 2,
+    truncated: false,
+    displayContent: "secrets/a.txt\n│*1 LINE CONTENT",
+    displayTargets: { "secrets/a.txt": "/abs/secrets/a.txt" },
+    cwd: ctx.cwd,
+    meta: { artifactId: "3" },
+  }
+  assert.deepEqual((await fire("tool_result", result("grep", grepDetails), ctx))?.details, { matchCount: 3, fileCount: 2, truncated: false })
+  const findDetails = { query: "x", keywords: ["x"], threshold: 0.5, hits: [{ rel: ".env", contentScore: 1, ranges: [{ start: 1, end: 1, p: 1, snippet: "LINE CONTENT" }], linesSeen: 1, truncated: false }], elapsedMs: 4, cwd: ctx.cwd }
+  assert.deepEqual((await fire("tool_result", result("find", findDetails), ctx))?.details, { threshold: 0.5, elapsedMs: 4 })
+  const editDetails = { ...edited("secrets/a.ts"), totalReplacements: 2, filesTouched: 1, filesSearched: 9, applied: false, limitReached: false, displayContent: "-old\n+LINE CONTENT" }
+  assert.deepEqual((await fire("tool_result", result("ast_edit", editDetails), ctx))?.details, { totalReplacements: 2, filesTouched: 1, filesSearched: 9, applied: false, limitReached: false })
+
+  // A tracked `.env` template listed by a repo-wide search does not withhold it: the same templates as read.
+  for (const tool of ["grep", "ast_grep", "glob"]) {
+    assert.equal(await fire("tool_result", result(tool, files("src/a.ts", ".env.example", "config/.env.sample")), ctx), undefined, tool)
   }
 
   // Ordinary results, and shapes that carry no path: the result is not touched.
@@ -464,11 +658,93 @@ const sample = (glob: string) => glob.replace(/\*\*\//g, "/x/").replace(/\*\*/g,
     assert.equal(await fire("tool_result", result(tool, details), ctx), undefined, `${tool} ${JSON.stringify(details)}`)
   }
 
-  // Only the four search tools: another tool's details are not looked at, `read` keeps its own check.
-  for (const tool of ["bash", "lsp", "ast_edit", "write"]) {
+  // Only the search tools: another tool's details are not looked at, `read` keeps its own check.
+  for (const tool of ["bash", "lsp", "write", "edit"]) {
     assert.equal(await fire("tool_result", result(tool, files(".env")), ctx), undefined, tool)
   }
-  assert.deepEqual(calls.warn, [], "safe() caught nothing: no handler threw")
+  assert.ok(!calls.warn.some((l) => l.includes("handler failed")), "safe() caught nothing: no handler threw")
+  // A non-error result with none of the path arrays is a shape omp 18.14.0 never sends: it passes, and drift() says
+  // so once per tool. Above, grep (undefined), glob ("secrets/x") and find ({ hits: "secrets/x" }) were such results.
+  const drifted = calls.warn.filter((l) => l.includes("unexpected omp shape"))
+  assert.deepEqual(drifted.map((l) => /shape, (\w+ tool_result)/.exec(l)?.[1]), ["grep tool_result", "glob tool_result", "find tool_result"])
+  assert.equal(calls.warn.length, drifted.length, calls.warn.join("\n"))
+
+  // An error result carries no arrays (omp throws, details absent): no drift. A well-formed one stays silent too.
+  const quiet = setup()
+  await quiet.fire("tool_result", { ...result("grep", undefined), isError: true }, quiet.ctx)
+  await quiet.fire("tool_result", result("grep", { files: [], matchCount: 0 }), quiet.ctx)
+  await quiet.fire("tool_result", result("ast_edit", { files: [], fileReplacements: [], applied: false }), quiet.ctx)
+  assert.deepEqual(quiet.calls.warn, [])
+}
+
+// ---- the result of xd://resolve and xd://reject --------------------------------------------------------------
+
+{
+  // ast_edit only stages its edits; a write to xd://resolve applies the newest staged preview and a write to
+  // xd://reject discards it. The apply is the documented write ceiling, so neither write is refused, a withheld
+  // preview's included. What the model would see is withheld instead: the write result carries the source tool's own
+  // apply or reject result under details.xdev.inner.sourceResultDetails (tools/resolve.ts runResolveInvocation), and
+  // one that lists a denied file is cut like a search result.
+  const { fire, calls, ctx } = setup()
+  const write = (tool: string) => ({ toolName: "write", toolCallId: "call-1", input: { path: `xd://${tool}`, content: "reason" } })
+  const preview = (...paths: string[]) => ({
+    toolName: "ast_edit",
+    toolCallId: "call-0",
+    input: { ops: [] },
+    content: [{ type: "text", text: "DIFF" }],
+    details: { files: paths, fileReplacements: paths.map((path) => ({ path, count: 1 })), applied: false },
+    isError: false,
+  })
+  const settled = (tool: string, inner: unknown, text = "done") => ({
+    ...write(tool),
+    content: [{ type: "text", text }],
+    details: { xdev: { tool, mode: "execute", args: { reason: "reason" }, inner } },
+    isError: false,
+  })
+  const sourced = (tool: string, action: string, ...paths: string[]) =>
+    settled(
+      tool,
+      {
+        action,
+        reason: "reason",
+        sourceToolName: "ast_edit",
+        label: "AST Edit: 1 replacement in 1 file",
+        sourceResultDetails: { files: paths, fileReplacements: paths.map((path) => ({ path, count: 1 })), totalReplacements: 1, applied: action === "apply" },
+      },
+      paths.map((p) => `[${p}#AB12]`).join("\n") + "\nLINE CONTENT",
+    )
+
+  // Not a gate: xd://resolve and xd://reject pass, before and after a withheld preview.
+  for (const tool of ["resolve", "reject"]) assert.equal(await fire("tool_call", write(tool), ctx), undefined, tool)
+  assert.equal((await fire("tool_result", preview("src/a.ts", "secrets/a.ts"), ctx))?.isError, true)
+  for (const tool of ["resolve", "reject"]) assert.equal(await fire("tool_call", write(tool), ctx), undefined, `${tool} after a withheld preview`)
+
+  // A settled preview that lists a denied file: withheld, the notice names the glob and never the file, and details
+  // keep only their number and boolean fields (xdev is an object, so none are left).
+  for (const [tool, action] of [["resolve", "apply"], ["reject", "discard"]]) {
+    for (const r of [await fire("tool_result", sourced(tool, action, "src/a.ts", "secrets/a.ts"), ctx), await fire("tool_result", { ...sourced(tool, action, ".env"), isError: true }, ctx)]) {
+      assert.equal(r?.isError, true, tool)
+      assert.equal(r.content.length, 1, tool)
+      assert.ok(
+        denyKeys.some((k) => r.content[0].text === `ecomono: xd://${tool} listed a file that ${k} in opencode/opencode.json denies; result withheld. Its staged edits may already be written to that file.`),
+        r.content[0].text,
+      )
+      assert.deepEqual(r.details, {}, tool)
+      // `.env` as the listed path, quoted or in its header: the `*.env` glob in the notice is not a leak.
+      for (const leak of ["secrets/a.ts", '".env"', "[.env#", "LINE CONTENT"]) assert.ok(!JSON.stringify(r).includes(leak), `${tool}: ${leak} in ${JSON.stringify(r)}`)
+    }
+  }
+
+  // Not touched: an ordinary apply, a reject with nothing pending (no sourceResultDetails), a write to a file, a
+  // write result with no details.
+  const untouched = [
+    sourced("resolve", "apply", "src/a.ts"),
+    settled("reject", { action: "discard", reason: "reason" }),
+    { ...write("x"), input: { path: "src/b.ts", content: "x" }, content: [{ type: "text", text: "ok" }], details: { files: [".env"] }, isError: false },
+    { ...write("resolve"), content: [{ type: "text", text: "ok" }], details: undefined, isError: false },
+  ]
+  for (const event of untouched) assert.equal(await fire("tool_result", event, ctx), undefined, JSON.stringify(event))
+  assert.deepEqual(calls.warn, [])
 }
 
 console.log("test_paths: all assertions passed")
