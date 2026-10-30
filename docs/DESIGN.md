@@ -959,7 +959,7 @@ to hide them.
 | Item | Trigger | Upgrade path |
 |---|---|---|
 | Loop-breaker block | A session log shows two or more consecutive native loop-guard steers for one call | Lower `model.toolCallLoopGuard.threshold`; then extract `opencode/plugins/loop-breaker/core.ts` with polling tools exempted |
-| Claude-only persona tail | Autonomous delegation is missed on omp | Write an omp tail and generalise `check-persona-drift.sh` to N carriers |
+| Claude-only persona tail | Autonomous delegation is missed on omp | First set `task.eager: preferred`, a setting with no code: omp adds its own delegation guidance to the system prompt (`task/settings.ts` `cfgTaskEager`). Only if that fails, write an omp tail and generalise `check-persona-drift.sh` to N carriers. omp's "No subagents unless..." line renders only for a `gated` delegation bias (`prompts/system/system-prompt.md`), which 18.14.0 assigns to OpenAI's 5.6 revision alone (pi-catalog `rules/classes/openai.kdl`); Claude models get the default `eager` |
 | Skill description routing sentence | Routing misses observed on omp | Front-load a routing sentence repo-wide |
 | Judge gate for eval `agent()` | An eval judge spawn observed | Run the script with an empty prompt from `before_subagent_spawn` |
 | Search leak the post-check cannot see | A denied file's lines observed in a search result the post-check passed (its `details` lacked the path) | `tools.restrictedFolders`: an approval prompt for any call at or below a listed folder and for a recursive search rooted above one, in every approval mode, blocking headless (`tools/approval.ts` `restrictedFolderReason`); it does not filter inside the search |
@@ -1058,7 +1058,8 @@ were re-pinned.
 ### Spike results
 
 Recorded for omp 18.13.3; this table is the record the code comments cite. Every spike ran offline against a
-mock provider, in a temp tree, with the data and state directories isolated.
+mock provider, in a temp tree, with the data and state directories isolated. The spikes were not re-run on 18.14.0;
+the re-diff above found the surfaces they recorded unchanged.
 
 | Spike | Result | Consumed as |
 |---|---|---|
