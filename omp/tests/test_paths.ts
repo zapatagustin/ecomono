@@ -157,6 +157,8 @@ const sample = (glob: string) => glob.replace(/\*\*\//g, "/x/").replace(/\*\*/g,
     ["read", { path: "/x/prod.env" }],
     ["read", { path: "src/a.ts;.env" }], // semicolon list
     ["read", { path: "skill://x;.env" }], // mixed URL list
+    ["read", { path: `${"a".repeat(300)}.ts;.env` }], // ';' list past NAME_MAX: omp 18.14.0 fans out on ENAMETOOLONG
+    ["read", { path: "notes:.env" }], // opaque name:rest, no MCP server: omp 18.14.0 falls back to a plain path
     ["read", { path: `file://${home}/.ssh/id_rsa` }],
     ["read", { path: "@~/.ssh/id_rsa" }],
     ["read", { path: '"~/.ssh/id_rsa"' }], // outer quotes
