@@ -130,14 +130,20 @@ call("mem_save", { title: "reset nudge state", project: "nudgeproj" })
 assert(!(call("mem_search", { query: "nonexistentxyz" }) as any).nudge, "mem_save resets the nudge counter and timer")
 
 // --- mem_session_summary is stored as an observation mem_context returns ---
-call("mem_session_summary", { content: "Goal: test\nAccomplished: stuff", project: "nudgeproj" })
-const summaryCtx = (call("mem_context", { project: "nudgeproj" }) as any).context as string
-assert(summaryCtx.includes("(session_summary,"), "session summary is a session_summary observation")
-assert(/calls_vs_saves: \d+\/\d+/.test(summaryCtx), "session summary records the calls-vs-saves ratio")
-assert(summaryCtx.includes("Accomplished: stuff"), "session summary keeps the agent-authored content")
-// session_id stays accepted for older callers; an id with no sessions row still stores.
-call("mem_session_summary", { session_id: "no-such-session", content: "Accomplished: orphan", project: "nudgeproj" })
+const summaryStamp = new Date(fakeNow).toISOString().slice(0, 19).replace("T", " ")
+const summary = call("mem_session_summary", { content: "Goal: test\nAccomplished: stuff", project: "nudgeproj" }) as any
+assert(typeof summary.id === "number" && typeof summary.sync_id === "string", "mem_session_summary returns { id, sync_id }")
+const summaryObs = Obs.getObservation(summary.id)!
+assert(summaryObs.type === "session_summary", "session summary is a session_summary observation")
+assert(summaryObs.title === `Session summary nudgeproj ${summaryStamp}`, "session summary title carries project and UTC timestamp")
+assert(/calls_vs_saves: \d+\/\d+/.test(summaryObs.content), "session summary records the calls-vs-saves ratio")
+assert((call("mem_context", { project: "nudgeproj" }) as any).context.includes("Accomplished: stuff"), "mem_context returns the session summary")
+assert((call("mem_search", { query: "stuff", project: "nudgeproj" }) as any).results.some((r: any) => r.id === summary.id), "mem_search returns the session summary")
+// session_id stays accepted (and is not stored) for older callers; an id with no sessions row still stores.
+fakeNow += 1000
+const orphan = call("mem_session_summary", { session_id: "no-such-session", content: "Accomplished: orphan", project: "nudgeproj" }) as any
 assert((call("mem_context", { project: "nudgeproj" }) as any).context.includes("Accomplished: orphan"), "unknown session_id still stores the summary")
+assert(Obs.getObservation(orphan.id)!.title !== summaryObs.title, "two summaries of one project on one day get distinct titles")
 
 // --- missing id / expected_project guard (engram #1575) ---
 assert(call("mem_update", { id: 999999, title: "x" }).updated === false, "mem_update on a missing id reports false")

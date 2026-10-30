@@ -20251,11 +20251,14 @@ var rawRegistry = [
   },
   {
     name: "mem_session_summary",
-    description: "Store an end-of-session summary as a session_summary observation; mem_context and mem_search return it.",
+    description: 'Store an end-of-session summary as a session_summary observation titled "Session summary <project> <UTC YYYY-MM-DD HH:MM:SS>"; mem_context and mem_search return it. Returns { id, sync_id } of the saved observation. session_id is optional and not stored: observations carry no session column.',
     args: { content: string2(), project: string2().optional(), session_id: string2().optional() },
-    handler: (a) => save({ title: "Session summary", type: "session_summary", content: `${a.content}
+    handler: (a) => {
+      const project = proj(a.project);
+      return save({ title: `Session summary ${project} ${new Date(clock()).toISOString().slice(0, 19).replace("T", " ")}`, type: "session_summary", content: `${a.content}
 
-calls_vs_saves: ${callsVsSaves()}`, project: proj(a.project) })
+calls_vs_saves: ${callsVsSaves()}`, project });
+    }
   },
   {
     name: "mem_save_prompt",
