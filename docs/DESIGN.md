@@ -977,8 +977,10 @@ to hide them.
 
 ### Version coupling
 
-The extension relies on these omp 18.14.0 surfaces. A change to one of them is caught by one of three nets, in
-this order of strength:
+The extension relies on these omp 18.14.0 surfaces. The tested version is `OMP_TESTED` in
+`omp/extensions/ecomono/index.ts`, the one source the smoke and fake-pi read; on any other omp the first main prompt
+of a process warns once (`pi.pi.VERSION`) and blocks nothing, so an upgrade made outside the protocol is not silent.
+A change to one of the surfaces is caught by one of three nets, in this order of strength:
 
 - **The smoke** (`omp/tests/smoke.sh`), which drives real omp offline and fails on any other omp version unless
   `ECOMONO_OMP_UNTESTED=1` is set. It covers discovery (rules, persona, agents, commands, skills, the MCP memory
@@ -989,8 +991,9 @@ this order of strength:
 - **A shape warning.** Where the extension reads a field by name and finds none, it still allows (failing
   closed would brick every session after an upgrade) and logs `ecomono: unexpected omp shape, <kind>: ...` once
   per kind and session: a `read` call with no `path`/`paths`, a `task` call with neither `tasks[]` nor `agent`,
-  `ctx.agent` without a `kind` or a subagent without a `name`, a spawn without an array `patterns`, and a
-  non-error search result whose `details` has none of `files`, `fileMatches`, `fileReplacements` and `hits`.
+  `ctx.agent` without a `kind` or a subagent without a `name`, a spawn without an array `patterns`, a
+  non-error search result whose `details` has none of `files`, `fileMatches`, `fileReplacements` and `hits`, and a
+  `pi.pi.VERSION` that is not a string.
 - **The mirror table** below, re-diffed on every upgrade.
 
 Not covered by the smoke, and so resting on the fake-pi tests (events built by hand to the 18.14.0 shape) and the
@@ -1028,11 +1031,13 @@ Surfaces relied on:
   `before_subagent_spawn` (`patterns`, `modelRole`, `invocationKind`; `{model, note}` with role expansion),
   `session.compacting` (`{context}`), `before_agent_start` (`reason`), `session_start`, `session_shutdown`.
 - `ctx` and `pi`: `agent.{kind,id,name}`, `hasUI`, `mode`, `model.{provider,id}`, `ui.{confirm,notify,setWidget}`,
-  `setInterval`, `sessionManager.getSessionId()`; `pi.exec`, `pi.logger`.
+  `setInterval`, `sessionManager.getSessionId()`; `pi.exec`, `pi.logger`, `pi.pi.VERSION` (a lazy SDK getter in
+  18.14.0, read on a prompt rather than at startup).
 - Tool inputs: `bash.{command,cwd}`, `read.path` (selectors, `;` lists, `file://`), `grep`/`glob`/`find`/`write`/
-  `ast_grep.path`, `edit.{path,paths,input}`, `ast_edit.paths`, `github.op`, `task.{context,agent,task,taskFile,tasks[]}`; read
-  `details.{suffixResolution,displayReadTargets,resolvedPath}`; search `details.{files,fileMatches,hits}` and
-  `ast_edit` `details.{files,fileReplacements}`; the `xd://resolve` / `xd://reject` write result
+  `ast_grep.path`, `edit.{path,paths,input}`, `ast_edit.paths`, `github.op`,
+  `task.{context,agent,task,taskFile,sourceSession,tasks[]}`; read
+  `details.{suffixResolution,displayReadTargets,resolvedPath,isDirectory}`; search `details.{files,fileMatches,hits}`,
+  `ast_edit` `details.{files,fileReplacements}` and `ast_grep` / `ast_edit` `details.parseErrors`; the `xd://resolve` / `xd://reject` write result
   `details.xdev.{tool,inner.sourceResultDetails}`.
 - Output notices, MCP tool naming `mcp__ecomono_memory_<tool>`, MCP file discovery and the dashboard writer,
   `RULES.md`/`PERSONALITY.md`/agents/commands discovery, skills from `~/.agents/skills`, Handlebars command

@@ -3,7 +3,7 @@
 // Every test file imports this module FIRST. Module evaluation follows import order, so the isolation block
 // below runs before any extension or storage code loads.
 
-import { mkdirSync, mkdtempSync, rmSync } from "node:fs"
+import { mkdirSync, mkdtempSync, readFileSync, rmSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 
@@ -103,6 +103,12 @@ const line = (msg: unknown, context?: unknown) => {
   }
 }
 
+// The omp version the extension is tested on, read from its line in index.ts as omp/tests/smoke.sh reads it. Parsed,
+// not imported: a static import of the extension would evaluate it before the isolation block above.
+const tested = /^const OMP_TESTED = "([^"]+)"/m.exec(readFileSync(new URL("../extensions/ecomono/index.ts", import.meta.url), "utf8"))
+if (!tested) throw new Error("fake-pi: no OMP_TESTED line in omp/extensions/ecomono/index.ts")
+export const OMP_TESTED = tested[1]
+
 export function makePi(opts: PiOpts = {}) {
   const handlers = new Map<string, Handler[]>()
   const calls: Calls = { on: [], exec: [], warn: [], info: [], error: [], debug: [], failures: [] }
@@ -128,6 +134,8 @@ export function makePi(opts: PiOpts = {}) {
       return Promise.resolve(out)
     },
     logger,
+    // omp's injected SDK exports, of which the extension reads VERSION. A test replaces it to stand in for another omp.
+    pi: { VERSION: OMP_TESTED },
   }
 
   // Runs one handler the way omp does: a throw or rejection never escapes; the caller decides what it means.

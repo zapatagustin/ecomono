@@ -1,6 +1,6 @@
 // Subagent tier routing, the memory write guard and the skill-registry refresh of the omp extension, driven
 // through fake-pi. Plain assert script. No real LLM, no real registry run: pi.exec is a stub.
-import { dir, makeCtx, makePi, tick, withEnv } from "./fake-pi.ts"
+import { OMP_TESTED, dir, makeCtx, makePi, tick, withEnv } from "./fake-pi.ts"
 import assert from "node:assert/strict"
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs"
 import { join } from "node:path"
@@ -461,6 +461,61 @@ const never = () => new Promise(() => {})
     assert.deepEqual(p.calls.warn, [])
   })
   assert.equal(process.env.PATH, jqPath, "withEnv restored PATH")
+}
+
+// ---- omp version ---------------------------------------------------------------------------------------------------
+// A main prompt compares pi.pi.VERSION with the tested version and warns on a mismatch, once per process: the flag is
+// module-level, so the mismatch case runs last. It never blocks, and a getter that throws costs the check only.
+
+{
+  const stateLog = join(process.env.XDG_STATE_HOME!, "ecomono", "ecomono.log")
+  const prompt = { reason: "prompt", prompt: "x" }
+  const versioned = (sdk: unknown) => {
+    const { pi, fire, calls } = makePi()
+    pi.pi = sdk
+    ecomono({ repo: REPO })(pi)
+    return { pi, fire, calls, ctx: makeCtx({ hasUI: true }) }
+  }
+  const mismatch = (h: ReturnType<typeof versioned>) =>
+    [...h.calls.warn, ...h.ctx.recorded.notify.map(([text]: any[]) => text)].filter((l) => l.includes(", running "))
+
+  // The tested version (fake-pi's default) is silent.
+  const same = versioned({ VERSION: OMP_TESTED })
+  assert.equal(await same.fire("before_agent_start", prompt, same.ctx), undefined)
+  assert.equal(same.ctx.recorded.notify.length, 0)
+  assert.deepEqual(same.calls.warn, [])
+
+  // No pi.pi: a shape warning, once, and no version warning. A subagent never checks.
+  const none = versioned(undefined)
+  await none.fire("before_agent_start", prompt, makeCtx({ hasUI: true, ...sub("ecomono-explore") }))
+  assert.deepEqual(none.calls.warn, [])
+  await none.fire("before_agent_start", prompt, none.ctx)
+  await none.fire("before_agent_start", prompt, none.ctx)
+  assert.equal(none.calls.warn.length, 1)
+  assert.ok(none.calls.warn[0].includes("unexpected omp shape, pi.pi.VERSION"), none.calls.warn[0])
+  assert.equal(none.ctx.recorded.notify.length, 0)
+
+  // A throwing getter: logged, and the registry refresh of the same prompt still runs.
+  const broken = versioned(undefined)
+  Object.defineProperty(broken.pi, "pi", { get: () => { throw new Error("no sdk") } })
+  assert.equal(await broken.fire("before_agent_start", prompt, broken.ctx), undefined)
+  assert.equal(broken.calls.exec.length, 1, "the refresh ran")
+  assert.ok(broken.calls.warn.some((l) => l.includes("omp version not checked") && l.includes("no sdk")), broken.calls.warn.join("\n"))
+  assert.equal(mismatch(broken).length, 0)
+
+  // Another omp: one warning across two prompts and a second factory (a subagent's, or a new session's).
+  const a = versioned({ VERSION: "0.0.0-test" })
+  const b = versioned({ VERSION: "0.0.0-test" })
+  assert.equal(await a.fire("before_agent_start", prompt, a.ctx), undefined)
+  await a.fire("before_agent_start", prompt, a.ctx)
+  await b.fire("before_agent_start", prompt, b.ctx)
+  assert.equal(a.ctx.recorded.notify.length, 1, "once per process")
+  assert.equal(mismatch(b).length, 0, "once per process")
+  const [text, level] = a.ctx.recorded.notify[0]
+  assert.equal(level, "warning")
+  assert.ok(text.includes(`tested on omp ${OMP_TESTED}, running 0.0.0-test`) && text.includes("smoke.sh"), text)
+  assert.ok(readFileSync(stateLog, "utf8").includes(text), "the warning is in the state log too")
+  assert.deepEqual(a.calls.warn, [])
 }
 
 // ---- shape drift ---------------------------------------------------------------------------------------------------

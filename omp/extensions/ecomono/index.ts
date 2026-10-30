@@ -46,6 +46,12 @@ import { type HookDecision, logFailOpen, runHook, stateDir } from "../../../open
 
 export const REPO = resolve(dirname(realpathSync(fileURLToPath(import.meta.url))), "../../..")
 
+// The omp version the gates are tested on (README.md, upgrade protocol): omp/tests/smoke.sh and omp/tests/fake-pi.ts
+// read it from this line, so a bump is one edit. A session on any other omp warns once per process.
+const OMP_TESTED = "18.14.0"
+// Module scope, not the factory's: omp re-runs the factory per subagent session in the same process.
+let versionWarned = false
+
 // The agents' frontmatter `model:` tier -> the omp role that stands for it. The consumer binds each role to a real
 // model with omp's own modelRoles; ecomono ships no model ids (docs/DESIGN.md, omp target > Open questions,
 // resolved: provider and models).
@@ -413,7 +419,7 @@ export function ecomono(o: { repo: string; hooksDir?: string; timeoutMs?: number
         }
       }
 
-    // An event or ctx field that is not the shape omp 18.14.0 sends (docs/DESIGN.md, Version coupling). The check
+    // An event or ctx field that is not the shape omp OMP_TESTED sends (docs/DESIGN.md, Version coupling). The check
     // that reads it finds nothing and allows, so a renamed field would switch a gate off in silence: this says so,
     // once per kind per session. It still allows, because failing closed on a shape mismatch would brick every
     // session after an omp upgrade; the smoke (omp/tests/smoke.sh) is where the mismatch is meant to be caught.
@@ -421,7 +427,7 @@ export function ecomono(o: { repo: string; hooksDir?: string; timeoutMs?: number
     const drift = (kind: string, why: string): void => {
       if (drifted.has(kind)) return
       drifted.add(kind)
-      pi.logger.warn(`ecomono: unexpected omp shape, ${kind}: ${why}; the check that reads it is skipped (tested on omp 18.14.0)`)
+      pi.logger.warn(`ecomono: unexpected omp shape, ${kind}: ${why}; the check that reads it is skipped (tested on omp ${OMP_TESTED})`)
     }
     // ctx.agent.kind, the key of every main-session-only and subagent-only branch below. Anything but "main" or
     // "sub" makes all of them skip.
@@ -1193,12 +1199,34 @@ export function ecomono(o: { repo: string; hooksDir?: string; timeoutMs?: number
       }
     }
 
+    // The running omp against OMP_TESTED, main session only. The read and search post-checks read result `details`
+    // fields by name that neither the smoke nor drift() covers (docs/DESIGN.md, Version coupling), so any omp
+    // other than the tested one says so before any gate runs. It warns, never blocks. On a prompt, not in
+    // session_start: in omp 18.14.0 `pi.pi` is a getter that requires the SDK index on first access (omp:
+    // extensibility/extensions/loader.ts:211-213, extensibility/host-api.ts:3-6), about 50 ms measured in print mode
+    // that would otherwise land on startup. Its own safe(), so a throwing getter costs this check and never the
+    // refresh or the capture.
+    const checkVersion = safe(
+      (ctx: any) => {
+        if (versionWarned || agentKind(ctx) !== "main") return
+        const running = (pi as any).pi?.VERSION
+        if (typeof running !== "string") return drift("pi.pi.VERSION", "not a string")
+        if (running === OMP_TESTED) return
+        versionWarned = true
+        const text = `ecomono: tested on omp ${OMP_TESTED}, running ${running}; the gates read omp fields by name and may be off until omp/tests/smoke.sh passes (README.md, upgrade protocol)`
+        stateLog(text)
+        warnOnce(ctx, text)
+      },
+      (why) => pi.logger.warn(`ecomono: omp version not checked: ${why}`),
+    )
+
     // Every prompt, so a skill added mid-session is in the registry by the next one, and so the prompt is saved.
     // A revive replays no prompt.
     pi.on(
       "before_agent_start",
       safe(async (event: any, ctx: any) => {
         if (event?.reason === "prompt") {
+          await checkVersion(ctx)
           refresh(ctx)
           await capture(event, ctx)
         }

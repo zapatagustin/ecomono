@@ -489,16 +489,24 @@ Notes:
   prompt template as its expanded body. The session id a model passes to the memory tools
   is not joined to the omp session id, as in OpenCode.
 
-Upgrade protocol. The tested version is **omp 18.14.0**; the smoke exits non-zero on any
-other unless `ECOMONO_OMP_UNTESTED=1` is set.
+Upgrade protocol. The tested version is **omp 18.14.0**, set once as `OMP_TESTED` in
+`omp/extensions/ecomono/index.ts`; the smoke reads it and exits non-zero on any other omp
+unless `ECOMONO_OMP_UNTESTED=1` is set. The net for an upgrade made outside this protocol:
+on any other omp, the first prompt logs a warning, once per process and shown where there
+is a UI, and blocks nothing.
 After updating whatever pins omp in your config and switching, run
 `ECOMONO_OMP_UNTESTED=1 bash omp/tests/smoke.sh` and
 `ECOMONO_OMP_UNTESTED=1 bash omp/tests/smoke.sh --installed` before relying on
-the gates, and diff the code the extension mirrors (`tools/path-utils.ts` and
-`internal-urls/ssh-protocol.ts` in omp, `tools/read.ts` in pi-tui; `docs/DESIGN.md`
-"Version coupling" lists the ranges) against the new release. If something breaks, `omp --no-extensions` is the kill
-switch and `ECOMONO_COMPRESS=off` disables compression alone. Update the tested version
-here and in the smoke only after the smoke passes.
+the gates, and diff the code the extension mirrors (the full list, with ranges, is the
+`docs/DESIGN.md` "Version coupling" mirror table) against the new release. If something breaks, `omp --no-extensions` is the kill
+switch and `ECOMONO_COMPRESS=off` disables compression alone. Update `OMP_TESTED` and the
+version here only after the smoke passes.
+Since 18.14.0, a provider-qualified selector (`provider/id`) in `modelRoles`,
+`task.agentModelOverrides` or an agent's `model:` must name an exact model id or alias: a near
+match fails instead of selecting a sibling model (omp CHANGELOG, 18.14.0 Breaking Changes). Bare
+selectors such as the agents' `opus` and `sonnet` keep fuzzy matching, and ecomono routes those
+tiers to the `@smol`, `@task` and `@slow` roles, so only a `provider/id` written by hand needs
+checking.
 
 ## Uninstall
 
