@@ -828,25 +828,33 @@ either way the call was refused, so only the refusal text changes. This is not a
     `omp auth-broker token` / `omp auth-gateway token` commands that print them. `permission.bash` asks on all
     of these, with the glob-only gaps the README lists.
   - `tool_call` on `task`: the deny globs on every `taskFile` (omp 18.14.0's `task.file`, off by default: an
-    absolute path or `local://` URL whose contents omp reads at dispatch as the item's `task`) and on the `@path`
+    absolute path or `local://` URL whose contents omp reads at dispatch as the item's `task`), on every
+    `sourceSession` given as a path (the bundled `seance` agent, advertised by default: an omp session id, or a
+    path, one with `/` or `\` or ending in `.jsonl`, whose file omp forks into the seance child) and on the `@path`
     mentions of every item's `task` text (omp reads them into the child's first prompt with no tool call; an item
     has no other file field, see the mirror table), then `judge-standards-gate` once per item that names an agent; the
     script alone knows which agents are judges. omp repairs a double-encoded `task` or `context` after this event
     (`repairTaskParams`), so the extension mirrors that repair (`repairedTask`): mentions are scanned in the raw
     text and its decode, and the judge prompt is built from the decoded fields, which is where the child reads
     the heading. A `taskFile`'s contents are read after this event, so their mentions and headings are a ceiling,
-    like the other prompt text omp reads with no tool call; `task.file` stays off unless the user turns it on.
+    like the other prompt text omp reads with no tool call; `task.file` stays off unless the user turns it on, and
+    `tools.restrictedFolders` covers a `taskFile` at or below a listed folder (`task/index.ts`
+    `approvalRestrictionPaths`).
   - `tool_call` on `mcp__ecomono_memory_*` from a subagent: allowed only for the tools in that agent's own
     `tools:` frontmatter. Bundled omp agents, `/tan` clones and the advisor have no file and pass.
   - `tool_result` on `bash`: peel the trailing notice block, `compressBash`, log to `stats.jsonl`; skipped for
     eval-bridged results and under `ECOMONO_COMPRESS=off`. Failing commands are compressed too (OpenCode does;
     head and tail keep the first error and the summary).
   - `tool_result` on `read`: the read post-check, which withholds content omp resolved to a denied file
-    (`suffixResolution.to`, `displayReadTargets`, `resolvedPath`).
+    (`suffixResolution.to`, `displayReadTargets`, `resolvedPath`) and a directory listing that names one: with
+    `isDirectory`, `resolvedPath` is the directory itself, so its entries are re-listed to omp's depth 2, hidden
+    files included (`tools/read.ts` `#readDirectory`, `workspace-tree.ts` `buildDirectoryTree`), and checked.
   - `tool_result` on `grep`, `ast_grep`, `glob`, `find` and `ast_edit`: the search post-check. The path gate sees
     only the roots a call names, and a grep with no `path` returned lines of tracked `server.key`, `secrets/a.txt`
     and `.env` on omp 18.13.3. The paths omp lists in `details` (`files` and `fileMatches[].path` for grep and
-    `ast_grep`, `files` for glob, `hits[].rel` for find, `files` and `fileReplacements[].path` for `ast_edit`) go
+    `ast_grep`, `files` for glob, `hits[].rel` for find, `files` and `fileReplacements[].path` for `ast_edit`, and
+    `parseErrors` for `ast_grep` and `ast_edit`, which names every file that failed to parse or to read, matched or
+    not, as `<path>: <error>` or `<pattern>: <path>: <error>`, so every `: ` segment is checked) go
     through the same deny check, and a match withholds the whole result as an error, the way the read post-check
     does. A result is not filtered per file, because the text is not parsed. `ast_edit` writes nothing at the
     event: it runs as a dry run (`dryRun: true`), returns the diff as a preview and stages the apply, which runs
@@ -855,9 +863,14 @@ either way the call was refused, so only the refusal text changes. This is not a
   - `tool_result` on `write` to `xd://resolve` or `xd://reject`: the result that settles a staged preview carries
     the source tool's own apply or reject result in `details.xdev.inner.sourceResultDetails` (for `ast_edit`, its
     `files` and `fileReplacements`), which goes through the same deny check and is withheld like a search result.
-  - **The deny is a read guard.** Its contract: the model never sees a denied file's content, nor learns a denied
-    path, through any result channel (content, `details`, notices, the `details` omp persists in the session
-    file). Writes to a denied file the path gate cannot see are an accepted ceiling, in the class of `eval` and
+  - **The deny is a read guard.** Its contract: no result channel (content, `details`, notices, the `details` omp
+    persists in the session file) carries a denied file's bytes or its path text to the model. The withhold is
+    itself a one-bit result, an accepted ceiling: whether a pathless or parent-rooted search is withheld tells the
+    model that a denied file under the searched root exists and matches its pattern, so repeated calls can recover
+    the content and, by narrowing `path`, the location; `tools.restrictedFolders` refuses such searches up front.
+    A seance child loads no extensions (`task/seance-policy.ts`), so its `read`, `grep` and `glob` skip the deny
+    and its answer returns as the task result, an accepted ceiling with `task.disabledAgents: ["seance"]` as the
+    switch. Writes to a denied file the path gate cannot see are an accepted ceiling, in the class of `eval` and
     `debug`, which already read and write anything: `ast_edit` + `xd://resolve`, `eval`, `debug`, and bash outside
     the secret gate's patterns. Refusing `xd://resolve` after a withheld preview was tried and cannot converge:
     `ast_edit` runs as the `xd://ast_edit` device by default, so its `tool_call` fires nested, after a resolve in
@@ -865,8 +878,9 @@ either way the call was refused, so only the refusal text changes. This is not a
     and abort and `turn_start` ordering leave windows. omp's switches cover it instead: `astEdit.enabled: false`,
     `eval.py: false` and `eval.js: false`, `debug.enabled: false`, or `tools.restrictedFolders`, an approval prompt
     for any call at or below a listed folder (`tools/approval.ts` `restrictedFolderReason`), which blocks headless.
-  - Both post-checks name the glob in their notice, never the file: naming it would tell the model, one call at a
-    time, which denied files exist where it never looked. Both replace `details` with its number and boolean
+  - Both post-checks name the glob in their notice, never the file, so a notice carries no path the model did not
+    type. That keeps the name out of the result, not the knowledge that a denied file exists there or where: the
+    withhold itself tells that (the one-bit ceiling above). Both replace `details` with its number and boolean
     fields: omp persists `details` in the session file (`session-manager.ts` `appendMessage`) and the TUI renders
     `displayContent` from it, and omp keeps the original when a handler returns `undefined` or `null` for it
     (`extensibility/extensions/wrapper.ts`, `resultResult.details ?? result.details`), so an object is always
@@ -980,13 +994,13 @@ this order of strength:
 - **The mirror table** below, re-diffed on every upgrade.
 
 Not covered by the smoke, and so resting on the fake-pi tests (events built by hand to the 18.14.0 shape) and the
-mirror table: the read post-check (`details.{suffixResolution,displayReadTargets,resolvedPath}`), the search
-post-check (`details.{files,fileMatches,fileReplacements,hits}`) and the `details` it replaces, the resolve
-result withhold (`write` `details.xdev.inner.sourceResultDetails`), the `taskFile` deny, edit and `ast_edit` inputs,
-prompt capture, the compaction style, the org-todo widget and the `ui.confirm` flow. The upgrade protocol in the
-README starts here. Ranges are relative to the omp
-package sources (`path-utils.ts`, `ssh-protocol.ts`, `search-approval-targets.ts`) and to pi-tui (`read.ts`);
-the `ecomono:` comments in `omp/extensions/ecomono/index.ts` cite them at the code that mirrors them.
+mirror table: the read post-check (`details.{suffixResolution,displayReadTargets,resolvedPath,isDirectory}`), the
+search post-check (`details.{files,fileMatches,fileReplacements,hits,parseErrors}`) and the `details` it replaces, the
+resolve result withhold (`write` `details.xdev.inner.sourceResultDetails`), the `taskFile` and `sourceSession` deny,
+edit and `ast_edit` inputs, prompt capture, the compaction style, the org-todo widget and the `ui.confirm` flow. The
+upgrade protocol in the README starts here. Ranges are relative to the omp, pi-tui and pi-utils package sources and
+to the tagged pi-edit repository; the `ecomono:` comments in `omp/extensions/ecomono/index.ts` cite them at the code
+that mirrors them.
 
 Mirrored code, re-diffed on every omp upgrade:
 
@@ -997,7 +1011,7 @@ Mirrored code, re-diffed on every omp upgrade:
 | `ssh://` path rule | omp `internal-urls/ssh-protocol.ts:76-106` |
 | Search-root splitter `/[;,\s]+/` | omp `tools/search-approval-targets.ts:23` |
 | `extractFileMentions` (task `@path` mentions) | omp `utils/file-mentions.ts:33-55,168-186` |
-| Task items carry one file field, `taskFile` (setting `task.file`, off by default, new in 18.14.0: an absolute path or `local://` URL read at dispatch), so it and the mentions are the only task paths to deny: `taskItemSchema` and its siblings have no other and delete unknown keys (`"+": "delete"`) | omp `task/types.ts:75-117`, `task/index.ts:372-408` |
+| Task items carry two file fields, so they and the mentions are the only task paths to deny: `taskFile` (setting `task.file`, off by default, new in 18.14.0: an absolute path or `local://` URL read at dispatch) and `sourceSession` (the bundled `seance` agent, advertised by default: an omp session id, or a path, one with `/` or `\` or ending in `.jsonl`, resolved with `resolveToCwd` and forked into the child). The schema omp runs, `createTaskSchema`, has no other and deletes unknown keys (`"+": "delete"`); `keepSeanceItemKeys` keeps the seance keys on batch items | omp `task/types.ts:53-73,172-260`, `task/seance.ts:110-132`, `task/index.ts:372-408` |
 | `repairDoubleEncodedJsonString` (`repairedTask`, the double-encoded `task` and `context`) | pi-tui `tools/task-repair-args.ts`, called from omp `task/index.ts:460` |
 | Edit header grammar (`[PATH#TAG]`, `¶`, `*** ... File:`, `*** Move to:`, `MV`, sloppy `*** Edit File`) | omp `extensibility/tool-event-input.ts:35-90`; pi-edit `modes/hashline/input.rs`, `tokenizer.rs`, `modes/sloppy/parse.rs:48` |
 | SQLite path end (`SQLITE_PATH_PATTERN`, `parseSqlitePathCandidates`) | omp `tools/sqlite-reader.ts:63,547-570` |

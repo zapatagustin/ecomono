@@ -4,13 +4,15 @@
  * What it does:
  * - Gates bash and github delivery through Claude's own hook scripts (secret access, diff size, review receipt),
  *   plus the `rm -rf` literals of Claude's deny list.
- * - Denies the path tools, the targets an edit names in its text input and the @-mentions and `taskFile` of a task
- *   item on the read-deny globs of opencode/opencode.json, and withholds a read that resolved to such a file, a
- *   search result (grep, ast_grep, glob, find, ast_edit) that lists one and an xd://resolve result whose applied
- *   edits list one. It is a READ guard: the model never sees a denied file's content, nor learns a denied path,
- *   through any result channel (content, details, notices, the details omp persists in the session). Writes to a
- *   denied file it cannot see (ast_edit + xd://resolve, eval, debug, bash outside the secret gate's patterns) are a
- *   ceiling, stated at the path gate below.
+ * - Denies the path tools, the targets an edit names in its text input and the @-mentions, `taskFile` and
+ *   `sourceSession` path of a task item on the read-deny globs of opencode/opencode.json, and withholds a read that
+ *   resolved to such a file or lists one (a directory), a search result (grep, ast_grep, glob, find, ast_edit) that
+ *   lists one and an xd://resolve result whose applied edits list one. It is a READ guard: no result channel
+ *   (content, details, notices, the details omp persists in the session) carries a denied file's bytes or its path
+ *   text to the model. The withhold is itself a one-bit result, a ceiling stated at the search post-check below.
+ *   Writes to a denied file it cannot see (ast_edit + xd://resolve, eval, debug, bash outside the secret gate's
+ *   patterns) are a ceiling, stated at the path gate below, and so are reads inside a seance subagent, which loads
+ *   no extensions (the task gate below).
  * - Runs judge-standards-gate on every task item that names an agent.
  * - Compresses bash tool results with the same compressor Claude's PostToolUse hook runs, and adds the
  *   compaction-summary style text.
@@ -32,7 +34,7 @@
  */
 
 import type { ExtensionAPI } from "@oh-my-pi/pi-coding-agent"
-import { appendFileSync, existsSync, mkdirSync, readFileSync, realpathSync } from "node:fs"
+import { appendFileSync, existsSync, mkdirSync, readdirSync, readFileSync, realpathSync } from "node:fs"
 import { createRequire } from "node:module"
 import { homedir } from "node:os"
 import { basename, dirname, join, resolve } from "node:path"
@@ -355,7 +357,27 @@ const withheldDetails = (d: unknown): Record<string, number | boolean> =>
 const listedPaths = (d: any): string[] => {
   const list = (v: unknown): any[] => (Array.isArray(v) ? v : [])
   const paths = [...list(d?.files), ...[...list(d?.fileMatches), ...list(d?.fileReplacements)].map((m) => m?.path), ...list(d?.hits).map((h) => h?.rel)]
+  // A `parseErrors` entry is `<path>: <error>` or `<pattern>: <path>: <error>`, and a path may hold ": " itself:
+  // every segment and every leading join of them is a candidate, so the check over-matches.
+  paths.push(...list(d?.parseErrors).flatMap((e) => (typeof e === "string" ? e.split(": ").flatMap((s, i, a) => [s, a.slice(0, i + 1).join(": ")]) : [])))
   return paths.filter((t): t is string => typeof t === "string")
+}
+
+/**
+ * The entries a `read` of a directory can name: omp lists them to depth 2, hidden ones included and .gitignore
+ * ignored (omp: tools/read.ts:3025-3054 #readDirectory, workspace-tree.ts:56-67 buildDirectoryTree). Every entry is
+ * returned, past omp's 12-entry cap per child directory, so the check over-matches. An unreadable directory adds
+ * nothing.
+ */
+const directoryEntries = (root: string): string[] => {
+  const entries = (dir: string): string[] => {
+    try {
+      return readdirSync(dir).map((name) => join(dir, name))
+    } catch {
+      return []
+    }
+  }
+  return entries(root).flatMap((entry) => [entry, ...entries(entry)])
 }
 
 interface Compressor {
@@ -516,7 +538,7 @@ export function ecomono(o: { repo: string; hooksDir?: string; timeoutMs?: number
     // itself, only what is below it, and so is its symlink-resolved form (realish). Any probe that ends on a deny
     // is enough, so an allowed file inside a denied directory still meets that directory's glob through "/x". The
     // probe of a file named for a `.env` template (templates()) is the one that never denies: only its "/x" can.
-    // Shared by the tool_call path gate, the task @-mention and taskFile checks and the read post-check, so a
+    // Shared by the tool_call path gate, the task @-mention, taskFile and sourceSession checks and the read post-check, so a
     // target omp resolved gets the same verdict as one the model typed.
     // ecomono: the match is case-sensitive (Bun.Glob has no nocase option), so on a case-insensitive filesystem
     // `~/.SSH/id` or `.ENV` reads the file the glob means and passes. Ceiling: macOS and Windows hosts. Upgrade
@@ -758,11 +780,17 @@ export function ecomono(o: { repo: string; hooksDir?: string; timeoutMs?: number
         // reads each mentioned file into the child's first prompt with no tool_call (task/executor.ts:2498,2531;
         // session/agent-session.ts:8882-8891). `context` becomes the system prompt and is never scanned for
         // mentions, so it is not checked. fileMentions scans each `task` as typed and as repairedTask decodes it.
-        // An item's one file field is `taskFile` (setting task.file, off by default): an absolute path or local:// URL
-        // whose contents omp reads at dispatch and hands the child as its `task` (task/index.ts:373-408). The path
-        // is denied like a path tool's, top-level and per item; local:// is skipped as an internal URL. omp's task
-        // item schemas delete every other unknown key (`"+": "delete"`, task/types.ts:75-117), so there is nothing
-        // else to deny.
+        // An item has two file fields. `taskFile` (setting task.file, off by default) is an absolute path or local://
+        // URL whose contents omp reads at dispatch and hands the child as its `task` (task/index.ts:373-408).
+        // `sourceSession` (the bundled seance agent, advertised by default: task.disabledAgents is []) names the omp
+        // session a seance child forks: a value with `/` or `\`, or ending in `.jsonl`, is a path resolved against
+        // cwd and read; any other is an id omp looks up in its own session directories, never a path the caller names
+        // (task/seance.ts:110-132). Both paths are denied like a path tool's, top-level and per item; local:// is
+        // skipped as an internal URL. The schema omp runs (createTaskSchema, task/types.ts:53-73,172-260) has no
+        // other path field and deletes every other unknown key (`"+": "delete"`), so there is nothing else to deny.
+        // ecomono: ceiling. A seance child loads no extensions (task/seance-policy.ts disableExtensionDiscovery), so
+        // its read, grep and glob skip the path deny and its answer returns here as the task result. Upgrade path:
+        // task.disabledAgents: ["seance"].
         // ecomono: ceiling. A taskFile's contents are read after this event, so their @-mentions and, for a judge,
         // their headings are not checked: a same-message write can change them after any check here. Upgrade path:
         // keep task.file off (omp's default), or omp's tools.restrictedFolders, which covers task files.
@@ -777,6 +805,14 @@ export function ecomono(o: { repo: string; hooksDir?: string; timeoutMs?: number
             return {
               block: true,
               reason: `Blocked: taskFile "${taskFile.value}" is denied by "${taskFile.glob}" in opencode/opencode.json (permission.read); omp reads a taskFile into the subagent's first prompt.`,
+            }
+          }
+          const sources = [input, ...items].flatMap((item: any) => strings(item?.sourceSession).filter((s) => /[/\\]|\.jsonl$/.test(s.trim())))
+          const sourceSession = deny(ctx, sources)
+          if (sourceSession) {
+            return {
+              block: true,
+              reason: `Blocked: sourceSession "${sourceSession.value}" is denied by "${sourceSession.glob}" in opencode/opencode.json (permission.read); omp reads a sourceSession path into a seance subagent.`,
             }
           }
           const mentions = items.flatMap((item: any) => (typeof item?.task === "string" ? fileMentions(item.task) : []))
@@ -858,12 +894,14 @@ export function ecomono(o: { repo: string; hooksDir?: string; timeoutMs?: number
         // reports where in `details`. A suffix match (`read prod` -> `secrets/prod`, omp: tools/read.ts:2053-2066,
         // details.suffixResolution.to) and the parts of a delimited list (details.displayReadTargets) never fire
         // their own tool_call, so the path gate cannot see them. `details.resolvedPath`, the absolute file omp read
-        // (an internal URL's backing file included, tools/read.ts:830-835,2993), goes the same way. The targets go
-        // through the same deny check and a match withholds the content. A result is never rewritten otherwise:
-        // hashline anchors feed `edit`.
-        // A withhold names the glob, never the file: a notice that named it would tell the model, one call at a
-        // time, which denied files exist where it never looked. `details` is replaced too (withheldDetails), since
-        // omp persists it in the session file and the TUI renders the file from it.
+        // (an internal URL's backing file included, tools/read.ts:830-835,2993), goes the same way. A directory read
+        // (details.isDirectory) lists the entries below resolvedPath, the directory itself (tools/read.ts:3025-3054),
+        // so they are re-listed (directoryEntries) and checked too. The targets go through the same deny check and a
+        // match withholds the content. A result is never rewritten otherwise: hashline anchors feed `edit`.
+        // A withhold names the glob, never the file, so the notice carries no path the model did not type. That keeps
+        // the name out of this result; it does not stop the model learning that a denied file exists there, which the
+        // withhold itself tells (ceiling (5) at the search post-check). `details` is replaced too (withheldDetails),
+        // since omp persists it in the session file and the TUI renders the file from it.
         // ecomono: ceiling. An oversized read result is saved to artifact://N before tool_result fires (omp:
         // tools/output-meta.ts spill), and `read artifact://N` is an internal URL the path gate skips, so it can
         // still return the file; N is no longer shown to the model. Upgrade path: when such a read is observed,
@@ -872,6 +910,7 @@ export function ecomono(o: { repo: string; hooksDir?: string; timeoutMs?: number
           const d = event.details
           const listed = Array.isArray(d?.displayReadTargets) ? d.displayReadTargets : []
           const targets = [d?.resolvedPath, d?.suffixResolution?.to, ...listed].filter((t): t is string => typeof t === "string")
+          if (d?.isDirectory === true && typeof d.resolvedPath === "string") targets.push(...directoryEntries(d.resolvedPath))
           const hit = deny(ctx, targets)
           if (!hit) return undefined
           return {
@@ -891,18 +930,23 @@ export function ecomono(o: { repo: string; hooksDir?: string; timeoutMs?: number
         // cwd, absolute outside it; omp: tools/grep.ts:1287-1291, tools/ast-grep.ts:299,382), `files` (glob;
         // tools/glob.ts:349-350), `hits[].rel` (find, the semantic search; tools/jfind/index.ts:139-148) and `files`
         // and `fileReplacements[].path` (ast_edit, whose result holds the diff of every file it touched;
-        // tools/ast-edit.ts:324-335,491-502). They go through the same deny check, and a match withholds the whole
-        // result, error results included (one that still carries `details` is cut like any other): the text is not
-        // parsed per file. The notice and `details` are cut as in the read post-check.
+        // tools/ast-edit.ts:324-335,491-502), and `parseErrors` (ast_grep and ast_edit: every file that failed to
+        // parse or to read, matched or not; tools/ast-grep.ts:270-295, tools/ast-edit.ts:303-330,498). They go
+        // through the same deny check, and a match withholds the whole result, error results included (one that
+        // still carries `details` is cut like any other): the text is not parsed per file. The notice and `details`
+        // are cut as in the read post-check.
         // ecomono: ceilings. (1) The read post-check's artifact://N spill applies here too. (2) Only what omp lists in
         // `details` is checked, so a result whose `details` lacks those fields passes; a non-error result with none of
         // the four arrays, a shape omp 18.14.0 never sends, says so through drift(). (3) An ast_edit result is a
         // staged preview (dryRun: true): withholding it hides the diff, not the queued apply, which xd://resolve can
         // still run (the write ceiling at the tool_call path gate). (4) A tracked file under a deny glob (a fixture
         // `.pem`, a `secrets/` doc) withholds every repo-wide search that lists it; the notice asks for a narrower
-        // `path`. Upgrade path: omp's tools.restrictedFolders, an approval prompt for any call at or below a folder
-        // and for a recursive search rooted above one (omp: tools/approval.ts restrictedFolderReason), which blocks
-        // headless.
+        // `path`. (5) A withhold is itself a one-bit result: whether a pathless or parent-rooted grep, ast_grep, glob
+        // or find is withheld tells the model that a denied file under the searched root exists and matches the
+        // pattern it chose, so repeated calls can recover that file's content and, by narrowing `path`, its location.
+        // A directory read's withhold tells the same of its entries. Upgrade path: omp's tools.restrictedFolders, an
+        // approval prompt for any call at or below a folder and for a recursive search rooted above one (omp:
+        // tools/approval.ts restrictedFolderReason), which blocks headless and so refuses such searches up front.
         // A settled preview: the write result of xd://resolve or xd://reject (details.xdev; tools/resolve.ts
         // runResolveInvocation) carries the source tool's apply or reject result in inner.sourceResultDetails (for
         // ast_edit, its `files` and `fileReplacements`), which goes through the same deny check as a search result;

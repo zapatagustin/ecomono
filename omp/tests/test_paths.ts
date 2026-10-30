@@ -467,6 +467,23 @@ const sample = (glob: string) => glob.replace(/\*\*\//g, "/x/").replace(/\*\*/g,
   ]) {
     assert.equal(await fire("tool_call", task(input), ctx), undefined, JSON.stringify(input))
   }
+  // A seance item's sourceSession is a path when it holds `/` or `\` or ends in `.jsonl` (omp: task/seance.ts
+  // resolveSeanceSource), resolved against cwd and read; any other value is a session id, never a path.
+  for (const input of [
+    { tasks: [{ agent: "seance", task: "x", sourceSession: "./.env" }] },
+    { agent: "seance", task: "x", sourceSession: ` ${home}/.ssh/run.jsonl ` }, // flat, padded: omp trims it
+    { tasks: [{ agent: "seance", task: "x", sourceSession: "secrets\\s.jsonl" }] },
+  ]) {
+    const r = await fire("tool_call", task(input), ctx)
+    assert.equal(r?.block, true, JSON.stringify(input))
+    assert.match(r.reason, /^Blocked: sourceSession "/, JSON.stringify(input))
+  }
+  for (const input of [
+    { tasks: [{ task: "x", sourceSession: ".env" }] }, // an id: omp looks it up in its own session directories
+    { tasks: [{ task: "x", sourceSession: "src/run.jsonl" }] },
+  ]) {
+    assert.equal(await fire("tool_call", task(input), ctx), undefined, JSON.stringify(input))
+  }
   assert.deepEqual(calls.warn, [])
 }
 
@@ -521,6 +538,19 @@ const sample = (glob: string) => glob.replace(/\*\*\//g, "/x/").replace(/\*\*/g,
   // the session file and keeps the original ones when a handler returns none, so they are always replaced.
   assert.deepEqual(r.details, { fileSize: 12, totalLines: 1, raw: false })
   assert.deepEqual((await fire("tool_result", result({ suffixResolution: sr.suffixResolution }), ctx))?.details, {})
+
+  // A directory read lists its entries to depth 2, hidden ones included, while resolvedPath names the directory
+  // itself (omp: tools/read.ts #readDirectory): the entries are re-listed and checked.
+  const tree = dir("tree")
+  mkdirSync(join(tree, "config/deep"), { recursive: true })
+  writeFileSync(join(tree, "config/deep/.env"), "") // depth 3: omp does not list it
+  const listing = (resolvedPath: string) => result({ isDirectory: true, resolvedPath }, { input: { path: resolvedPath } })
+  assert.equal(await fire("tool_result", listing(tree), ctx), undefined)
+  writeFileSync(join(tree, "config/.env"), "")
+  const lr = await fire("tool_result", listing(tree), ctx)
+  assert.equal(lr?.isError, true)
+  assert.ok(!JSON.stringify(lr).includes(tree), lr.content[0].text)
+  assert.equal(await fire("tool_result", result({ isDirectory: false, resolvedPath: tree }), ctx), undefined)
 
   // Delimited parts: one denied target is enough, and none of them is named.
   const dr = await fire("tool_result", result({ displayReadTargets: ["src/a.ts", "config/.env"] }), ctx)
@@ -591,6 +621,9 @@ const sample = (glob: string) => glob.replace(/\*\*\//g, "/x/").replace(/\*\*/g,
     // ast_edit: its result is the staged diff of every file it would touch (a dry run, applied: false).
     ["ast_edit", edited("src/a.ts", "config/.env"), "config/.env"],
     ["ast_edit", { files: [], fileReplacements: [{ path: "secrets/a.ts", count: 2 }], applied: false }, "secrets/a.ts"],
+    // parseErrors name every file that failed to parse or to read, matched or not.
+    ["ast_grep", { ...files(), parseErrors: ["config/.env: parse error (syntax tree contains error nodes)"] }, "config/.env"],
+    ["ast_edit", { ...edited(), parseErrors: ["$A($B): secrets/a: b.ts: read failed"] }, "secrets/a: b.ts"], // pattern first, ": " in the path
   ]
   // The notice names the glob, never the file: it is the template below with a deny key of the file in the slot.
   // An ast_edit notice also asks for xd://reject, since its preview stays staged in omp (steering only: the apply is

@@ -185,17 +185,20 @@ data above instead of restating it:
   in its text input (hashline `[PATH#TAG]` and `MV` lines, apply_patch `*** Add/Update/Delete
   File:` and `*** Move to:` headers, the sloppy mode's `*** Edit File:`, patch-mode `rename`),
   and `task` on the `@path` mentions in each item's `task` text and on its `taskFile` (omp's
-  `task.file`, off by default), both of which omp reads into the subagent's first prompt.
+  `task.file`, off by default), both of which omp reads into the subagent's first prompt, and
+  on a `sourceSession` given as a path (the session file the bundled `seance` agent forks).
   There is no valve. A `read` that omp resolved to a denied file
-  (suffix matching, delimited lists, the `resolvedPath` it reports) has its result withheld and
+  (suffix matching, delimited lists, the `resolvedPath` it reports), or a directory `read`
+  whose listing (two levels, hidden files included) names one, has its result withheld and
   returned as an error, and so does a `grep`, `ast_grep`, `glob`, `find` or `ast_edit` result
   that lists one, such as a `grep` with no `path`, and the `xd://resolve` or `xd://reject`
   result that settles an `ast_edit` preview listing one. The notice names the glob, never the
   file, and omp's `details` (which the session file keeps and the TUI renders) are cut to their
-  counts and flags. As in OpenCode the last matching key wins. The deny is a read guard: the
-  model never sees a denied file's content, nor learns a denied path, through any result
-  channel (content, `details`, notices, the details omp persists in the session file). Writes
-  to a denied file the path gate cannot see are a ceiling, below. A file named for one of the
+  counts and flags. As in OpenCode the last matching key wins. The deny is a read guard: no
+  result channel (content, `details`, notices, the details omp persists in the session file)
+  carries a denied file's bytes or its path text to the model. The withhold is itself a one-bit
+  answer, writes to a denied file the path gate cannot see go through, and so do reads inside a
+  seance subagent; all three are ceilings, below. A file named for one of the
   `.env` templates the bash gate lets through (`.env.example`, `.sample`, `.template`, `.dist`,
   `.defaults`, `.schema`, read from the gate's own list) is not denied by its name, though a
   denied directory still covers it. OpenCode itself denies those templates: an allow key for
@@ -252,6 +255,11 @@ Accepted ceilings. Where omp has a native switch it is named:
 - That whole-result withhold over-blocks: a tracked file under a deny glob (a fixture
   `.pem`, a `secrets/` doc, a template inside `secrets/`) withholds every repo-wide search
   that lists it. Narrow `path` to the directories you mean.
+- A withhold is itself a one-bit answer: whether a pathless or parent-rooted `grep`,
+  `ast_grep`, `glob` or `find` is withheld tells the model that a denied file under the
+  searched root exists and matches the pattern it chose, so repeated calls can recover that
+  file's content and, by narrowing `path`, its location (a directory `read` tells the same of
+  its entries). `tools.restrictedFolders` refuses such searches up front.
 - `tools.restrictedFolders` covers what the path gate cannot see, but it does not filter
   inside a search: any call at or below a listed folder, and a recursive search rooted above
   one, asks for approval in every approval mode, and blocks in a run with no UI.
@@ -259,7 +267,9 @@ Accepted ceilings. Where omp has a native switch it is named:
   the spawn event carries no prompt.
 - `pr_push` naming a branch other than the current one is judged on HEAD, as
   `git push origin other` is in bash.
-- Seance sessions bind no extensions.
+- A seance subagent (the bundled `seance` agent, on by default) loads no extensions, so its
+  `read`, `grep` and `glob` skip the path deny, and its answer comes back to the parent as the
+  task result. Set `task.disabledAgents: ["seance"]`.
 - Backgrounded bash (async or auto-background) produces no `tool_result`, so it is not
   compressed.
 - An oversized read or search result the post-check withheld was already spilled to
