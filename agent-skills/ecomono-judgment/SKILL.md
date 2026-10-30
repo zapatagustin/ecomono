@@ -295,7 +295,8 @@ the path or the first line wrong and the gate finds nothing and refuses.
 
 On opencode the same script runs: `opencode/plugins/review-receipt-gate.ts` intercepts the
 `shell` tool and shells out to it rather than reimplementing it, so there is one hash formula
-and one detector on both harnesses. The one behavioural difference is that opencode has no
+and one detector on Claude Code, opencode and omp (whose extension runs the script too). The
+one behavioural difference is that opencode has no
 `ask`, so the two states where the gate cannot run — no base resolves, `git diff` failed —
 refuse there instead of prompting.
 

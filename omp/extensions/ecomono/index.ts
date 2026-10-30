@@ -5,7 +5,8 @@
  * - Gates bash and github delivery through Claude's own hook scripts (secret access, diff size, review receipt),
  *   plus the `rm -rf` literals of Claude's deny list.
  * - Denies the path tools, the targets an edit names in its text input and the @-mentions of a task item on the
- *   read-deny globs of opencode/opencode.json, and withholds a read that resolved to such a file.
+ *   read-deny globs of opencode/opencode.json, and withholds a read that resolved to such a file and a search
+ *   result (grep, ast_grep, glob, find) that lists one.
  * - Runs judge-standards-gate on every task item.
  * - Compresses bash tool results with the same compressor Claude's PostToolUse hook runs, and adds the
  *   compaction-summary style text.
@@ -118,6 +119,9 @@ function ompPath(cwd: string, raw: string): string | undefined {
  */
 const PATH_TOOLS = new Set(["read", "write", "edit", "grep", "glob", "find", "ast_grep", "ast_edit"])
 
+/** Search tools whose result lists file paths in `details`, checked by the tool_result search post-check. */
+const SEARCH_RESULT_TOOLS = new Set(["grep", "ast_grep", "glob", "find"])
+
 // A header of omp's apply_patch form (`*** Update File: X`, `*** Move to: X`, ...), in the loose spelling the edit
 // engine strips from a header path (APPLY_PATCH_PATH_NOISE_RE, crates/pi-edit/src/modes/hashline/input.rs:28).
 const PATCH_HEADER = /^\*{1,3}\s*(?:add|update|delete|move)[^A-Za-z0-9]*(?:file|to)?[^A-Za-z0-9]*:/i
@@ -157,22 +161,51 @@ function editTargets(input: any): string[] {
 }
 
 /**
+ * A task field as the child sees it. omp's task tool runs repairTaskParams AFTER the tool_call event (pi-tui:
+ * tools/task-repair-args.ts, called from omp: task/index.ts:373) on `task`, the batch `context` and every item's
+ * `task`: a string that carries the signature of double-encoding (a `\"`, `\\`, `\/` or `\uXXXX` escape, or two
+ * escape sequences) and whose whole body parses as a JSON string is replaced by that decode, so `a\n@.env\nb` reaches
+ * the child as a real `@.env` mention and a heading line. The condition is mirrored exactly: a decode omp would not
+ * do would let the judge-standards check see a heading the child never gets. Anything else is returned as given.
+ */
+function repairedTask(text: string): string {
+  if (!text.includes("\\")) return text
+  let signature = /\\(?:["\\/]|u[0-9a-fA-F]{4})/.test(text)
+  for (let i = 0, escapes = 0; !signature && i < text.length; i++) {
+    if (text[i] !== "\\") continue
+    signature = ++escapes >= 2
+    i++ // the escaped char is skipped, so `\\` counts once
+  }
+  if (!signature) return text
+  try {
+    const decoded: unknown = JSON.parse(`"${text}"`)
+    return typeof decoded === "string" ? decoded : text
+  } catch {
+    return text // not a JSON string body: a literal path or a regex stays as typed
+  }
+}
+
+/**
  * The `@path` mentions of a prompt, exactly as omp's extractFileMentions finds them (omp: utils/file-mentions.ts:
  * 33-55,168-186): a mention starts the text or follows whitespace or an opening bracket or quote; a quoted one is
  * only trimmed, a bare one also loses leading and trailing punctuation. omp reads each mentioned file into the
- * prompt with no tool_call of its own.
+ * prompt with no tool_call of its own. The raw text and its repairedTask decode are both scanned: omp extracts
+ * mentions from the decoded one, and the raw spelling is kept as well, since a spelling omp would not read costs at
+ * most a false block.
  */
 function fileMentions(text: string): string[] {
   const out = new Set<string>()
-  for (const m of text.matchAll(/@(?:"([^"]+)"|'([^']+)'|([^\s@]+))/g)) {
-    const i = m.index ?? 0
-    if (i > 0 && !/[\s([{<"'`]/.test(text[i - 1])) continue
-    const quoted = m[1] ?? m[2]
-    const path =
-      quoted !== undefined
-        ? quoted.trim()
-        : (m[3] ?? "").trim().replace(/^[`"'([{<]+/, "").replace(/[)\]}>.,;:!?"'`]+$/, "").trim()
-    if (path) out.add(path)
+  for (const scanned of new Set([text, repairedTask(text)])) {
+    for (const m of scanned.matchAll(/@(?:"([^"]+)"|'([^']+)'|([^\s@]+))/g)) {
+      const i = m.index ?? 0
+      if (i > 0 && !/[\s([{<"'`]/.test(scanned[i - 1])) continue
+      const quoted = m[1] ?? m[2]
+      const path =
+        quoted !== undefined
+          ? quoted.trim()
+          : (m[3] ?? "").trim().replace(/^[`"'([{<]+/, "").replace(/[)\]}>.,;:!?"'`]+$/, "").trim()
+      if (path) out.add(path)
+    }
   }
   return [...out]
 }
@@ -581,9 +614,9 @@ export function ecomono(o: { repo: string; hooksDir?: string; timeoutMs?: number
         // Hard deny, no valve (neither host's read deny has one): the globs are opencode.json's own, the ones
         // OpenCode enforces natively on its read tool.
         // ecomono: the gate checks the roots a call names, never the walk beneath them. grep, glob, find and
-        // ast_grep over a parent directory, or over a root with glob characters, can still surface a denied file
-        // (docs/DESIGN.md, omp target > Deferred, with triggers: parent-directory search leak). Upgrade path: omp's
-        // tools.restrictedFolders, or filtering the result in tool_result, once a leak is observed.
+        // ast_grep over a parent directory, a root with glob characters or no path at all can still reach a denied
+        // file; the tool_result search post-check below withholds a result that lists one. Ceiling: it sees the
+        // paths omp reports in `details`, nothing else. Upgrade path: omp's tools.restrictedFolders.
         if (PATH_TOOLS.has(event.toolName)) {
           const values = [...strings(input.path), ...strings(input.paths)]
           if (event.toolName === "read" && values.length === 0) drift("read tool_call", "the input has no string path or paths")
@@ -599,17 +632,19 @@ export function ecomono(o: { repo: string; hooksDir?: string; timeoutMs?: number
         // Every item with an agent goes through the judge gate; the script alone knows which agents are judges,
         // so there is no list of judge names here. The prompt is rebuilt from the two fields omp hands the child as
         // text: the batch `context` (its subagent system prompt, omp: task/executor.ts:3971,4781) and the item's
-        // `task` (the initial prompt, executor.ts:2532). `solutionSpace` is left out on purpose: omp feeds it only
-        // to the auto-thinking classifier (session/agent-session-types.ts:457), so a heading that sits only there
-        // never reaches the judge. omp drops `context` when task.batch is off, but then it rejects a call that
-        // carries one (task/index.ts:229-241), so no judge launches without it.
+        // `task` (the initial prompt, executor.ts:2532), each in the form repairedTask gives, because omp repairs a
+        // double-encoded field after this event and the heading is judged where the child reads it. `solutionSpace`
+        // is left out on purpose: omp feeds it only to the auto-thinking classifier
+        // (session/agent-session-types.ts:457), so a heading that sits only there never reaches the judge. omp drops
+        // `context` when task.batch is off, but then it rejects a call that carries one (task/index.ts:229-241), so
+        // no judge launches without it.
         // ecomono: an eval `agent()` spawn of a judge skips this gate. before_subagent_spawn carries no prompt
         // (omp: extensibility/extensions/types.ts:1101-1113), so there is nothing to hand the script. Upgrade
         // path: when such a spawn is observed, run the script with an empty prompt from before_subagent_spawn.
         // Before the judge gate, the path deny on the @-mentions of every item's `task`, whatever its agent: omp
         // reads each mentioned file into the child's first prompt with no tool_call (task/executor.ts:2499,2532;
         // session/agent-session.ts:8848-8857). `context` becomes the system prompt and is never scanned for
-        // mentions, so it is not checked.
+        // mentions, so it is not checked. fileMentions scans each `task` as typed and as repairedTask decodes it.
         // ecomono: other text omp sends through the same prompt path, such as the queued hidden next-turn messages
         // (session/agent-session.ts:9825-9840), has its mentions read too and is not seen here. Upgrade path: deny
         // their mentions at the event that carries them, if one is ever exposed to extensions.
@@ -628,7 +663,11 @@ export function ecomono(o: { repo: string; hooksDir?: string; timeoutMs?: number
           const results = await Promise.all(
             items.flatMap((item: any) => {
               if (typeof item?.agent !== "string") return []
-              const prompt = [input.context, item.task].filter((s) => typeof s === "string" && s).join("\n")
+              // The fields as the child gets them: each one through omp's own double-encoding repair (repairedTask).
+              const prompt = [input.context, item.task]
+                .filter((s): s is string => typeof s === "string" && s !== "")
+                .map(repairedTask)
+                .join("\n")
               // omp trims the agent name before the lookup (task/index.ts spawnParamsFor), and the script matches
               // it exactly, so a padded judge name would otherwise slip past.
               const payload = { tool_input: { subagent_type: item.agent.trim(), prompt } }
@@ -707,6 +746,32 @@ export function ecomono(o: { repo: string; hooksDir?: string; timeoutMs?: number
               {
                 type: "text",
                 text: `ecomono: read resolved to ${hit.value}, which ${hit.glob} in opencode/opencode.json denies; content withheld.`,
+              },
+            ],
+            isError: true,
+          }
+        }
+        // Search post-check. The path gate sees only the roots a call names, so a grep with no `path`, or over a
+        // parent directory, can list lines or names of a denied file below it. omp reports every path a search
+        // result shows in `details`: `files` and `fileMatches[].path` (grep, ast_grep; paths relative to the session
+        // cwd, absolute outside it; omp: tools/grep.ts:1287-1291, tools/ast-grep.ts:299,382), `files` (glob;
+        // tools/glob.ts:349-350) and `hits[].rel` (find, the semantic search; tools/jfind/index.ts:139-148). They go
+        // through the same deny check, and a match withholds the whole result: the text is not parsed per file.
+        // ecomono: ceilings (1) and (2) of the read post-check apply here too, and a third: only what omp lists in
+        // `details` is checked, so a result whose `details` lacks those fields (a future omp) passes. Upgrade path:
+        // omp's tools.restrictedFolders, which filters inside the search.
+        if (SEARCH_RESULT_TOOLS.has(event?.toolName)) {
+          const d = event.details
+          const files = Array.isArray(d?.files) ? d.files : []
+          const matched = (Array.isArray(d?.fileMatches) ? d.fileMatches : []).map((m: any) => m?.path)
+          const hits = (Array.isArray(d?.hits) ? d.hits : []).map((h: any) => h?.rel)
+          const hit = deny(ctx, [...files, ...matched, ...hits].filter((t): t is string => typeof t === "string"))
+          if (!hit) return undefined
+          return {
+            content: [
+              {
+                type: "text",
+                text: `ecomono: ${event.toolName} listed ${hit.value}, which ${hit.glob} in opencode/opencode.json denies; result withheld. Narrow \`path\` or the pattern so it does not reach that file.`,
               },
             ],
             isError: true,

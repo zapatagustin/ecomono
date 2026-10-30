@@ -275,6 +275,7 @@
       "**/.env.*": "deny",
       "**/.ssh/**": "deny",
       "**/Library/Keychains/**": "deny",
+      "**/agent.db*": "deny",
       "**/credentials.json": "deny",
       "**/secrets/**": "deny",
       "*.env": "deny",

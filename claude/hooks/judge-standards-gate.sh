@@ -40,8 +40,9 @@
 #     call at a time and holds no state; the static half of symmetry is `check-judge-twins.sh`,
 #     the per-round half stays the coordinator's job. Upgrade path, and the only one that changes
 #     it: a PostToolUse audit that records each launch's block and compares within a round.
-#   - Any launch that is not one of the three named sub-agents, on any harness but Claude Code.
-#     opencode launches the same agents through `task` with no ported gate.
+#   - Any launch that is not one of the three named sub-agents, on any harness but Claude Code and omp.
+#     opencode launches the same agents through `task` with no ported gate. omp's extension runs this script on
+#     every `task` item, but not on an eval `agent()` spawn, which carries no prompt.
 #
 # ecomono: fails OPEN on a missing `jq`, an unparseable payload, or a payload with no
 # `subagent_type` — same convention as its sibling gates and for the same reason. A gate that

@@ -67,6 +67,10 @@ patterns=(
   '\.netrc'
   '\.pgpass'
   'credentials\.json'
+  # omp keeps every provider credential in plaintext in <agentDir>/agent.db (table auth_credentials), next to
+  # agent.db-wal and agent.db-shm. The agent dir moves (~/.omp/agent, ~/.omp/profiles/<name>/agent,
+  # PI_CODING_AGENT_DIR, XDG), so this keys on the file name, with a left boundary that keeps it off `myagent.db`.
+  '(^|[^A-Za-z0-9_.-])agent\.db'
   'Library/Keychains/'
   '(^|[^A-Za-z0-9_.-])secrets/'
 )

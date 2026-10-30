@@ -807,16 +807,30 @@ either way the call was refused, so only the refusal text changes. This is not a
   - `tool_call` on the path tools: the deny globs of `opencode/opencode.json`, selectors and lists peeled, archive
     members tested with `:` as `/`, each candidate also tested at its symlink target. `edit` adds the targets
     named in its text input (hashline and apply_patch headers, `MV`, patch-mode `rename`), because omp's event
-    normalizer derives `path` from hashline headers only when the call has none.
+    normalizer derives `path` from hashline headers only when the call has none. The globs include
+    `**/agent.db*`: omp keeps every provider credential in plaintext in `<agentDir>/agent.db` (table
+    `auth_credentials`, plus its `-wal` and `-shm`), and the agent dir moves (`~/.omp/agent`,
+    `~/.omp/profiles/<name>/agent`, `PI_CODING_AGENT_DIR`, XDG), so the glob keys on the file name, which omp
+    fixes (`getAgentDbPath`), and covers the live agent dir with no env read. `secret-access-gate.sh` has the
+    same pattern for bash.
   - `tool_call` on `task`: the deny globs on the `@path` mentions of every item's `task` text (omp reads them into
     the child's first prompt with no tool call), then `judge-standards-gate` once per item; the script alone
-    knows which agents are judges.
+    knows which agents are judges. omp repairs a double-encoded `task` or `context` after this event
+    (`repairTaskParams`), so the extension mirrors that repair (`repairedTask`): mentions are scanned in the raw
+    text and its decode, and the judge prompt is built from the decoded fields, which is where the child reads
+    the heading.
   - `tool_call` on `mcp__ecomono_memory_*` from a subagent: allowed only for the tools in that agent's own
     `tools:` frontmatter. Bundled omp agents, `/tan` clones and the advisor have no file and pass.
   - `tool_result` on `bash`: peel the trailing notice block, `compressBash`, log to `stats.jsonl`; skipped for
     eval-bridged results and under `ECOMONO_COMPRESS=off`. Failing commands are compressed too (OpenCode does;
     head and tail keep the first error and the summary).
   - `tool_result` on `read`: the read post-check, which withholds content omp resolved to a denied file.
+  - `tool_result` on `grep`, `ast_grep`, `glob` and `find`: the search post-check. The path gate sees only the
+    roots a call names, and a grep with no `path` returned lines of tracked `server.key`, `secrets/a.txt` and
+    `.env` on omp 18.13.3. The paths omp lists in `details` (`files` and `fileMatches[].path` for grep and
+    `ast_grep`, `files` for glob, `hits[].rel` for find) go through the same deny check, and a match withholds the
+    whole result as an error, the way the read post-check does. A result is not filtered per file, because the
+    text is not parsed.
   - `session.compacting`: the compression style hint. `before_subagent_spawn`: tier and inheritance routing.
   - `session_start` and `before_agent_start` (main only): skill-registry refresh, a one-time warning when `jq` is not on
     PATH (three gate scripts exit 0 silently without it), a one-time warning when
@@ -879,7 +893,7 @@ to hide them.
 | `PERSONALITY.md` frontmatter | Accepted verbatim to keep one file and one link. |
 | Claude-only `CLAUDE.md` tail | Nothing in v1 (a third persona carrier); deferred. |
 | Skill description compression | No repo-wide `SKILL.md` change; spike 2 recorded the previews. |
-| Secret path gating | In-extension: the deny globs parsed at load, `Bun.Glob`, every omp path form, plus the read post-check. No subprocess per read. Bash keeps the script. |
+| Secret path gating | In-extension: the deny globs parsed at load, `Bun.Glob`, every omp path form, plus the read and search post-checks. No subprocess per read. Bash keeps the script. |
 | `PI_CODING_AGENT_DIR` and profiles | `install.sh` honours `PI_CODING_AGENT_DIR`, else `$HOME/${PI_CONFIG_DIR:-.omp}/agent`; a named profile is a re-run with its directory. The flake hardcodes `.omp/agent`. |
 | omp-only machines | Not a v1 target. The extension has no `~/.claude/hooks` dependency and warns once when `~/.claude/skills/ecomono-sdd-shared`, the remaining prose dependency, is missing. |
 | org-todo and prompt capture | Both shipped at OpenCode parity as optional, independently droppable slices. |
@@ -892,7 +906,7 @@ to hide them.
 | Claude-only persona tail | Autonomous delegation is missed on omp | Write an omp tail and generalise `check-persona-drift.sh` to N carriers |
 | Skill description routing sentence | Routing misses observed on omp | Front-load a routing sentence repo-wide |
 | Judge gate for eval `agent()` | An eval judge spawn observed | Run the script with an empty prompt from `before_subagent_spawn` |
-| Parent-directory search leak | A denied file's content observed in a grep result | Filter grep results by path in the extension, or `tools.restrictedFolders` |
+| Search leak the post-check cannot see | A denied file's lines observed in a search result the post-check passed (its `details` lacked the path) | `tools.restrictedFolders`, which filters inside the search |
 | `lsp` file argument | A leak observed | Add `lsp` `input.file` to the path gate, or `lsp.enabled: false` |
 | `debug` launch | A `launch` observed in a session | Run the bash scripts on `[program, ...args].join(' ')` |
 | `artifact://` read of a withheld result | One observed | Record N from the replaced content and deny `read artifact://N` |
@@ -921,7 +935,8 @@ this order of strength:
 - **The mirror table** below, re-diffed on every upgrade.
 
 Not covered by the smoke, and so resting on the fake-pi tests (events built by hand to the 18.13.3 shape) and the
-mirror table: the read post-check (`details.{suffixResolution,displayReadTargets}`), edit and `ast_edit` inputs,
+mirror table: the read post-check (`details.{suffixResolution,displayReadTargets}`), the search post-check
+(`details.{files,fileMatches,hits}`), edit and `ast_edit` inputs,
 prompt capture, the compaction style, the org-todo widget and the `ui.confirm` flow. The upgrade protocol in the
 README starts here. Ranges are relative to the omp
 package sources (`path-utils.ts`, `ssh-protocol.ts`, `search-approval-targets.ts`) and to pi-tui (`read.ts`);
@@ -936,6 +951,7 @@ Mirrored code, re-diffed on every omp upgrade:
 | `ssh://` path rule | omp `internal-urls/ssh-protocol.ts:76-106` |
 | Search-root splitter `/[;,\s]+/` | omp `tools/search-approval-targets.ts:23` |
 | `extractFileMentions` (task `@path` mentions) | omp `utils/file-mentions.ts:33-55,168-186` |
+| `repairDoubleEncodedJsonString` (`repairedTask`, the double-encoded `task` and `context`) | pi-tui `tools/task-repair-args.ts`, called from omp `task/index.ts:373` |
 | Edit header grammar (`[PATH#TAG]`, `¶`, `*** ... File:`, `*** Move to:`, `MV`) | omp `extensibility/tool-event-input.ts:35-90`; pi-edit `modes/hashline/input.rs`, `tokenizer.rs` |
 | Symlink resolution through a missing tail (`resolveEquivalentPath`) | pi-utils `dirs.ts` |
 | Handler budget `EXTENSION_HANDLER_TIMEOUT_MS = 30_000`, which the gate timeout (`GATE_TIMEOUT_MS`, 20 s) must stay under | omp `extensibility/extensions/runner.ts:133` |
@@ -1101,7 +1117,7 @@ that is portable. Ported as prose instead:
 |---|---|
 | Candidate freeze | `ecomono-judgment` hashes the diff before launching judges, re-checks at each later checkpoint the skill defines, discards the round if the bytes moved |
 | Receipt | Written twice from one verdict: a file named by the hash under the git common directory, which is what a shell gate can read, and a `mem_save` at `review/{subject-hash}`, `type: decision`, which is what a later session can search |
-| Gate validates the receipt | Two readers of one receipt: one of archive's four gates, fed the hash by the orchestrator because the archive agent has no `Bash`, and `claude/hooks/review-receipt-gate.sh` on `git push` / `gh pr create`, which recomputes the hash and reads the file copy. The second runs on both harnesses — `opencode/plugins/review-receipt-gate.ts` shells out to the same script rather than porting it |
+| Gate validates the receipt | Two readers of one receipt: one of archive's four gates, fed the hash by the orchestrator because the archive agent has no `Bash`, and `claude/hooks/review-receipt-gate.sh` on `git push` / `gh pr create`, which recomputes the hash and reads the file copy. The second runs on Claude Code, OpenCode and omp — `opencode/plugins/review-receipt-gate.ts` and the omp extension (`omp/extensions/ecomono/index.ts`) shell out to the same script rather than porting it |
 | Tier by evidence, not size | The pre-pr trigger rule, rewritten. Size went back to being the review workload guard's problem. `**/update/**` left the tier-4 evidence list on 2026-10-09 following upstream commit `c13d4b75`, which removed it (the pattern cost rounds and found nothing); self-updater code still trips the installer signal |
 
 Deliberately not taken: the seven audit ledgers, the 36-journey friction bench, shadow
@@ -1697,11 +1713,13 @@ delivers nowhere.
 Between them, `pre-push` and `pre-pr` are the only two ways bytes leave this machine, and both
 validate. The port is closed on this idea, not partially done.
 
-**The gate now runs on both harnesses, from one implementation.**
+**The gate now runs on Claude Code, OpenCode and omp, from one implementation.**
 `opencode/plugins/review-receipt-gate.ts` intercepts the `shell` tool and shells out to
 `~/.claude/hooks/review-receipt-gate.sh` with the same `{"tool_input":{"command":…}}` payload
 Claude Code feeds it, then translates the one JSON object it prints. Until it existed, a push
-from opencode was ungated even in an armed repository.
+from opencode was ungated even in an armed repository. The omp extension
+(`omp/extensions/ecomono/index.ts`) runs the same script on `bash` and on the `github` tool's
+`pr_create` and `pr_push`.
 
 Shelling out rather than porting is the same rule that shaped the hash: two independent
 derivations of one answer that can disagree is a defect this repo has already shipped once. A

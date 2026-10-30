@@ -499,6 +499,21 @@ while [ "$(ls "${d}" | wc -l)" -lt ${n} ] && [ $i -lt 100 ]; do sleep 0.05; i=$(
   assert.equal(await fire("tool_call", task({ agent: "ecomono-judge-b", task: `review\n${HEADING}` }), ctx), undefined)
   assert.equal(await fire("tool_call", task({ agent: "ecomono-judge-b", task: "review", context: HEADING }), ctx), undefined)
 
+  // omp repairs a double-encoded `task` or `context` after this event (pi-tui tools/task-repair-args.ts): two escape
+  // sequences, or a structural escape, and a body that parses as a JSON string. The child then reads the decoded
+  // text, so a heading written as `\\n## Skills ...` is a real heading line and the call is let through.
+  const escaped = `review\\n${HEADING}\\n- a/SKILL.md\\n`
+  assert.equal(await fire("tool_call", task({ context: "x", tasks: [{ ...item, task: escaped }] }), ctx), undefined)
+  assert.equal(await fire("tool_call", task({ context: `x\\n${HEADING}\\n- a/SKILL.md\\n`, tasks: [item] }), ctx), undefined)
+  assert.equal(await fire("tool_call", task({ agent: "ecomono-judge-b", task: escaped }), ctx), undefined)
+  // omp leaves these as typed, so the heading is not a line for the child: one escape is no double-encoding
+  // signature, and a bare quote makes the body no JSON string.
+  for (const typed of [`review\\n${HEADING}`, `review\\n${HEADING}\\nsay "hi"`]) {
+    const blocked = await fire("tool_call", task({ context: "x", tasks: [{ ...item, task: typed }] }), ctx)
+    assert.equal(blocked?.block, true, typed)
+    assert.match(blocked.reason, /Skills to load before work/)
+  }
+
   // One bad item among good ones blocks the whole call; a heading on one item does not cover another.
   const mixed = await fire(
     "tool_call",

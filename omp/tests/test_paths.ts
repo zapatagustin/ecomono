@@ -146,6 +146,18 @@ const sample = (glob: string) => glob.replace(/\*\*\//g, "/x/").replace(/\*\*/g,
     ["grep", { path: "x.tar.gz:secrets/a" }],
     ["write", { path: "x.zip:.aws/credentials" }],
     ["write", { path: "x.zip:.ssh/k" }],
+    // omp's credential store, agent.db, wherever the agent dir is: the default, a profile, a PI_CODING_AGENT_DIR
+    // override, an XDG data dir; the sqlite selector `:table`, and the wal and shm siblings.
+    ["read", { path: "~/.omp/agent/agent.db" }],
+    ["read", { path: "~/.omp/agent/agent.db:auth_credentials" }],
+    ["read", { path: "~/.omp/agent/agent.db:auth_credentials:raw" }],
+    ["read", { path: "~/.omp/agent/agent.db-wal" }],
+    ["read", { path: "~/.omp/agent/agent.db-shm" }],
+    ["read", { path: "~/.omp/profiles/work/agent/agent.db" }],
+    ["grep", { path: "/srv/omp-agent/agent.db" }],
+    ["read", { path: "~/.local/share/omp/agent.db" }],
+    ["write", { path: "~/.omp/agent/agent.db" }],
+    ["read", { path: "agent.db" }],
   ]
   for (const [tool, input] of denied) {
     const r = await fire("tool_call", call(tool, input), ctx)
@@ -177,6 +189,9 @@ const sample = (glob: string) => glob.replace(/\*\*\//g, "/x/").replace(/\*\*/g,
     ["grep", { path: '["src","lib"]' }], // a JSON array of ordinary paths
     ["grep", { path: '["src", 1, null]' }], // non-string entries are ignored
     ["grep", { path: "[not json" }],
+    ["read", { path: "src/myagent.db" }], // agent.db is a whole file name
+    ["read", { path: "src/agent.ts" }],
+    ["read", { path: "~/.omp/agent/config.yml" }], // the rest of the agent dir is not credential storage
     ["bash", { command: "ls" }], // not a path tool
     ["lsp", { file: ".env" }], // not a path tool (documented ceiling)
   ]
@@ -288,6 +303,11 @@ const sample = (glob: string) => glob.replace(/\*\*\//g, "/x/").replace(/\*\*/g,
     { tasks: [{ task: "check (@.env)." }] }, // no agent: omp still reads the mention
     { tasks: [{ agent: "a", task: "fine" }, { agent: "b", task: "and @secrets/x" }] },
     { agent: "task", task: "Summarize @'.env'" }, // non-batch
+    // A double-encoded task (omp: repairTaskParams runs after tool_call): the child gets the decoded text.
+    { tasks: [{ agent: "task", task: "Summarize.\\n@.env\\nThanks." }] }, // two escapes, so omp unescapes it
+    { agent: "task", task: "see\\n@~/.ssh/id_ed25519\\n" }, // non-batch
+    { tasks: [{ task: 'read @\\"secrets/a b.txt\\" now' }] }, // a structural `\"`: decodes to a quoted mention
+    { tasks: [{ task: "look at @\\u002eenv" }] }, // a `\uXXXX` escape: decodes to `@.env`
   ]
   for (const input of denied) {
     const r = await fire("tool_call", task(input), ctx)
@@ -300,6 +320,11 @@ const sample = (glob: string) => glob.replace(/\*\*\//g, "/x/").replace(/\*\*/g,
     { tasks: [{ task: "mail user@.env" }] }, // not at a mention boundary
     { tasks: [{ task: "see @src/a.ts." }] },
     { context: "@.env", tasks: [{ task: "x" }] }, // context is the system prompt: omp reads no mention there
+    { context: "x\\n@.env\\n", tasks: [{ task: "x" }] }, // decoded or not, context is never scanned
+    // omp leaves these as typed, so the child sees no mention.
+    { tasks: [{ task: "see\\n@.env" }] }, // one escape: no double-encoding signature
+    { tasks: [{ task: "C:\\Users\\@.env\\n" }] }, // not a JSON string body: `\U` is no escape
+    { tasks: [{ task: "Summarize.\\n@src/a.ts\\nThanks." }] }, // decoded, still an ordinary mention
   ]) {
     assert.equal(await fire("tool_call", task(input), ctx), undefined, JSON.stringify(input))
   }
@@ -368,6 +393,81 @@ const sample = (glob: string) => glob.replace(/\*\*\//g, "/x/").replace(/\*\*/g,
 
   // Only `read`: another tool's details are not looked at.
   assert.equal(await fire("tool_result", result(sr, { toolName: "grep" }), ctx), undefined)
+  assert.deepEqual(calls.warn, [], "safe() caught nothing: no handler threw")
+}
+
+// ---- search post-check --------------------------------------------------------------------------------------
+
+{
+  // grep, ast_grep, glob and find list the files a result shows in `details`; a call that names no root (or a parent
+  // directory) is not blocked up front, so a listed denied file withholds the result.
+  const { fire, calls, ctx } = setup()
+  const body = [{ type: "text", text: "LINE CONTENT" }]
+  const result = (toolName: string, details: unknown) => ({
+    toolName,
+    toolCallId: "call-1",
+    input: { pattern: "x" },
+    content: body,
+    details,
+    isError: false,
+  })
+  const files = (...paths: string[]) => ({ files: paths, fileMatches: paths.map((path) => ({ path, count: 1 })) })
+
+  const denied: Array<[string, unknown, string]> = [
+    ["grep", files("src/a.ts", "server.key"), "server.key"],
+    ["grep", files("secrets/a.txt"), "secrets/a.txt"],
+    ["grep", files(".env"), ".env"],
+    ["grep", files(`${home}/.ssh/config`), `${home}/.ssh/config`], // outside the cwd: absolute
+    ["grep", files("x.zip:.ssh/k"), "x.zip:.ssh/k"], // an archive member
+    ["grep", files(`${home}/.omp/agent/agent.db`), `${home}/.omp/agent/agent.db`],
+    ["grep", { files: [], fileMatches: [{ path: "secrets/a.txt", count: 1 }] }, "secrets/a.txt"], // fileMatches alone
+    ["grep", { files: ["config/.env"] }, "config/.env"], // files alone
+    ["ast_grep", files("src/a.ts", "config/.env"), "config/.env"],
+    ["glob", { files: ["src/a.ts", "secrets/"], fileCount: 2 }, "secrets/"], // a directory, trailing slash
+    ["glob", { files: ["docs/prod.env"] }, "docs/prod.env"],
+    ["find", { hits: [{ rel: "src/a.ts" }, { rel: "secrets/a.txt" }] }, "secrets/a.txt"],
+    ["find", { hits: [{ rel: ".env" }] }, ".env"],
+  ]
+  for (const [tool, details, listed] of denied) {
+    const label = `${tool} ${JSON.stringify(details)}`
+    const r = await fire("tool_result", result(tool, details), ctx)
+    assert.equal(r?.isError, true, label)
+    assert.equal(r.content.length, 1, label)
+    assert.equal(r.content[0].type, "text", label)
+    assert.match(r.content[0].text, /withheld/, label)
+    assert.ok(r.content[0].text.startsWith(`ecomono: ${tool} listed ${listed}, which `), `${label}: ${r.content[0].text}`)
+    assert.match(r.content[0].text, /in opencode\/opencode\.json denies/, label)
+    assert.ok(!JSON.stringify(r.content).includes("LINE CONTENT"), label)
+    assert.deepEqual(r.details, details, `${label}: details are left as omp produced them`)
+  }
+
+  // Ordinary results, and shapes that carry no path: the result is not touched.
+  const allowed: Array<[string, unknown]> = [
+    ["grep", files("src/a.ts", "src/b.ts")],
+    ["grep", { files: [], fileMatches: [], matchCount: 0 }],
+    ["ast_grep", files("src/a.ts")],
+    ["glob", { files: ["src/", "src/a.ts"] }],
+    ["find", { hits: [{ rel: "src/a.ts" }] }],
+    ["grep", files("src/.envrc.ts", "environment.ts", `${home}/.omp/agent/config.yml`)],
+    ["grep", undefined],
+    ["grep", null],
+    ["glob", "secrets/x"],
+    ["glob", 3],
+    ["grep", []],
+    ["grep", {}],
+    ["grep", { files: "secrets/x" }], // not an array
+    ["grep", { files: [1, null, {}], fileMatches: [null, { path: 5 }, "secrets/x"], hits: [{}, null] }],
+    ["find", { hits: "secrets/x" }],
+    ["glob", { fileMatches: "secrets/x" }],
+  ]
+  for (const [tool, details] of allowed) {
+    assert.equal(await fire("tool_result", result(tool, details), ctx), undefined, `${tool} ${JSON.stringify(details)}`)
+  }
+
+  // Only the four search tools: another tool's details are not looked at, `read` keeps its own check.
+  for (const tool of ["bash", "lsp", "ast_edit", "write"]) {
+    assert.equal(await fire("tool_result", result(tool, files(".env")), ctx), undefined, tool)
+  }
   assert.deepEqual(calls.warn, [], "safe() caught nothing: no handler threw")
 }
 

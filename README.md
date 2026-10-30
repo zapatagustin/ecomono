@@ -172,7 +172,10 @@ data above instead of restating it:
   File:` and `*** Move to:` headers, patch-mode `rename`), and `task` on the `@path` mentions
   in each item's `task` text, which omp reads into the subagent's first prompt. There is no
   valve. A `read` that omp resolved to a denied file (suffix matching, delimited lists) has
-  its result withheld and returned as an error.
+  its result withheld and returned as an error, and so does a `grep`, `ast_grep`, `glob` or
+  `find` result that lists one, such as a `grep` with no `path`. The globs include omp's own
+  credential store, `agent.db` and its `-wal` / `-shm` siblings (`secret-access-gate.sh` names
+  it for bash): omp keeps provider credentials in plaintext there.
 - **Confirmed in the TUI, blocked headless** (print and json modes, subagents included,
   since nobody can answer): an ask from `secret-access-gate.sh` or
   `review-receipt-gate.sh`. `check-diff-size.sh` runs too; its ask is confirmed in the
@@ -204,10 +207,12 @@ Accepted ceilings. Where omp has a native switch it is named:
 - `lsp` (on by default) takes a `file` argument the path gate does not see: hover,
   definition, references or symbols on a denied file can surface its lines, and `rename`
   / `code_actions` with `apply` can edit it. Set `lsp.enabled: false`.
-- `grep`, `ast_grep`, `glob` and `find` over a parent directory (local or `ssh://`) can
-  surface names or matching lines of denied files below it, and so can a root with glob
-  characters such as `~/.ss*/*`: the gate sees the roots a call names, not the walk. omp
-  honours `.gitignore` by default. `tools.restrictedFolders` is the opt-in.
+- `grep`, `ast_grep`, `glob` and `find` over a parent directory (local or `ssh://`), a root
+  with glob characters such as `~/.ss*/*`, or no `path` are not blocked up front: the gate
+  sees the roots a call names, not the walk. The search post-check withholds a result whose
+  `details` lists a denied file, a whole result and not just that file's lines, and it sees
+  only what omp lists there. `tools.restrictedFolders` is the opt-in that filters inside the
+  search.
 - An eval `agent()` spawn of an `ecomono-judge-*` agent skips `judge-standards-gate.sh`;
   the spawn event carries no prompt.
 - `pr_push` naming a branch other than the current one is judged on HEAD, as
@@ -215,10 +220,10 @@ Accepted ceilings. Where omp has a native switch it is named:
 - Seance sessions bind no extensions.
 - Backgrounded bash (async or auto-background) produces no `tool_result`, so it is not
   compressed.
-- The read post-check withholds what reaches the model but leaves omp's `details`
+- The read and search post-checks withhold what reaches the model but leave omp's `details`
   untouched, so the TUI still renders the file to you.
-- An oversized read result the post-check withheld was already spilled to `artifact://N`,
-  and `read artifact://N` can still return it; N is not shown to the model.
+- An oversized read or search result the post-check withheld was already spilled to
+  `artifact://N`, and `read artifact://N` can still return it; N is not shown to the model.
 - `ssh://host/path` reads, searches and writes on any host OpenSSH resolves. Its path
   part is matched against the same deny globs as text, whatever the host, so a remote
   `.env` is denied like a local one and `ssh://localhost/...` cannot reach a local secret.
@@ -226,9 +231,9 @@ Accepted ceilings. Where omp has a native switch it is named:
   Windows) `~/.SSH/id` or `.ENV` passes. A symlink counts only when its target exists, so
   a `write` through a dangling link to a denied path passes. `tools.restrictedFolders`
   resolves both natively.
-- `@path` mentions are checked in a `task` item's text only. Other text omp sends as a
-  prompt, such as queued hidden next-turn messages, has its mentions read with no tool
-  call.
+- `@path` mentions are checked in a `task` item's text only, as typed and as omp's
+  double-encoding repair decodes it. Other text omp sends as a prompt, such as queued hidden
+  next-turn messages, has its mentions read with no tool call.
 - The 20 s gate timeout assumes omp's default `extensionHandlers.toolCallTimeoutMs` of
   30 s. Lowered below about 20 s, a slow gate fails the bash call closed.
 
