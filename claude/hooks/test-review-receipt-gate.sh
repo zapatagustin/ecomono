@@ -56,13 +56,16 @@ receipt_based() {  # receipt_based <verdict> <hash> <base-sha> <dir>
   printf '%s\n' "$1" "hash: $2" "base: $3" "target: fixture" "rounds: 1" > "$4/$2"
 }
 
-# decision <command> [repo] -> "allow" when the gate stays silent, else "<decision>:<reason>"
+# decision <command> [repo] -> "allow" when the gate stays silent, else "<decision>:<reason>".
+# MODE=<permission_mode> in the environment adds that field to the payload (unset: none, as
+# older Claude Code sends); an output with no permissionDecision reads "advisory:<context>".
 decision() {
   local out
-  out=$(cd "${2:-$repo}" && jq -nc --arg c "$1" '{tool_name:"Bash",tool_input:{command:$c}}' | "$gate")
+  out=$(cd "${2:-$repo}" && jq -nc --arg c "$1" --arg pm "${MODE:-}" \
+    '{tool_name:"Bash",tool_input:{command:$c}} + (if $pm == "" then {} else {permission_mode:$pm} end)' | "$gate")
   [ -z "$out" ] && { echo allow; return; }
   printf '%s' "$out" \
-    | jq -r '.hookSpecificOutput.permissionDecision + ":" + .hookSpecificOutput.permissionDecisionReason' \
+    | jq -r '(.hookSpecificOutput.permissionDecision // "advisory") + ":" + (.hookSpecificOutput.permissionDecisionReason // .hookSpecificOutput.additionalContext)' \
     | tr '\n' ' '
 }
 
@@ -111,6 +114,8 @@ check "two spaces"                 'git  push'                   '^deny:'
 check "git -C"                     'git -C /some/repo push'      '^deny:'
 check "git -c with a value"        'git -c user.email=x push origin work' '^deny:'
 check "git --no-pager"             'git --no-pager push'         '^deny:'
+# The deny is a block the model can act on, not a prompt, so bypassPermissions leaves it alone.
+MODE=bypassPermissions check "deny survives bypassPermissions" 'git push' '^deny:'
 check "git --git-dir="             'git --git-dir=/r/.git push'  '^deny:'
 check "gh -R"                      'gh -R owner/repo pr create --fill' '^deny:'
 check "an absolute program path"   '/usr/bin/git push'           '^deny:'
@@ -320,6 +325,7 @@ check "the configured base is used alone"  'git push' '^allow$' "$repo2"
 # guessing the base this setting exists to stop it guessing.
 git -C "$repo2" config ecomono.reviewBase no-such-branch
 check "a bad reviewBase asks"              'git push' '^ask:'                "$repo2"
+MODE=bypassPermissions check "a bad reviewBase is advisory under bypass" 'git push' '^advisory:' "$repo2"
 check "and names the value that failed"    'git push' 'no-such-branch'       "$repo2"
 check "and does not claim none is set"     'git push' 'set to'               "$repo2"
 got=$(decision 'git push' "$repo2")
@@ -366,6 +372,8 @@ git_c "$repo3" commit -q -m change
 r3dir="$repo3/.git"; mkdir -p "$r3dir/ecomono/receipts"; : > "$r3dir/ecomono/review-mode"
 
 check "no resolvable base asks, never silently allows" 'git push' '^ask:' "$repo3"
+MODE=bypassPermissions check "no resolvable base is advisory under bypass" 'git push' '^advisory:' "$repo3"
+MODE=bypassPermissions check "and says the command ran without a prompt"  'git push' 'ran without a' "$repo3"
 check "and names the config that fixes it" 'git push' 'ecomono.reviewBase' "$repo3"
 
 # F3: with no candidate base resolving at all, a receipt whose recorded base matches allows,
@@ -407,6 +415,7 @@ git -C "$repo4" diff "$(git -C "$repo4" merge-base HEAD master)" >/dev/null 2>&1
   && { echo "FAIL fixture: git diff still succeeds, nothing is being tested"; fail=1; } \
   || echo "ok   the fixture really does break git diff"
 check "a failed diff asks, never silently allows" 'git push' '^ask:'        "$repo4"
+MODE=bypassPermissions check "a failed diff is advisory under bypass" 'git push' '^advisory:' "$repo4"
 check "and says the diff failed"                  'git push' 'git diff'     "$repo4"
 check "and names how to repair the clone"         'git push' 'refetch'      "$repo4"
 

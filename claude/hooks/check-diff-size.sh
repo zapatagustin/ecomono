@@ -12,6 +12,7 @@ THRESHOLD=400
 
 input=$(cat)
 cmd=$(printf '%s' "$input" | jq -r '.tool_input.command // ""')
+mode=$(printf '%s' "$input" | jq -r '.permission_mode // ""')
 
 case "$cmd" in
   *"git push"*|*"gh pr create"*) ;;
@@ -41,7 +42,21 @@ msg="⚠ Large diff (${lines} lines > ${THRESHOLD}). Review-4R recommended befor
 # never ran. In a non-interactive run there is nobody to answer it, so it lands as a block;
 # harmless here, since this gate fires only on `git push` / `gh pr create` and a headless
 # run of either should stop and let a human look at a 400-line diff anyway.
-jq -cn --arg r "$reason" --arg m "$msg" '{
-  hookSpecificOutput: {hookEventName: "PreToolUse", permissionDecision: "ask", permissionDecisionReason: $r, additionalContext: $r},
+#
+# Under bypassPermissions the "ask" is dropped and the gate is advisory: that mode is the
+# user's choice of a session with no prompts, and a hook that reinstates one on every large
+# push is the thing they turned off. The reason still reaches the model as additionalContext
+# and the banner still shows; the command runs, so the text says so instead of "before
+# pushing". Payloads without `permission_mode` (older Claude Code, the omp runner) read as
+# "not bypass" and keep the prompt.
+ask=true
+if [ "$mode" = bypassPermissions ]; then
+  ask=false
+  reason="Branch diff is ${lines} changed lines (> ${THRESHOLD}) and the command ran without a prompt (bypassPermissions, where this gate is advisory). Run the review-4R agents now, in parallel — ecomono-r1-risk, ecomono-r3-reliability, ecomono-r4-resilience, ecomono-r2-readability — and deliver their findings as a follow-up."
+  msg="⚠ Large diff (${lines} lines > ${THRESHOLD}) ran without a prompt (bypassPermissions). Review-4R recommended."
+fi
+jq -cn --argjson ask "$ask" --arg r "$reason" --arg m "$msg" '{
+  hookSpecificOutput: ({hookEventName: "PreToolUse", additionalContext: $r}
+    + (if $ask then {permissionDecision: "ask", permissionDecisionReason: $r} else {} end)),
   systemMessage: $m
 }'

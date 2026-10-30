@@ -131,22 +131,32 @@ the way, and it is narrower than it looks. Read it as two separate lists:
 
 `claude/hooks/secret-access-gate.sh` covers the second gap, not the first. It is a
 `PreToolUse` hook on `Bash` that matches the command string against the same credential
-paths and returns `permissionDecision: "ask"`, so `cat ~/.ssh/id_ed25519` asks instead of
-running silently. Two things to know about it:
+paths. In the prompting modes it returns `permissionDecision: "ask"`, so `cat ~/.ssh/id_ed25519`
+asks instead of running silently. Under `bypassPermissions` — the seeded default — it is
+advisory: the command runs, the model receives the warning as `additionalContext`, and you see
+a banner. That mode is a request for no prompts and the hook honors it; what the gate buys
+there is a model that knows it touched a secret, not a user who approved it. Switch
+`defaultMode` to `"default"` to get the prompt back. Three things to know about it:
 
 - It matches **substrings of the command**, so `cat $HOME/.ss''h/id_rsa` walks straight
   through, as does any variable indirection. It catches the careless command and the
   wildcard that swept up a secret — not an adversary. It also cannot tell a path from a
   literal, so `echo id_rsa` prompts too.
-- The `"ask"` is honored under `bypassPermissions` — verified with `claude -p --settings`,
-  where the gated command never executed. But **in a non-interactive run there is nobody to
-  answer it, so it lands as a hard block** and retrying is futile. That is the intended
-  posture for a credential gate; if a headless job legitimately needs one of these paths,
-  set `ECOMONO_ALLOW_SECRET_PATHS=1`.
+- A hook `"ask"` IS honored under `bypassPermissions` — verified with `claude -p --settings`,
+  where the gated command never executed — which is why the hook drops it there by choice,
+  not by accident. In the prompting modes, **a non-interactive run has nobody to answer it, so
+  it lands as a hard block** and retrying is futile. If a headless job legitimately needs one
+  of these paths, set `ECOMONO_ALLOW_SECRET_PATHS=1`.
+- `check-diff-size.sh` and the two "cannot measure" cases of `review-receipt-gate.sh` follow
+  the same rule: `"ask"` in the prompting modes, advisory under `bypassPermissions`. The review
+  gate's `"deny"` (armed repo, no receipt) is unchanged in every mode: a block the model can
+  act on is not a prompt.
 
-`opencode.json` gets the same paths under `permission.bash`. That side is glob-only with no
-way to express an exception, so `cat .env.example` prompts there while the Claude Code hook
-stays quiet on it.
+`opencode.json` gets the same paths under `permission.bash`, omp's `agent.db` and its
+`omp auth export` / `omp token` commands included. That side is glob-only with no safe way to
+express an exception (an allow glob for `.env.example` would also pass a command that names
+`.env.local` next to it), so `cat .env.example` prompts there while the Claude Code hook stays
+quiet on it, and `*agent.db*` also asks on a file such as `agent.db.ts`.
 
 So treat this as "the agent can do anything a shell can do on this machine, minus two
 `rm -rf` spellings and a prompt on obvious credential paths", not as credential protection.
@@ -169,13 +179,19 @@ data above instead of restating it:
   `:raw` selectors and `archive.ext:member/path` members (matched as `archive.ext/member/path`),
   each by its own name and by its symlink target. `edit` is also checked on the targets
   in its text input (hashline `[PATH#TAG]` and `MV` lines, apply_patch `*** Add/Update/Delete
-  File:` and `*** Move to:` headers, patch-mode `rename`), and `task` on the `@path` mentions
-  in each item's `task` text, which omp reads into the subagent's first prompt. There is no
-  valve. A `read` that omp resolved to a denied file (suffix matching, delimited lists) has
-  its result withheld and returned as an error, and so does a `grep`, `ast_grep`, `glob` or
-  `find` result that lists one, such as a `grep` with no `path`. The globs include omp's own
-  credential store, `agent.db` and its `-wal` / `-shm` siblings (`secret-access-gate.sh` names
-  it for bash): omp keeps provider credentials in plaintext there.
+  File:` and `*** Move to:` headers, the sloppy mode's `*** Edit File:`, patch-mode `rename`),
+  and `task` on the `@path` mentions in each item's `task` text, which omp reads into the
+  subagent's first prompt. There is no valve. A `read` that omp resolved to a denied file
+  (suffix matching, delimited lists, the `resolvedPath` it reports) has its result withheld and
+  returned as an error, and so does a `grep`, `ast_grep`, `glob`, `find` or `ast_edit` result
+  that lists one, such as a `grep` with no `path`. The notice names the glob, never the file,
+  and omp's `details` (which the session file keeps and the TUI renders) are cut to their
+  counts and flags. As in OpenCode the last matching key wins, so the `.env` templates the
+  bash gate lets through (`.env.example`, `.sample`, `.template`, `.dist`, `.defaults`,
+  `.schema`) are `allow` entries after the `.env` denies. The globs include omp's own
+  credential store, `agent.db` and its `-wal` / `-shm` / `-journal` siblings
+  (`secret-access-gate.sh` names it for bash, plus `omp auth export` and `omp token`, which
+  print the credentials): omp keeps provider credentials in plaintext there.
 - **Confirmed in the TUI, blocked headless** (print and json modes, subagents included,
   since nobody can answer): an ask from `secret-access-gate.sh` or
   `review-receipt-gate.sh`. `check-diff-size.sh` runs too; its ask is confirmed in the
@@ -207,12 +223,18 @@ Accepted ceilings. Where omp has a native switch it is named:
 - `lsp` (on by default) takes a `file` argument the path gate does not see: hover,
   definition, references or symbols on a denied file can surface its lines, and `rename`
   / `code_actions` with `apply` can edit it. Set `lsp.enabled: false`.
-- `grep`, `ast_grep`, `glob` and `find` over a parent directory (local or `ssh://`), a root
-  with glob characters such as `~/.ss*/*`, or no `path` are not blocked up front: the gate
-  sees the roots a call names, not the walk. The search post-check withholds a result whose
-  `details` lists a denied file, a whole result and not just that file's lines, and it sees
-  only what omp lists there. `tools.restrictedFolders` is the opt-in that filters inside the
-  search.
+- `grep`, `ast_grep`, `glob`, `find` and `ast_edit` over a parent directory (local or
+  `ssh://`), a root with glob characters such as `~/.ss*/*`, or no `path` are not blocked up
+  front: the gate sees the roots a call names, not the walk. The search post-check withholds a
+  result whose `details` lists a denied file, a whole result and not just that file's lines,
+  and it sees only what omp lists there. A pathless `ast_edit` that reached a denied file has
+  already applied its edits by then; only its diff is withheld.
+- That whole-result withhold over-blocks: a tracked file under a deny glob (a fixture
+  `.pem`, a `secrets/` doc, a template inside `secrets/`) withholds every repo-wide search
+  that lists it. Narrow `path` to the directories you mean.
+- `tools.restrictedFolders` covers what the path gate cannot see, but it does not filter
+  inside a search: any call at or below a listed folder, and a recursive search rooted above
+  one, asks for approval in every approval mode, and blocks in a run with no UI.
 - An eval `agent()` spawn of an `ecomono-judge-*` agent skips `judge-standards-gate.sh`;
   the spawn event carries no prompt.
 - `pr_push` naming a branch other than the current one is judged on HEAD, as
@@ -220,8 +242,6 @@ Accepted ceilings. Where omp has a native switch it is named:
 - Seance sessions bind no extensions.
 - Backgrounded bash (async or auto-background) produces no `tool_result`, so it is not
   compressed.
-- The read and search post-checks withhold what reaches the model but leave omp's `details`
-  untouched, so the TUI still renders the file to you.
 - An oversized read or search result the post-check withheld was already spilled to
   `artifact://N`, and `read artifact://N` can still return it; N is not shown to the model.
 - `ssh://host/path` reads, searches and writes on any host OpenSSH resolves. Its path
@@ -361,8 +381,8 @@ inputs.ecomono.url = "github:zapatagustin/ecomono";
 imports = [ inputs.ecomono.homeModules.default ];
 ```
 
-The module manages the config declaratively, adds `nodejs` + `bun`, and
-registers plugins/MCP on activation. `settings.json` is left unmanaged (Claude Code
+The module manages the config declaratively, adds `nodejs`, `bun` and `jq` (the gate
+scripts run from the harness's own `PATH`), and registers plugins/MCP on activation. `settings.json` is left unmanaged (Claude Code
 rewrites it at runtime) — seed it once:
 
 ```sh
@@ -419,7 +439,9 @@ shipped:
   which costs a docs read before the first `mem_*` call.
 - `model.toolCallLoopGuard.threshold`: omp's native loop guard (on, threshold 5) stands in
   for OpenCode's loop-breaker, which is not ported; lower it to steer sooner.
-- `tools.restrictedFolders`: folder-level protection for what the path gate cannot see.
+- `tools.restrictedFolders`: folder-level protection for what the path gate cannot see. It is
+  an approval prompt for any call at or below a listed folder and for a recursive search
+  rooted above one, in every approval mode; headless, it blocks.
 
 Notes:
 

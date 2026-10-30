@@ -40,7 +40,9 @@
 #
 # `permissionDecision: "deny"` is honored under `defaultMode: bypassPermissions` — measured
 # the same way, against a live armed repo, where the push was genuinely blocked. Recorded
-# because the sibling hooks return "ask" and only that value had been probed before.
+# because the sibling hooks return "ask" and only that value had been probed before. "ask" is
+# honored there too, which is why this gate drops it in that mode on purpose — see the `ask`
+# flag below the stdin read.
 #
 # ecomono: THE DELIVERY DETECTOR HAS AN OPEN CEILING, and the list below is not a list of bugs
 # to close — it is the shape of the problem. A hook sees `.tool_input.command` as a string and
@@ -92,8 +94,26 @@ set -uo pipefail
 
 command -v jq >/dev/null 2>&1 || exit 0
 
-cmd=$(cat | jq -r '.tool_input.command // empty' 2>/dev/null) || exit 0
+input=$(cat)
+cmd=$(printf '%s' "$input" | jq -r '.tool_input.command // empty' 2>/dev/null) || exit 0
 [ -n "$cmd" ] || exit 0
+
+# Under bypassPermissions the two "ask" sites below are advisory: that mode is the user's choice
+# of a session with no prompts, and a hook "ask" — honored there, see the header — reinstates
+# one. The reason still reaches the model as additionalContext and the banner still shows, but
+# the command runs, and the reason says so. The "deny" site is untouched: a deny is a block the
+# model can act on (run the review), not a question the user has to answer, so bypass has
+# nothing to say about it. Payloads without `permission_mode` (older Claude Code, the omp
+# runner) read as "not bypass" and keep the prompt.
+ask=true
+if [ "$(printf '%s' "$input" | jq -r '.permission_mode // empty' 2>/dev/null)" = bypassPermissions ]; then
+  ask=false
+fi
+advisory_note='
+
+The session is in bypassPermissions, so this gate was advisory and the command ran without a
+prompt. Whatever it delivered has not been measured against a receipt: fix the above, then run
+/ecomono-judgment against the delivered range.'
 
 # The same valve as an inline prefix on the command, which is how a user overrides one push
 # without exporting anything into the session. Three things have to hold, and each one is a
@@ -401,13 +421,10 @@ Fetch what is missing (\`git fetch --refetch\` on a partial clone, \`git fetch -
 a shallow one) and run the command again. Do not retry it unchanged first; it will land here
 again.
 EOF
-    jq -nc --arg r "$reason" --arg m "⚠ Review gate could not compute the subject hash: git diff failed." '{
-      hookSpecificOutput: {
-        hookEventName: "PreToolUse",
-        permissionDecision: "ask",
-        permissionDecisionReason: $r,
-        additionalContext: $r
-      },
+    [ "$ask" = true ] || reason="$reason$advisory_note"
+    jq -nc --argjson ask "$ask" --arg r "$reason" --arg m "⚠ Review gate could not compute the subject hash: git diff failed." '{
+      hookSpecificOutput: ({hookEventName: "PreToolUse", additionalContext: $r}
+        + (if $ask then {permissionDecision: "ask", permissionDecisionReason: $r} else {} end)),
       systemMessage: $m
     }'
     exit 0
@@ -424,7 +441,8 @@ EOF
   # usual refs resolving — the normal shape of a repo on `develop` with no upstream set yet.
   # Allowing silently is indistinguishable from a passing review, which is the failure this
   # gate exists to prevent, so it surfaces instead. "ask" rather than "deny" because the gate
-  # has no evidence about the bytes either way.
+  # has no evidence about the bytes either way — and advisory under bypassPermissions for the
+  # same reason: with no evidence there is nothing a block would be protecting.
   #
   # A configured base that does not resolve does NOT fall back to the candidate list. Falling
   # back would answer a typo by guessing, which is the exact failure the config exists to
@@ -459,13 +477,10 @@ not a passing review — it is the gate unable to run.
 
 $fixline Do not retry the command unchanged first; it will land here again.
 EOF
-  jq -nc --arg r "$reason" --arg m "⚠ Review mode is armed but no base branch resolves. Set git config ecomono.reviewBase." '{
-    hookSpecificOutput: {
-      hookEventName: "PreToolUse",
-      permissionDecision: "ask",
-      permissionDecisionReason: $r,
-      additionalContext: $r
-    },
+  [ "$ask" = true ] || reason="$reason$advisory_note"
+  jq -nc --argjson ask "$ask" --arg r "$reason" --arg m "⚠ Review mode is armed but no base branch resolves. Set git config ecomono.reviewBase." '{
+    hookSpecificOutput: ({hookEventName: "PreToolUse", additionalContext: $r}
+      + (if $ask then {permissionDecision: "ask", permissionDecisionReason: $r} else {} end)),
     systemMessage: $m
   }'
   exit 0

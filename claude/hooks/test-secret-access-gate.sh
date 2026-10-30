@@ -10,13 +10,21 @@ set -uo pipefail
 gate="$(dirname "$0")/secret-access-gate.sh"
 fail=0
 
-# decision <command> -> "allow" when the gate stays silent, else "<decision>:<reason>"
+# emit <command> -> the gate's raw stdout. MODE=<permission_mode> in the environment adds that
+# field to the payload; unset, the payload has none, which is what older Claude Code sends.
+emit() {
+  jq -nc --arg c "$1" --arg pm "${MODE:-}" \
+    '{tool_name:"Bash",tool_input:{command:$c}} + (if $pm == "" then {} else {permission_mode:$pm} end)' \
+    | "$gate"
+}
+# decision <command> -> "allow" when the gate stays silent, else "<decision>:<reason>"; an output
+# with no permissionDecision at all reads "advisory:<additionalContext>".
 decision() {
   local out
-  out=$(jq -nc --arg c "$1" '{tool_name:"Bash",tool_input:{command:$c}}' | "$gate")
+  out=$(emit "$1")
   [ -z "$out" ] && { echo allow; return; }
   printf '%s' "$out" \
-    | jq -r '.hookSpecificOutput.permissionDecision + ":" + .hookSpecificOutput.permissionDecisionReason' \
+    | jq -r '(.hookSpecificOutput.permissionDecision // "advisory") + ":" + (.hookSpecificOutput.permissionDecisionReason // .hookSpecificOutput.additionalContext)' \
     | tr '\n' ' '
 }
 
@@ -54,6 +62,21 @@ check "omp agent.db"             'cat ~/.omp/agent/agent.db'                '^as
 check "omp agent.db via sqlite"  'sqlite3 ~/.omp/profiles/work/agent/agent.db "select * from auth_credentials"' '^ask:'
 check "omp agent dir override"   'cp "$PI_CODING_AGENT_DIR/agent.db" /tmp/' '^ask:'
 check "omp agent.db wal"         'cp ~/.omp/agent/agent.db-wal /tmp/'       '^ask:'
+check "omp agent.db shm"         'cp ~/.omp/agent/agent.db-shm /tmp/'       '^ask:'
+check "omp agent.db journal"     'cat ~/.omp/agent/agent.db-journal'        '^ask:'
+check "omp agent.db, quoted"     'sqlite3 "$HOME/.omp/agent/agent.db" .tables' '^ask:'
+check "omp agent.db at the end"  'sqlite3 .tables ~/.omp/agent/agent.db'    '^ask:'
+check "omp agent.db selector"    'omp read ~/.omp/agent/agent.db:auth_credentials' '^ask:'
+check "omp agent.db selector, a/b" 'omp read ~/.omp/agent/agent.db:auth_credentials:a/b' '^ask:'
+# omp prints the credentials itself, with no agent.db on the command line.
+check "omp auth export"          'omp auth export'                          '^ask:'
+check "omp auth export to file"  'omp auth export > creds.json'             '^ask:'
+check "omp auth export, profile" 'omp --profile=work auth export'           '^ask:'
+check "omp auth export, profile arg" 'omp --profile work auth export | jq .' '^ask:'
+check "omp auth export by path"  '/usr/bin/omp auth   export'               '^ask:'
+check "omp token"                'omp token anthropic'                      '^ask:'
+check "omp token, bare"          'omp token'                                '^ask:'
+check "omp token in a pipeline"  'x=$(omp --profile=work token openai --raw)' '^ask:'
 
 echo
 echo "-- not gated: ordinary commands that must never prompt"
@@ -69,6 +92,25 @@ check "word secret, no path"     'rg secret src/'                           '^al
 check "keychains without path"   'echo Keychains'                          '^allow$'
 check "agent.db is a whole name" 'sqlite3 myagent.db .tables'              '^allow$'
 check "agent dir, not its db"    'ls ~/.omp/agent/'                         '^allow$'
+check "agent.db.ts is not agent.db" 'cat src/agent.db.ts'                   '^allow$'
+check "agent.dbx is not agent.db"   'cat agent.dbx'                         '^allow$'
+check "omp auth import"          'omp auth import creds.json'               '^allow$'
+check "omp auth, no export"      'omp auth --help'                          '^allow$'
+check "omp toks is not token"    'omp toks README.md'                       '^allow$'
+check "omp tokens is not token"  'omp tokens'                               '^allow$'
+check "word token after omp"     'omp -p "count the token budget"'          '^allow$'
+check "romp is not omp"          'romp token'                               '^allow$'
+
+echo
+echo "-- opencode.json permission.bash carries the omp entries as ask"
+# OpenCode's bash permission is glob-only, so it asks on the name and on the two commands; the
+# read globs (`**/agent.db`, `**/agent.db-*`) are checked by omp/tests/test_paths.ts.
+oc="$(dirname "$0")/../../opencode/opencode.json"
+for key in '*agent.db*' '*omp auth export*' '*omp token*'; do
+  jq -e --arg k "$key" '.permission.bash[$k] == "ask"' "$oc" >/dev/null \
+    && echo "ok   permission.bash \"$key\" is ask" \
+    || { echo "FAIL permission.bash \"$key\" is not ask"; fail=1; }
+done
 
 echo
 echo "-- decision shape and reason content"
@@ -122,5 +164,23 @@ empty=$(mktemp -d)
 out=$(jq -nc '{tool_input:{command:"cat ~/.ssh/id_rsa"}}' | PATH="$empty" "$sh_bin" "$gate") || true
 rmdir "$empty"
 [ -z "$out" ] && echo "ok   missing jq fails open" || { echo "FAIL missing jq blocked"; fail=1; }
+
+echo
+echo "-- bypassPermissions: advisory, never a prompt; every other mode still asks"
+MODE=bypassPermissions check "gated command is advisory under bypass"   'cat ~/.ssh/id_ed25519' '^advisory:'
+MODE=bypassPermissions check "advisory reason says it ran unprompted"   'cat ~/.ssh/id_ed25519' 'ran without a prompt'
+MODE=bypassPermissions check "ungated command stays silent under bypass" 'git status --short'   '^allow$'
+MODE=default           check "default mode still asks"                  'cat ~/.ssh/id_ed25519' '^ask:'
+MODE=acceptEdits       check "acceptEdits still asks"                   'cat ~/.ssh/id_ed25519' '^ask:'
+raw=$(MODE=bypassPermissions emit 'cat ~/.ssh/id_rsa')
+printf '%s' "$raw" | jq -e '.hookSpecificOutput | has("permissionDecision") | not' >/dev/null \
+  && echo "ok   bypass output carries no permissionDecision at all" \
+  || { echo "FAIL bypass output still carries a permissionDecision"; fail=1; }
+printf '%s' "$raw" | jq -e '.systemMessage | test("without a prompt")' >/dev/null \
+  && echo "ok   bypass banner says it ran without a prompt" \
+  || { echo "FAIL bypass banner does not say it ran"; fail=1; }
+printf '%s' "$raw" | grep -Eqi 'answers the prompt|Confirm before it runs|Do not retry' \
+  && { echo "FAIL bypass text still talks about a prompt or a retry"; fail=1; } \
+  || echo "ok   bypass text promises no prompt and no retry"
 
 exit $fail

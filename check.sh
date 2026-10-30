@@ -23,6 +23,7 @@ run "agent model gate"             bash claude/hooks/test-agent-model-gate.sh
 run "workflow model gate"          bash claude/hooks/test-workflow-model-gate.sh
 run "heavy skill gate"             bash claude/hooks/test-heavy-skill-gate.sh
 run "secret access gate"           bash claude/hooks/test-secret-access-gate.sh
+run "diff size gate"               bash claude/hooks/test-check-diff-size.sh
 run "judge standards gate"         bash claude/hooks/test-judge-standards-gate.sh
 run "review receipt gate"          bash claude/hooks/test-review-receipt-gate.sh
 run "persona drift"                bash check-persona-drift.sh
