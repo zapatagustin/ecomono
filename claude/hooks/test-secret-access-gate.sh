@@ -80,6 +80,8 @@ check "omp token in a pipeline"  'x=$(omp --profile=work token openai --raw)' '^
 check "omp auth-broker token"    'omp auth-broker token'                    '^ask:'
 check "omp auth-gateway token"   'omp auth-gateway token --json'            '^ask:'
 check "omp auth-broker, profile" 'omp --profile=work auth-broker token --regenerate' '^ask:'
+check "omp auth-broker, flag first" 'omp auth-broker --json token'           '^ask:'
+check "omp auth-gateway, option first" 'omp auth-gateway -b x token'         '^ask:'
 check "auth-broker token file"   'cat ~/.omp/auth-broker.token'             '^ask:'
 check "auth-gateway token file"  'cp ~/.omp/auth-gateway.token /tmp/'       '^ask:'
 
@@ -111,11 +113,12 @@ check "omp auth-gateway status"  'omp auth-gateway status'                  '^al
 echo
 echo "-- opencode.json permission.bash carries the omp entries as ask"
 # OpenCode's bash permission is glob-only, so it asks on the names and on the commands, with and
-# without leading long flags; the read globs (`**/agent.db`, `**/agent.db-*`, `**/auth-broker.token`,
+# without leading long flags and options before `token`; the read globs (`**/agent.db`, `**/agent.db-*`, `**/auth-broker.token`,
 # `**/auth-gateway.token`) are checked by omp/tests/test_paths.ts.
 oc="$(dirname "$0")/../../opencode/opencode.json"
 for key in '*agent.db*' '*auth-broker.token*' '*auth-gateway.token*' '*omp auth export*' '*omp token*' \
-  '*omp --* auth export*' '*omp --* token*' '*omp auth-broker token*' '*omp auth-gateway token*'; do
+  '*omp --* auth export*' '*omp --* token*' '*omp auth-broker token*' '*omp auth-gateway token*' \
+  '*omp auth-broker * token*' '*omp auth-gateway * token*'; do
   jq -e --arg k "$key" '.permission.bash[$k] == "ask"' "$oc" >/dev/null \
     && echo "ok   permission.bash \"$key\" is ask" \
     || { echo "FAIL permission.bash \"$key\" is not ask"; fail=1; }

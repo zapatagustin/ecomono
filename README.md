@@ -155,7 +155,8 @@ there is a model that knows it touched a secret, not a user who approved it. Swi
 `opencode.json` gets the same paths under `permission.bash`, omp's `agent.db`, its
 `auth-broker.token` / `auth-gateway.token` and the commands that print credentials included
 (`omp auth export`, `omp token`, `omp auth-broker token`, `omp auth-gateway token`, each also
-after a leading long flag such as `--profile=work`). That side is glob-only with no safe way to
+after a leading long flag such as `--profile=work`, and the last two also with options before
+`token`, such as `--json`). That side is glob-only with no safe way to
 express an exception (an allow glob for `.env.example` would also pass a command that names
 `.env.local` next to it), so `cat .env.example` prompts there while the Claude Code hook stays
 quiet on it, `*agent.db*` also asks on a file such as `agent.db.ts`, `*omp token*` also asks on

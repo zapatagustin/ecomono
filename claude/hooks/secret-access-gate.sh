@@ -96,8 +96,9 @@ patterns=(
   # omp prints those credentials itself: `omp auth export` dumps every one as JSON, `omp token <provider>` one
   # key or OAuth token, and `omp auth-broker token` / `omp auth-gateway token` the broker's and the gateway's
   # bearer token. None names agent.db. Long flags before the subcommand (`--profile=work`, `--profile work`)
-  # are skipped over.
-  '(^|[^A-Za-z0-9_.-])omp([[:space:]]+--[A-Za-z][^[:space:]]*([[:space:]]+[^-[:space:]][^[:space:]]*)?)*[[:space:]]+(auth[[:space:]]+export|token|auth-(broker|gateway)[[:space:]]+token)($|[^A-Za-z0-9_-])'
+  # are skipped over, and so are options between `auth-broker` / `auth-gateway` and `token` (`--json`, `-b x`):
+  # omp parses its argv with node:util parseArgs, which interleaves flags and positionals.
+  '(^|[^A-Za-z0-9_.-])omp([[:space:]]+--[A-Za-z][^[:space:]]*([[:space:]]+[^-[:space:]][^[:space:]]*)?)*[[:space:]]+(auth[[:space:]]+export|token|auth-(broker|gateway)([[:space:]]+-[^[:space:]]*([[:space:]]+[^-[:space:]][^[:space:]]*)?)*[[:space:]]+token)($|[^A-Za-z0-9_-])'
   # Those two bearer tokens, as files in omp's config root (~/.omp; omp: cli/auth-broker-cli.ts,
   # cli/auth-gateway-cli.ts). Same names as the `**/auth-broker.token` and `**/auth-gateway.token` read globs.
   'auth-(broker|gateway)\.token'
