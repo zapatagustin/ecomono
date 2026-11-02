@@ -809,8 +809,11 @@ either way the call was refused, so only the refusal text changes. This is not a
     candidate also tested at its symlink target. The last matching key wins, as in OpenCode, and
     `test_paths.ts` holds the keys in byte order, the order the Nix deploy gives OpenCode. A file whose name ends
     in one of the six template names `secret-access-gate.sh` scrubs (its `for benign in` line, read by the
-    extension) is not denied by that name, while a directory glob still denies it, so the read gate lets through
-    the exact template names the bash gate does. The bash scrub drops the name anywhere in the command, so
+    extension) is judged by the name left without the template, while a directory glob still denies it, so the
+    read gate judges what the bash scrub leaves: `prod.env.example` passes both, `server.key.env.example` is
+    denied as `server.key`. The read globs and the bash patterns are not the same set, so a name only one of them
+    covers still splits them (`id_rsa.env.example` leaves `id_rsa`, which the bash gate asks about and no read
+    glob names outside `.ssh/`). The bash scrub drops the name anywhere in the command, so
     `cat .env.example.local` passes it while the read gate denies that file. The templates are not `allow` keys
     in `opencode.json`: OpenCode turns `*` and `**` alike into `.*`, which matches `/`, and its last matching key
     wins (`packages/core/src/util/wildcard.ts`, `permission` `evaluate`), so `*.env.example` there would also

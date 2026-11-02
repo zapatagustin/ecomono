@@ -521,8 +521,9 @@ export function ecomono(o: { repo: string; hooksDir?: string; timeoutMs?: number
     }
 
     // The `.env` templates the bash gate lets through (`.env.example`, ...), from the `for benign in` line of
-    // claude/hooks/secret-access-gate.sh, read on first use and cached, so the two gates share one list. deny() does
-    // not deny a file whose name ends in one by that name; a directory glob still denies it through the "/x" probe.
+    // claude/hooks/secret-access-gate.sh, read on first use and cached, so the two gates share one list. deny() judges
+    // a file whose name ends in one by the name left without it, as the bash gate judges a command after scrubbing
+    // the template out; a directory glob still denies it through the "/x" probe.
     // They are not "allow" keys in opencode.json: OpenCode's `*` also matches "/" (packages/core/src/util/wildcard.ts)
     // and its last matching key wins, so an allow for `*.env.example` would lift `**/secrets/**` and `**/.ssh/**`
     // there too. OpenCode therefore denies the templates (docs/DESIGN.md, omp target > Handler contracts). A gate
@@ -552,7 +553,9 @@ export function ecomono(o: { repo: string; hooksDir?: string; timeoutMs?: number
     // "/". Each candidate is also tested with "/x" appended, because `**/.ssh/**` does not match the directory
     // itself, only what is below it, and so is its symlink-resolved form (realish). Any probe that ends on a deny
     // is enough, so an allowed file inside a denied directory still meets that directory's glob through "/x". The
-    // probe of a file named for a `.env` template (templates()) is the one that never denies: only its "/x" can.
+    // probe of a file named for a `.env` template (templates()) is judged without the template: `.env.example` and
+    // `prod.env.example` pass, `server.key.env.example` meets `**/*.key` as `server.key`. Its "/x" probe is judged
+    // as any other.
     // Shared by the tool_call path gate, the task @-mention, taskFile and sourceSession checks, and the read, search
     // and xd://resolve write post-checks, so a target omp resolved gets the same verdict as one the model typed.
     // A glob is matched only when every literal run of it is in the probe (tokens, globs() above): a directory read
@@ -563,6 +566,14 @@ export function ecomono(o: { repo: string; hooksDir?: string; timeoutMs?: number
     const deny = (ctx: any, values: string[]): { value: string; glob: string } | undefined => {
       const list = globs()
       if (!list.some((g) => g.deny)) return undefined
+      const lastMatch = (probe: string) => {
+        const name = basename(probe)
+        const rooted = probe.replace(/^\//, "")
+        return list.findLast(({ whole, matcher, tokens }) => {
+          const s = whole ? rooted : name
+          return tokens.every((t) => s.includes(t)) && matcher.match(s)
+        })
+      }
       for (const value of values) {
         for (const part of pathParts(value)) {
           const path = resolvePart(ctx.cwd, part)
@@ -571,13 +582,17 @@ export function ecomono(o: { repo: string; hooksDir?: string; timeoutMs?: number
             const real = realish(candidate)
             for (const c of real === candidate ? [candidate] : [candidate, real]) {
               for (const probe of [c, `${c}/x`]) {
-                const name = basename(probe)
-                const rooted = probe.replace(/^\//, "")
-                const last = list.findLast(({ whole, matcher, tokens }) => {
-                  const s = whole ? rooted : name
-                  return tokens.every((t) => s.includes(t)) && matcher.match(s)
-                })
-                if (last?.deny && !(probe === c && templates().some((t) => name.endsWith(t)))) return { value, glob: last.glob }
+                const name = basename(c)
+                const template = probe === c ? templates().find((t) => name.endsWith(t)) : undefined
+                if (template === undefined) {
+                  const last = lastMatch(probe)
+                  if (last?.deny) return { value, glob: last.glob }
+                  continue
+                }
+                // The name the template leaves, whatever the full name matched; a bare template (`.env.example`)
+                // leaves none, and passes.
+                const rest = name === template ? undefined : lastMatch(join(dirname(c), name.slice(0, -template.length)))
+                if (rest?.deny) return { value, glob: rest.glob }
               }
             }
           }

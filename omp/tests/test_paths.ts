@@ -4,7 +4,7 @@
 // from os.homedir(); HOME is never changed (Bun's os.homedir() ignores a runtime change).
 import { dir, makeCtx, makePi, withEnv } from "./fake-pi.ts"
 import assert from "node:assert/strict"
-import { mkdirSync, readFileSync, symlinkSync, writeFileSync } from "node:fs"
+import { copyFileSync, mkdirSync, readFileSync, symlinkSync, writeFileSync } from "node:fs"
 import { homedir } from "node:os"
 import { join } from "node:path"
 import { REPO, ecomono } from "../extensions/ecomono/index.ts"
@@ -88,6 +88,19 @@ const sample = (glob: string) => glob.replace(/\*\*\//g, "/x/").replace(/\*\*/g,
     assert.equal(await syntax.fire("tool_call", call("read", { path: p }), syntax.ctx), undefined, p)
   }
 
+  // A template-named file is judged by the name left even when the full name meets no deny key: with no `*.env.*` key,
+  // `server.key.env.example` is denied as `server.key`, and a bare template and an unrelated name pass.
+  // The fixture repo carries the bash gate too: the templates are read from it.
+  const noEnvRepo = dir("repo")
+  mkdirSync(join(noEnvRepo, "opencode"))
+  mkdirSync(join(noEnvRepo, "claude/hooks"), { recursive: true })
+  copyFileSync(join(REPO, "claude/hooks/secret-access-gate.sh"), join(noEnvRepo, "claude/hooks/secret-access-gate.sh"))
+  writeFileSync(join(noEnvRepo, "opencode/opencode.json"), JSON.stringify({ permission: { read: { "*": "allow", "**/*.key": "deny" } } }))
+  const noEnv = setup(noEnvRepo)
+  for (const [p, blocked] of [["server.key.env.example", true], ["prod.env.example", false], [".env.example", false]] as const) {
+    assert.equal((await noEnv.fire("tool_call", call("read", { path: p }), noEnv.ctx))?.block === true, blocked, p)
+  }
+
   // The extension reads the keys in file order and OpenCode gets them in byte order on the Nix deploy (builtins.toJSON
   // sorts attribute names), so the file keeps them in byte order: both hosts then see the same last match.
   const keys = Object.keys(readRules)
@@ -105,13 +118,20 @@ const sample = (glob: string) => glob.replace(/\*\*\//g, "/x/").replace(/\*\*/g,
   const ompVerdict = async (path: string) =>
     (await real.fire("tool_call", call("read", { path }), real.ctx))?.block === true ? "deny" : "allow"
   // Both hosts agree on a template inside a denied directory, on the `.env` names, and on omp's credential store.
+  // A template whose name, without it, meets a glob of its own is denied too: the extension judges what the bash
+  // gate's scrub leaves.
   const agreed: Array<[string, string]> = [
+    ["/h/server.key.env.example", "deny"],
+    ["/h/a.pem.env.example", "deny"],
+    ["/h/.omp/agent/agent.db.env.example", "deny"],
+    ["x/credentials.json.env.example", "deny"],
     ["x/secrets/.env.example", "deny"],
     ["/h/.ssh/x.env.sample", "deny"],
     ["/h/.credentials/a.env.dist", "deny"],
     ["/U/Library/Keychains/k.env.template", "deny"],
     ["config/.env", "deny"],
     [".env.example.local", "deny"],
+    [".env.example.env.example", "deny"],
     ["/h/.omp/agent/agent.db", "deny"],
     ["/h/.omp/agent/agent.db-wal", "deny"],
     ["/h/.omp/auth-broker.token", "deny"],
@@ -123,8 +143,9 @@ const sample = (glob: string) => glob.replace(/\*\*\//g, "/x/").replace(/\*\*/g,
     assert.equal(ocVerdict(path), verdict, `OpenCode: ${path}`)
     assert.equal(await ompVerdict(path), verdict, `omp: ${path}`)
   }
-  // The one drift, documented: OpenCode denies a template the omp extension and the bash gate let through.
-  for (const path of [".env.example", "config/.env.sample"]) {
+  // The one drift, documented: OpenCode denies a template the omp extension and the bash gate let through. That
+  // includes `id_rsa.env.example`: no read glob names `id_rsa` outside `.ssh/`, so omp allows what the name leaves.
+  for (const path of [".env.example", "config/.env.sample", "src/prod.env.example", "id_rsa.env.example"]) {
     assert.equal(ocVerdict(path), "deny", `OpenCode: ${path}`)
     assert.equal(await ompVerdict(path), "allow", `omp: ${path}`)
   }

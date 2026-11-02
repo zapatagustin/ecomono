@@ -200,11 +200,13 @@ data above instead of restating it:
   answer, writes to a denied file the path gate cannot see go through, and so do reads inside a
   seance subagent; all three are ceilings, below. A file named for one of the
   `.env` templates the bash gate lets through (`.env.example`, `.sample`, `.template`, `.dist`,
-  `.defaults`, `.schema`, read from the gate's own list) is not denied by its name, though a
-  denied directory still covers it. OpenCode itself denies those templates: an allow key for
-  them would, under its `*`-matches-`/` wildcard, also lift `secrets/` and `.ssh/`. The
-  globs include omp's own credential store, `agent.db` and its `-wal` / `-shm` / `-journal`
-  siblings, and its `auth-broker.token` / `auth-gateway.token` bearer tokens
+  `.defaults`, `.schema`, read from the gate's own list) is judged by the name left without the
+  template, as the bash gate judges a command after scrubbing it: `prod.env.example` passes,
+  `server.key.env.example` is denied as `server.key`, and a denied directory still covers both.
+  OpenCode itself denies those templates: an allow key for them would, under its
+  `*`-matches-`/` wildcard, also lift `secrets/` and `.ssh/`. The globs include omp's own
+  credential store, `agent.db` and its `-wal` / `-shm` / `-journal` siblings, and its
+  `auth-broker.token` / `auth-gateway.token` bearer tokens
   (`secret-access-gate.sh` names them for bash, plus `omp auth export`, `omp token`,
   `omp auth-broker token` and `omp auth-gateway token`, which print them): omp keeps
   provider credentials in plaintext there.
