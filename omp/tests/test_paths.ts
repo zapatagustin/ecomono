@@ -147,8 +147,9 @@ const sample = (glob: string) => glob.replace(/\*\*\//g, "/x/").replace(/\*\*/g,
     assert.equal(ocVerdict(path), verdict, `OpenCode: ${path}`)
     assert.equal(await ompVerdict(path), verdict, `omp: ${path}`)
   }
-  // The one drift, documented: OpenCode denies a template the omp extension and the bash gate let through. That
-  // includes `id_rsa.env.example`: no read glob names `id_rsa` outside `.ssh/`, so omp allows what the name leaves.
+  // The drifts, documented: OpenCode denies a template the omp extension lets through. The bash gate lets the first
+  // three through as well. `id_rsa.env.example` is a second drift: no read glob names `id_rsa` outside `.ssh/`, so omp
+  // allows what the name leaves, while the bash gate's `id_rsa` pattern asks about it.
   for (const path of [".env.example", "config/.env.sample", "src/prod.env.example", "id_rsa.env.example"]) {
     assert.equal(ocVerdict(path), "deny", `OpenCode: ${path}`)
     assert.equal(await ompVerdict(path), "allow", `omp: ${path}`)

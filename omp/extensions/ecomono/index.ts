@@ -597,10 +597,10 @@ export function ecomono(o: { repo: string; hooksDir?: string; timeoutMs?: number
                   if (last?.deny) return { value, glob: last.glob }
                   continue
                 }
-                // The name the template leaves, whatever the full name matched; a bare template (`.env.example`)
-                // leaves none, and passes.
-                const rest = name === template ? undefined : lastMatch(join(dirname(c), name.slice(0, -template.length)))
-                if (rest?.deny) return { value, glob: rest.glob }
+                // Decided on the name the template leaves, in the same directory, never on the full name, whatever
+                // that matched; a bare template (`.env.example`) leaves none, and passes.
+                const remainder = name === template ? undefined : lastMatch(join(dirname(c), name.slice(0, -template.length)))
+                if (remainder?.deny) return { value, glob: remainder.glob }
               }
             }
           }
@@ -879,7 +879,7 @@ export function ecomono(o: { repo: string; hooksDir?: string; timeoutMs?: number
     // mounts every MCP tool on every agent, so the same line is enforced here. The tool arrives under its own
     // name even when the model reaches it through `write xd://mcp__ecomono_memory_<tool>`: omp fires a second
     // tool_call for the inner call (spike 2, docs/DESIGN.md, omp target > Spike results, row 2), so this one
-    // branch covers both routes.
+    // check covers both routes.
     const memoryCall = (toolName: string, ctx: any) => {
       const agent = ctx?.agent
       if (agentKind(ctx) !== "sub") return undefined

@@ -1076,8 +1076,9 @@ were re-pinned.
 ### Spike results
 
 Recorded for omp 18.13.3; this table is the record the code comments cite. Every spike ran offline against a
-mock provider, in a temp tree, with the data and state directories isolated. The spikes were not re-run on 18.14.0 or 18.15.0;
-both re-diffs above found the surfaces they recorded unchanged.
+mock provider, in a temp tree, with the data and state directories isolated. The spikes were not re-run on 18.14.0
+or 18.15.0; both re-diffs above found the loader and event surfaces they recorded unchanged, and what they list as
+changed lies outside them.
 
 | Spike | Result | Consumed as |
 |---|---|---|
