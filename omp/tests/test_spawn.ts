@@ -495,12 +495,14 @@ const never = () => new Promise(() => {})
   assert.ok(none.calls.warn[0].includes("unexpected omp shape, pi.pi.VERSION"), none.calls.warn[0])
   assert.equal(none.ctx.recorded.notify.length, 0)
 
-  // A throwing getter: logged, and the registry refresh of the same prompt still runs.
+  // A throwing getter: logged once across two prompts, and the registry refresh of each prompt still runs.
   const broken = versioned(undefined)
   Object.defineProperty(broken.pi, "pi", { get: () => { throw new Error("no sdk") } })
   assert.equal(await broken.fire("before_agent_start", prompt, broken.ctx), undefined)
-  assert.equal(broken.calls.exec.length, 1, "the refresh ran")
-  assert.ok(broken.calls.warn.some((l) => l.includes("omp version not checked") && l.includes("no sdk")), broken.calls.warn.join("\n"))
+  await broken.fire("before_agent_start", prompt, broken.ctx)
+  assert.equal(broken.calls.exec.length, 2, "the refresh ran")
+  const unread = broken.calls.warn.filter((l) => l.includes("omp version not checked"))
+  assert.ok(unread.length === 1 && unread[0].includes("no sdk"), broken.calls.warn.join("\n"))
   assert.equal(mismatch(broken).length, 0)
 
   // Another omp: one warning across two prompts and a second factory (a subagent's, or a new session's).

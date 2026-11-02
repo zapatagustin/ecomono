@@ -1217,10 +1217,12 @@ export function ecomono(o: { repo: string; hooksDir?: string; timeoutMs?: number
     // session_start: in omp 18.14.0 `pi.pi` is a getter that requires the SDK index on first access (omp:
     // extensibility/extensions/loader.ts:211-213, extensibility/host-api.ts:3-6), about 50 ms measured in print mode
     // that would otherwise land on startup. Its own safe(), so a throwing getter costs this check and never the
-    // refresh or the capture.
+    // refresh or the capture. A throw ends the check for the session (versionUnread), so it logs once and not on
+    // every prompt; the flag is the factory's, so it never silences the check in another session.
+    let versionUnread = false
     const checkVersion = safe(
       (ctx: any) => {
-        if (versionWarned || agentKind(ctx) !== "main") return
+        if (versionWarned || versionUnread || agentKind(ctx) !== "main") return
         const running = (pi as any).pi?.VERSION
         if (typeof running !== "string") return drift("pi.pi.VERSION", "not a string")
         if (running === OMP_TESTED) return
@@ -1229,7 +1231,10 @@ export function ecomono(o: { repo: string; hooksDir?: string; timeoutMs?: number
         stateLog(text)
         warnOnce(ctx, text)
       },
-      (why) => pi.logger.warn(`ecomono: omp version not checked: ${why}`),
+      (why) => {
+        versionUnread = true
+        pi.logger.warn(`ecomono: omp version not checked: ${why}`)
+      },
     )
 
     // Every prompt, so a skill added mid-session is in the registry by the next one, and so the prompt is saved.
