@@ -739,6 +739,163 @@ export function ecomono(o: { repo: string; hooksDir?: string; timeoutMs?: number
         ),
       )
 
+    const bashCall = (input: any, ctx: any) => {
+      if (typeof input.command !== "string") return undefined
+      const command: string = input.command
+      const denied = literals()
+      if (denied.length > 0) {
+        for (const segment of command.split(/\|\||&&|[;|&\n]/).map(normalize)) {
+          if (denied.includes(segment)) {
+            return {
+              block: true,
+              reason: `Blocked: "${segment}" is on the deny list in claude/settings.template.json, which this omp extension enforces for bash.`,
+            }
+          }
+        }
+      }
+      // A cwd that is an internal URL (skill://, local://, ...) has no host directory to run a script in, yet omp
+      // still runs the command, in its embedded shell, which reads host files and runs external programs
+      // (omp: tools/bash.ts:1127-1147; internal-urls/url-filesystem.ts:4-6,289-294,559). Such a call is judged
+      // on the session cwd, like a call with no cwd: the secret gate reads only the command text, and the
+      // delivery gates then judge the session repository, which can only err toward a block.
+      const raw = typeof input.cwd === "string" ? input.cwd : ""
+      const cwd = (raw ? ompPath(ctx.cwd, raw) : undefined) ?? ctx.cwd
+      return runGates(["secret-access-gate", "check-diff-size", "review-receipt-gate"], command, cwd, ctx)
+    }
+
+    const githubCall = (input: any, ctx: any) => {
+      const command = input.op === "pr_create" ? "gh pr create" : "git push"
+      return runGates(["check-diff-size", "review-receipt-gate"], command, ctx.cwd, ctx)
+    }
+
+    // Hard deny, no valve (neither host's read deny has one): the globs are opencode.json's own, the ones
+    // OpenCode enforces natively on its read tool.
+    // ecomono: the gate checks the roots a call names, never the walk beneath them. grep, glob, find, ast_grep
+    // and ast_edit over a parent directory, a root with glob characters or no path at all can still reach a
+    // denied file; the tool_result search post-check below withholds a result that lists one. Ceiling: it sees
+    // the paths omp reports in `details`, nothing else. Upgrade path: omp's tools.restrictedFolders.
+    // ecomono: ceiling, writes. This is a read guard (see the header), so a write to a denied file through a
+    // call whose target this gate cannot see is accepted, in the same class as eval and debug, which read and
+    // write anything. ast_edit only stages its edits: it runs as a dry run, returns the diff as a preview and
+    // queues the apply, which runs when the model writes a reason to xd://resolve (omp: tools/ast-edit.ts:
+    // 290-300,437-447; tools/resolve.ts). A pathless or parent-rooted ast_edit can therefore write a denied
+    // file; the preview and the resolve result that list it are withheld (tool_result below), the write is not.
+    // No tool_call can tell which staged preview a resolve applies: ast_edit runs as the xd://ast_edit device
+    // by default, so its tool_call fires nested, after a resolve in the same message was already judged. Bash
+    // outside the secret gate's patterns writes too. Upgrade path: astEdit.enabled: false, eval.py and
+    // eval.js: false, debug.enabled: false, or omp's tools.restrictedFolders, an approval prompt for any call at
+    // or below a listed folder.
+    const pathCall = (toolName: string, input: any, ctx: any) => {
+      const values = [...strings(input.path), ...strings(input.paths)]
+      if (toolName === "read" && values.length === 0) drift("read tool_call", "the input has no string path or paths")
+      if (toolName === "edit") values.push(...editTargets(input))
+      const hit = deny(ctx, values)
+      if (!hit) return undefined
+      return {
+        block: true,
+        reason: `Blocked: ${toolName} "${hit.value}" is denied by "${hit.glob}" in opencode/opencode.json (permission.read), which this omp extension enforces for path tools.`,
+      }
+    }
+
+    // Every item with an agent goes through the judge gate; the script alone knows which agents are judges,
+    // so there is no list of judge names here. The prompt is rebuilt from the two fields omp hands the child as
+    // text: the batch `context` (its subagent system prompt, omp: task/executor.ts:3976,4786) and the item's
+    // `task` (the initial prompt, executor.ts:2531), each in the form repairedTask gives, because omp repairs a
+    // double-encoded field after this event and the heading is judged where the child reads it. `solutionSpace`
+    // is left out on purpose: omp feeds it only to the auto-thinking classifier
+    // (session/agent-session-types.ts:457), so a heading that sits only there never reaches the judge. omp drops
+    // `context` when task.batch is off, but then it rejects a call that carries one (task/index.ts:235-247), so
+    // no judge launches without it.
+    // ecomono: an eval `agent()` spawn of a judge skips this gate. before_subagent_spawn carries no prompt
+    // (omp: extensibility/extensions/types.ts:1174-1186), so there is nothing to hand the script. Upgrade
+    // path: when such a spawn is observed, run the script with an empty prompt from before_subagent_spawn.
+    // Before the judge gate, the path deny on the @-mentions of every item's `task`, whatever its agent: omp
+    // reads each mentioned file into the child's first prompt with no tool_call (task/executor.ts:2498,2531;
+    // session/agent-session.ts:8882-8891). `context` becomes the system prompt and is never scanned for
+    // mentions, so it is not checked. fileMentions scans each `task` as typed and as repairedTask decodes it.
+    // An item has two file fields. `taskFile` (setting task.file, off by default) is an absolute path or local://
+    // URL whose contents omp reads at dispatch and hands the child as its `task` (task/index.ts:373-408).
+    // `sourceSession` (the bundled seance agent, advertised by default: task.disabledAgents is []) names the omp
+    // session a seance child forks: a value with `/` or `\`, or ending in `.jsonl`, is a path resolved against
+    // cwd and read; any other is an id omp looks up in its own session directories, never a path the caller names
+    // (task/seance.ts:110-132). Both paths are denied like a path tool's, top-level and per item; local:// is
+    // skipped as an internal URL. The schema omp runs (createTaskSchema, task/types.ts:53-73,172-260) has no
+    // other path field and deletes every other unknown key (`"+": "delete"`), so there is nothing else to deny.
+    // ecomono: ceiling. A seance child loads no extensions (task/seance-policy.ts disableExtensionDiscovery), so
+    // its read, grep and glob skip the path deny and its answer returns here as the task result. Upgrade path:
+    // task.disabledAgents: ["seance"].
+    // ecomono: ceiling. A taskFile's contents are read after this event, so their @-mentions and, for a judge,
+    // their headings are not checked: a same-message write can change them after any check here. Upgrade path:
+    // keep task.file off (omp's default), or omp's tools.restrictedFolders, which covers task files.
+    // ecomono: other text omp sends through the same prompt path, such as the queued hidden next-turn messages
+    // (session/agent-session.ts:9856-9871), has its mentions read too and is not seen here. Upgrade path: deny
+    // their mentions at the event that carries them, if one is ever exposed to extensions.
+    const taskCall = async (input: any, ctx: any) => {
+      if (!Array.isArray(input.tasks) && typeof input.agent !== "string") drift("task tool_call", "the input has neither tasks[] nor a string agent")
+      const items: unknown[] = Array.isArray(input.tasks) ? input.tasks : [input]
+      const taskFile = deny(ctx, [input, ...items].flatMap((item: any) => strings(item?.taskFile)))
+      if (taskFile) {
+        return {
+          block: true,
+          reason: `Blocked: taskFile "${taskFile.value}" is denied by "${taskFile.glob}" in opencode/opencode.json (permission.read); omp reads a taskFile into the subagent's first prompt.`,
+        }
+      }
+      const sources = [input, ...items].flatMap((item: any) => strings(item?.sourceSession).filter((s) => /[/\\]|\.jsonl$/.test(s.trim())))
+      const sourceSession = deny(ctx, sources)
+      if (sourceSession) {
+        return {
+          block: true,
+          reason: `Blocked: sourceSession "${sourceSession.value}" is denied by "${sourceSession.glob}" in opencode/opencode.json (permission.read); omp reads a sourceSession path into a seance subagent.`,
+        }
+      }
+      const mentions = items.flatMap((item: any) => (typeof item?.task === "string" ? fileMentions(item.task) : []))
+      const mentioned = deny(ctx, mentions)
+      if (mentioned) {
+        return {
+          block: true,
+          reason: `Blocked: task mention "@${mentioned.value}" is denied by "${mentioned.glob}" in opencode/opencode.json (permission.read); omp reads @-mentioned files into the subagent's first prompt.`,
+        }
+      }
+      const name = "judge-standards-gate"
+      const results = await Promise.all(
+        items.flatMap((item: any) => {
+          if (typeof item?.agent !== "string") return []
+          // The fields as the child gets them: each one through omp's own double-encoding repair (repairedTask).
+          const prompt = [input.context, item.task]
+            .filter((s): s is string => typeof s === "string" && s !== "")
+            .map(repairedTask)
+            .join("\n")
+          // omp trims the agent name before the lookup (task/index.ts spawnParamsFor), and the script matches
+          // it exactly, so a padded judge name would otherwise slip past.
+          const payload = { tool_input: { subagent_type: item.agent.trim(), prompt } }
+          return [gate(name, payload, ctx.cwd, ctx).then((r) => ({ name, r }))]
+        }),
+      )
+      return decide(ctx, results)
+    }
+
+    // Memory write guard: Claude restricts a subagent to the memory tools its own `tools:` line lists, and omp
+    // mounts every MCP tool on every agent, so the same line is enforced here. The tool arrives under its own
+    // name even when the model reaches it through `write xd://mcp__ecomono_memory_<tool>`: omp fires a second
+    // tool_call for the inner call (spike 2, docs/DESIGN.md, omp target > Spike results, row 2), so this one
+    // branch covers both routes.
+    const memoryCall = (toolName: string, ctx: any) => {
+      const agent = ctx?.agent
+      if (agentKind(ctx) !== "sub") return undefined
+      if (typeof agent.name !== "string") {
+        drift("ctx.agent.name", `a subagent has no string name (got ${String(agent.name)}), so its memory guard is skipped`)
+        return undefined
+      }
+      const allowed = memoryAllowed(agent.name)
+      const tool = toolName.slice(MEMORY_TOOL.length)
+      if (allowed === null || allowed.has(tool)) return undefined
+      // A read is refused as well as a write, so the reason names the missing tools: entry, in the file's spelling.
+      return {
+        block: true,
+        reason: `${agent.name}: memory tool ${MEMORY_TOOL_CLAUDE}${tool} is not listed in its tools: (claude/agents/${agent.name}.md); report it to the parent instead`,
+      }
+    }
+
     // A throw here (a rejected confirm, a malformed ctx) allows the call; it goes through extensionFault rather than
     // the plain logger line, because an unchecked call must leave the same trace as a gate that failed open.
     pi.on(
@@ -746,163 +903,12 @@ export function ecomono(o: { repo: string; hooksDir?: string; timeoutMs?: number
       safe(async (event: any, ctx: any) => {
         const input = event?.input
         if (typeof input !== "object" || input === null) return undefined
-
-        if (event.toolName === "bash") {
-          if (typeof input.command !== "string") return undefined
-          const command: string = input.command
-          const denied = literals()
-          if (denied.length > 0) {
-            for (const segment of command.split(/\|\||&&|[;|&\n]/).map(normalize)) {
-              if (denied.includes(segment)) {
-                return {
-                  block: true,
-                  reason: `Blocked: "${segment}" is on the deny list in claude/settings.template.json, which this omp extension enforces for bash.`,
-                }
-              }
-            }
-          }
-          // A cwd that is an internal URL (skill://, local://, ...) has no host directory to run a script in, yet omp
-          // still runs the command, in its embedded shell, which reads host files and runs external programs
-          // (omp: tools/bash.ts:1127-1147; internal-urls/url-filesystem.ts:4-6,289-294,559). Such a call is judged
-          // on the session cwd, like a call with no cwd: the secret gate reads only the command text, and the
-          // delivery gates then judge the session repository, which can only err toward a block.
-          const raw = typeof input.cwd === "string" ? input.cwd : ""
-          const cwd = (raw ? ompPath(ctx.cwd, raw) : undefined) ?? ctx.cwd
-          return runGates(["secret-access-gate", "check-diff-size", "review-receipt-gate"], command, cwd, ctx)
-        }
-
-        if (event.toolName === "github" && (input.op === "pr_create" || input.op === "pr_push")) {
-          const command = input.op === "pr_create" ? "gh pr create" : "git push"
-          return runGates(["check-diff-size", "review-receipt-gate"], command, ctx.cwd, ctx)
-        }
-
-        // Hard deny, no valve (neither host's read deny has one): the globs are opencode.json's own, the ones
-        // OpenCode enforces natively on its read tool.
-        // ecomono: the gate checks the roots a call names, never the walk beneath them. grep, glob, find, ast_grep
-        // and ast_edit over a parent directory, a root with glob characters or no path at all can still reach a
-        // denied file; the tool_result search post-check below withholds a result that lists one. Ceiling: it sees
-        // the paths omp reports in `details`, nothing else. Upgrade path: omp's tools.restrictedFolders.
-        // ecomono: ceiling, writes. This is a read guard (see the header), so a write to a denied file through a
-        // call whose target this gate cannot see is accepted, in the same class as eval and debug, which read and
-        // write anything. ast_edit only stages its edits: it runs as a dry run, returns the diff as a preview and
-        // queues the apply, which runs when the model writes a reason to xd://resolve (omp: tools/ast-edit.ts:
-        // 290-300,437-447; tools/resolve.ts). A pathless or parent-rooted ast_edit can therefore write a denied
-        // file; the preview and the resolve result that list it are withheld (tool_result below), the write is not.
-        // No tool_call can tell which staged preview a resolve applies: ast_edit runs as the xd://ast_edit device
-        // by default, so its tool_call fires nested, after a resolve in the same message was already judged. Bash
-        // outside the secret gate's patterns writes too. Upgrade path: astEdit.enabled: false, eval.py and
-        // eval.js: false, debug.enabled: false, or omp's tools.restrictedFolders, an approval prompt for any call at
-        // or below a listed folder.
-        if (PATH_TOOLS.has(event.toolName)) {
-          const values = [...strings(input.path), ...strings(input.paths)]
-          if (event.toolName === "read" && values.length === 0) drift("read tool_call", "the input has no string path or paths")
-          if (event.toolName === "edit") values.push(...editTargets(input))
-          const hit = deny(ctx, values)
-          if (!hit) return undefined
-          return {
-            block: true,
-            reason: `Blocked: ${event.toolName} "${hit.value}" is denied by "${hit.glob}" in opencode/opencode.json (permission.read), which this omp extension enforces for path tools.`,
-          }
-        }
-
-        // Every item with an agent goes through the judge gate; the script alone knows which agents are judges,
-        // so there is no list of judge names here. The prompt is rebuilt from the two fields omp hands the child as
-        // text: the batch `context` (its subagent system prompt, omp: task/executor.ts:3976,4786) and the item's
-        // `task` (the initial prompt, executor.ts:2531), each in the form repairedTask gives, because omp repairs a
-        // double-encoded field after this event and the heading is judged where the child reads it. `solutionSpace`
-        // is left out on purpose: omp feeds it only to the auto-thinking classifier
-        // (session/agent-session-types.ts:457), so a heading that sits only there never reaches the judge. omp drops
-        // `context` when task.batch is off, but then it rejects a call that carries one (task/index.ts:235-247), so
-        // no judge launches without it.
-        // ecomono: an eval `agent()` spawn of a judge skips this gate. before_subagent_spawn carries no prompt
-        // (omp: extensibility/extensions/types.ts:1174-1186), so there is nothing to hand the script. Upgrade
-        // path: when such a spawn is observed, run the script with an empty prompt from before_subagent_spawn.
-        // Before the judge gate, the path deny on the @-mentions of every item's `task`, whatever its agent: omp
-        // reads each mentioned file into the child's first prompt with no tool_call (task/executor.ts:2498,2531;
-        // session/agent-session.ts:8882-8891). `context` becomes the system prompt and is never scanned for
-        // mentions, so it is not checked. fileMentions scans each `task` as typed and as repairedTask decodes it.
-        // An item has two file fields. `taskFile` (setting task.file, off by default) is an absolute path or local://
-        // URL whose contents omp reads at dispatch and hands the child as its `task` (task/index.ts:373-408).
-        // `sourceSession` (the bundled seance agent, advertised by default: task.disabledAgents is []) names the omp
-        // session a seance child forks: a value with `/` or `\`, or ending in `.jsonl`, is a path resolved against
-        // cwd and read; any other is an id omp looks up in its own session directories, never a path the caller names
-        // (task/seance.ts:110-132). Both paths are denied like a path tool's, top-level and per item; local:// is
-        // skipped as an internal URL. The schema omp runs (createTaskSchema, task/types.ts:53-73,172-260) has no
-        // other path field and deletes every other unknown key (`"+": "delete"`), so there is nothing else to deny.
-        // ecomono: ceiling. A seance child loads no extensions (task/seance-policy.ts disableExtensionDiscovery), so
-        // its read, grep and glob skip the path deny and its answer returns here as the task result. Upgrade path:
-        // task.disabledAgents: ["seance"].
-        // ecomono: ceiling. A taskFile's contents are read after this event, so their @-mentions and, for a judge,
-        // their headings are not checked: a same-message write can change them after any check here. Upgrade path:
-        // keep task.file off (omp's default), or omp's tools.restrictedFolders, which covers task files.
-        // ecomono: other text omp sends through the same prompt path, such as the queued hidden next-turn messages
-        // (session/agent-session.ts:9856-9871), has its mentions read too and is not seen here. Upgrade path: deny
-        // their mentions at the event that carries them, if one is ever exposed to extensions.
-        if (event.toolName === "task") {
-          if (!Array.isArray(input.tasks) && typeof input.agent !== "string") drift("task tool_call", "the input has neither tasks[] nor a string agent")
-          const items: unknown[] = Array.isArray(input.tasks) ? input.tasks : [input]
-          const taskFile = deny(ctx, [input, ...items].flatMap((item: any) => strings(item?.taskFile)))
-          if (taskFile) {
-            return {
-              block: true,
-              reason: `Blocked: taskFile "${taskFile.value}" is denied by "${taskFile.glob}" in opencode/opencode.json (permission.read); omp reads a taskFile into the subagent's first prompt.`,
-            }
-          }
-          const sources = [input, ...items].flatMap((item: any) => strings(item?.sourceSession).filter((s) => /[/\\]|\.jsonl$/.test(s.trim())))
-          const sourceSession = deny(ctx, sources)
-          if (sourceSession) {
-            return {
-              block: true,
-              reason: `Blocked: sourceSession "${sourceSession.value}" is denied by "${sourceSession.glob}" in opencode/opencode.json (permission.read); omp reads a sourceSession path into a seance subagent.`,
-            }
-          }
-          const mentions = items.flatMap((item: any) => (typeof item?.task === "string" ? fileMentions(item.task) : []))
-          const mentioned = deny(ctx, mentions)
-          if (mentioned) {
-            return {
-              block: true,
-              reason: `Blocked: task mention "@${mentioned.value}" is denied by "${mentioned.glob}" in opencode/opencode.json (permission.read); omp reads @-mentioned files into the subagent's first prompt.`,
-            }
-          }
-          const name = "judge-standards-gate"
-          const results = await Promise.all(
-            items.flatMap((item: any) => {
-              if (typeof item?.agent !== "string") return []
-              // The fields as the child gets them: each one through omp's own double-encoding repair (repairedTask).
-              const prompt = [input.context, item.task]
-                .filter((s): s is string => typeof s === "string" && s !== "")
-                .map(repairedTask)
-                .join("\n")
-              // omp trims the agent name before the lookup (task/index.ts spawnParamsFor), and the script matches
-              // it exactly, so a padded judge name would otherwise slip past.
-              const payload = { tool_input: { subagent_type: item.agent.trim(), prompt } }
-              return [gate(name, payload, ctx.cwd, ctx).then((r) => ({ name, r }))]
-            }),
-          )
-          return decide(ctx, results)
-        }
-
-        // Memory write guard: Claude restricts a subagent to the memory tools its own `tools:` line lists, and omp
-        // mounts every MCP tool on every agent, so the same line is enforced here. The tool arrives under its own
-        // name even when the model reaches it through `write xd://mcp__ecomono_memory_<tool>`: omp fires a second
-        // tool_call for the inner call (spike 2, docs/DESIGN.md, omp target > Spike results, row 2), so this one
-        // branch covers both routes.
-        if (typeof event.toolName === "string" && event.toolName.startsWith(MEMORY_TOOL)) {
-          const agent = ctx?.agent
-          if (agentKind(ctx) !== "sub") return undefined
-          if (typeof agent.name !== "string") {
-            drift("ctx.agent.name", `a subagent has no string name (got ${String(agent.name)}), so its memory guard is skipped`)
-            return undefined
-          }
-          const allowed = memoryAllowed(agent.name)
-          const tool = event.toolName.slice(MEMORY_TOOL.length)
-          if (allowed === null || allowed.has(tool)) return undefined
-          // A read is refused as well as a write, so the reason names the missing tools: entry, in the file's spelling.
-          return {
-            block: true,
-            reason: `${agent.name}: memory tool ${MEMORY_TOOL_CLAUDE}${tool} is not listed in its tools: (claude/agents/${agent.name}.md); report it to the parent instead`,
-          }
-        }
+        const tool = event.toolName
+        if (tool === "bash") return bashCall(input, ctx)
+        if (tool === "github" && (input.op === "pr_create" || input.op === "pr_push")) return githubCall(input, ctx)
+        if (PATH_TOOLS.has(tool)) return pathCall(tool, input, ctx)
+        if (tool === "task") return taskCall(input, ctx)
+        if (typeof tool === "string" && tool.startsWith(MEMORY_TOOL)) return memoryCall(tool, ctx)
         return undefined
       }, (why, _event, ctx) => extensionFault(ctx, "tool-call", why)),
     )
