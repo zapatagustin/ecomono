@@ -94,11 +94,12 @@ echo "omp: $version"
 # An untested omp is a failure: the gates read event fields by name, and a renamed one would allow in silence while
 # every other check stays green. ECOMONO_OMP_UNTESTED=1 runs it anyway, for the upgrade protocol in README.md: the
 # scenarios below are what vets a new version, after which OMP_TESTED in the extension is bumped. Read from the tree
-# under test, the one whose extension runs below.
+# under test, the one whose extension runs below. The match is exact: omp prints `omp/X.Y.Z` and parses its own
+# output the same way (omp: cli/update-cli.ts:1066-1077 parseReportedVersion), so 18.14.0 never passes as 18.14.01.
 tested="$(sed -n 's/^const OMP_TESTED = "\([^"]*\)".*/\1/p' "$SRC/omp/extensions/ecomono/index.ts")"
 [ -n "$tested" ] || { echo "error: no OMP_TESTED line in $SRC/omp/extensions/ecomono/index.ts" >&2; exit 1; }
 case "$version" in
-  *"$tested"*) ;;
+  "omp/$tested") ;;
   *)
     if [ "${ECOMONO_OMP_UNTESTED:-}" = 1 ]; then
       echo "warn: tested against omp $tested, running $version (ECOMONO_OMP_UNTESTED=1)" >&2
