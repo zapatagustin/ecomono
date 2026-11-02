@@ -20,6 +20,34 @@ export const fit = (s: string, cols: number): string => {
   return `${out}…`
 }
 
+/** `s` cut to `cols` columns keeping its END, "…" first when cut; a grapheme cluster is never split. */
+export const fitTail = (s: string, cols: number): string => {
+  if (width(s) <= cols) return s
+  if (cols <= 0) return ""
+  let out = ""
+  for (const { segment } of [...new Intl.Segmenter().segment(s)].reverse()) {
+    if (width(segment + out) > cols - 1) break
+    out = segment + out
+  }
+  return `…${out}`
+}
+
+/** `s` broken at spaces into lines of at most `cols` columns; a word wider than `cols` is cut with `fit`. */
+export const wrap = (s: string, cols: number): string[] => {
+  const lines: string[] = []
+  let line = ""
+  for (const word of s.split(/\s+/).filter(Boolean)) {
+    const next = line ? `${line} ${word}` : word
+    if (width(next) <= cols) line = next
+    else {
+      if (line) lines.push(line)
+      line = fit(word, cols)
+    }
+  }
+  if (line) lines.push(line)
+  return lines
+}
+
 /** `s` padded with spaces to exactly `cols` columns (cut when longer). */
 export const pad = (s: string, cols: number): string => {
   const f = fit(s, cols)

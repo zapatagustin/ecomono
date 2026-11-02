@@ -46,6 +46,7 @@ export const REPO_READS = [
   "omp/extensions/ecomono/panel/files.ts",
   "omp/extensions/ecomono/panel/log.ts",
   "omp/extensions/ecomono/panel/editor.ts",
+  "omp/extensions/ecomono/panel/banner.ts",
   ...IMPORTED_MODULES,
 ]
 

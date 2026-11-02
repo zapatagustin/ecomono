@@ -1176,6 +1176,17 @@ export function ecomono(o: { repo: string; hooksDir?: string; timeoutMs?: number
       },
       (why) => pi.logger.warn(`ecomono: side panel not started: ${why}`),
     )
+    // The startup banner, in place of omp's welcome (startup.quiet): shown with the panel, taken down at the first
+    // prompt. Loaded with the panel's modules, so a broken banner costs the banner only.
+    let hideBanner: (() => void) | undefined
+    const startBanner = safe(
+      async (ctx: any) => {
+        const { showBanner } = await import(join(o.repo, "omp/extensions/ecomono/panel/banner.ts"))
+        const running = (pi as any).pi?.VERSION
+        hideBanner = await showBanner(ctx, typeof running === "string" ? running : OMP_TESTED)
+      },
+      (why) => pi.logger.warn(`ecomono: banner not shown: ${why}`),
+    )
     const openPanel = safe(
       async (ctx: any, tab: string) => {
         if (!panel) return notify(ctx, "ecomono: the panel runs in the main TUI session only")
@@ -1212,7 +1223,10 @@ export function ecomono(o: { repo: string; hooksDir?: string; timeoutMs?: number
         refresh(ctx)
         // The todo scan and the side panel, the counterpart of OpenCode's org-todo panel: the interactive main
         // session only.
-        if (ctx.mode === "tui" && ctx.hasUI) await startPanel(ctx)
+        if (ctx.mode === "tui" && ctx.hasUI) {
+          await startBanner(ctx)
+          await startPanel(ctx)
+        }
         if (skillsWarned) return undefined
         // The remaining prose dependency: the ecomono-sdd-* commands and agents read ~/.claude/skills by path, and
         // omp reads skills only from ~/.agents/skills, so a missing tree is a silent half-working install.
@@ -1320,12 +1334,15 @@ export function ecomono(o: { repo: string; hooksDir?: string; timeoutMs?: number
       },
     )
 
-    // Every prompt, so a skill added mid-session is in the registry by the next one, and so the prompt is saved.
-    // A revive replays no prompt.
+    // Every prompt, so a skill added mid-session is in the registry by the next one, and so the prompt is saved;
+    // the first one also takes the banner down. A revive replays no prompt.
     pi.on(
       "before_agent_start",
       safe(async (event: any, ctx: any) => {
         if (event?.reason === "prompt") {
+          // The banner retires with the first prompt, as omp's welcome does.
+          hideBanner?.()
+          hideBanner = undefined
           await checkVersion(ctx)
           refresh(ctx)
           await capture(event, ctx)

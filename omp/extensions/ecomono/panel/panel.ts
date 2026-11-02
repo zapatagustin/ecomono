@@ -1,7 +1,8 @@
 /**
  * The side panel: one overlay (ctx.ui.custom, anchored right-center, 38% wide, the terminal's full height)
- * over the tabs it is given (panel/model.ts). Layout, top to bottom: the tab strip, the filter line, the rows
- * (head rows group, item rows select), a rule and the selected item's detail, blank fill, two key-bar rows.
+ * over the tabs it is given (panel/model.ts). Layout, top to bottom, every row behind a left border: a top
+ * rule, the tab strip band, the filter line, the rows (head rows group, item rows select), a rule and the
+ * selected item's detail, blank fill, two key-bar bands, a bottom rule.
  * omp crops an overlay to the terminal height from the bottom, so this returns exactly `tui.terminal.rows`
  * lines and scrolls the rows itself; the detail is capped so one row and the key bar always fit. The panel is
  * modal: omp focuses the overlay until done() is called.
@@ -14,17 +15,23 @@
 
 import { keyOf } from "./keys.ts"
 import type { Action, Row, Tab } from "./model.ts"
-import { fit, pad, plain, sides, width } from "./text.ts"
+import { fit, pad, plain, sides, width, wrap } from "./text.ts"
 
 /** The omp theme methods drawn with (tui/src/theme/theme-class.ts). */
-type Theme = { fg(color: string, text: string): string; bg(color: string, text: string): string }
+type Theme = {
+  fg(color: string, text: string): string
+  bg(color: string, text: string): string
+  /** The sharp box glyphs (tui/src/theme/theme-class.ts `boxSharp`); a theme without them gets the defaults. */
+  boxSharp?: { topLeft: string; bottomLeft: string; horizontal: string; vertical: string; teeRight: string }
+}
 
 const WIDTH = "38%"
 const MIN_WIDTH = 40
 const DETAIL_MAX = 8
 const KEY_BAR = 2
-/** Lines that are not rows: the strip, the filter, the rule before the detail, the key bar. */
-const CHROME = 3 + KEY_BAR
+/** Lines that are not rows: the top rule, the strip, the filter, the rule before the detail, the key bar, the
+ *  bottom rule. */
+const CHROME = 5 + KEY_BAR
 
 export function openPanel(ctx: any, tabs: Tab[], initial: number): Promise<void> {
   const say = (text: string): void => {
@@ -44,6 +51,8 @@ export function openPanel(ctx: any, tabs: Tab[], initial: number): Promise<void>
       let busy = false
       let closed = false
       let filtering = false
+      /** What the active tab's last load failed with: drawn in place of its rows, cleared by a load that works. */
+      let failed: string | undefined
 
       const is = (data: string, id: string): boolean => {
         try {
@@ -59,7 +68,8 @@ export function openPanel(ctx: any, tabs: Tab[], initial: number): Promise<void>
       }
       /** Re-reads the rows and keeps the selection on `keepId`, else on the nearest item. */
       const reload = (keepId?: string): void => {
-        rows = tabs[active]!.rows(filter)
+        // A failed tab has no rows: its stale data would push the failure lines past the frame.
+        rows = failed !== undefined ? [] : tabs[active]!.rows(filter)
         const idx = items()
         const kept = keepId === undefined ? -1 : rows.findIndex((r) => r.kind === "item" && r.id === keepId)
         sel = kept !== -1 ? kept : (idx.find((i) => i >= sel) ?? idx.at(-1) ?? 0)
@@ -89,20 +99,31 @@ export function openPanel(ctx: any, tabs: Tab[], initial: number): Promise<void>
         sel = 0
         top = 0
         rows = []
+        failed = undefined
         void load()
       }
+      /** The newest load's number: an older one (another tab's, or one a refresh replaced) settles unheard. */
+      let loadGen = 0
       const load = async (): Promise<void> => {
+        const which = active
+        const gen = ++loadGen
         busy = true
         try {
-          await tabs[active]!.load()
+          await tabs[which]!.load()
+          if (active !== which || gen !== loadGen) return
           // A load replaces what the tab knows, so every detail is asked again.
           fetched.clear()
+          failed = undefined
           reload(current()?.id)
           prefetch()
         } catch (e) {
-          say(`panel: ${e instanceof Error ? e.message : String(e)}`)
+          if (active !== which || gen !== loadGen) return
+          // The tab's source is not there (no git repository, a missing directory): the panel says so where the
+          // rows would be, and stays open so the other tabs work.
+          failed = e instanceof Error ? e.message : String(e)
+          rows = []
         } finally {
-          busy = false
+          if (gen === loadGen) busy = false
           redraw()
         }
       }
@@ -137,22 +158,39 @@ export function openPanel(ctx: any, tabs: Tab[], initial: number): Promise<void>
         render(cols: number): string[] {
           const H = Math.max(CHROME + 1, Number(tui?.terminal?.rows) || 24)
           const W = Math.max(1, cols)
+          // The frame: a left border on every row (the panel's right edge is the terminal's), a top and a
+          // bottom rule with sharp corners, a tee where the detail rule meets the border. omp's own overlays
+          // draw their box the same way (tui/src/overlays/hook-selector.ts).
+          const box = theme.boxSharp ?? { topLeft: "┌", bottomLeft: "└", horizontal: "─", vertical: "│", teeRight: "├" }
+          const edge = theme.fg("border", box.vertical)
+          const I = Math.max(1, W - 2)
+          const line = (body: string): string => `${edge} ${body}`
           const tab = tabs[active]!
           const out: string[] = []
 
-          // The tab strip: the active tab as a solid accent block, the others plain, a hint at the right.
-          const strip = tabs.map((t, i) => (i === active ? theme.bg("selectedBg", theme.fg("accent", ` ${t.title()} `)) : ` ${t.title()} `))
+          out.push(theme.fg("border", box.topLeft + box.horizontal.repeat(W - 1)))
+
+          // The tab strip, a band: the active tab as a solid accent block, the others on the band's background.
+          // omp's bg() ends with a reset to the default background, so the segments are side by side, never nested.
+          const strip = tabs.map((t, i) =>
+            i === active ? theme.bg("selectedBg", theme.fg("accent", ` ${t.title()} `)) : theme.bg("statusLineBg", theme.fg("muted", ` ${t.title()} `)),
+          )
           const stripPlain = tabs.map((t) => ` ${t.title()} `)
           const hint = "tab cambia"
           const stripWidth = stripPlain.reduce((n, s) => n + width(s), 0)
-          const gap = Math.max(1, W - stripWidth - width(hint))
-          out.push(stripWidth + 1 + width(hint) <= W ? strip.join("") + " ".repeat(gap) + theme.fg("dim", hint) : pad(strip.join(""), W))
+          const gap = Math.max(1, I - stripWidth - width(hint))
+          // Too narrow for the hint: the plain titles, cut; never `fit` over colored text (it would split an escape).
+          const band =
+            stripWidth + 1 + width(hint) <= I
+              ? strip.join("") + theme.bg("statusLineBg", " ".repeat(gap)) + theme.bg("statusLineBg", theme.fg("dim", hint))
+              : theme.bg("statusLineBg", pad(stripPlain.join(""), I))
+          out.push(line(band))
 
           // The filter line, with the position at the right.
           const idx = items()
           const at = idx.indexOf(sel)
           const pos = `${idx.length === 0 ? 0 : at + 1} / ${idx.length}`
-          out.push(theme.fg("accent", "> ") + sides(filtering ? `${filter}█` : filter, pos, W - 2))
+          out.push(line(theme.fg("accent", "> ") + sides(filtering ? `${filter}█` : filter, pos, I - 2)))
 
           // The rows area: what is left after the detail (capped) and the chrome.
           const cap = Math.min(DETAIL_MAX, Math.max(0, H - CHROME - 1))
@@ -161,43 +199,47 @@ export function openPanel(ctx: any, tabs: Tab[], initial: number): Promise<void>
           if (sel < top) top = sel
           if (sel >= top + area) top = sel - area + 1
           top = Math.max(0, Math.min(top, Math.max(0, rows.length - area)))
-          for (let i = top; i < Math.min(rows.length, top + area); i++) {
+          // A failure is wrapped, not cut: git's reason is the whole point of showing it.
+          const why = failed === undefined ? [] : wrap(plain(failed), I - 2).slice(0, area)
+          for (const text of why) out.push(line(theme.fg("warning", pad(`  ${text}`, I))))
+          for (let i = top; i < Math.min(rows.length, top + area - why.length); i++) {
             const row = rows[i]!
             const right = row.right ?? ""
             if (row.kind === "head") {
-              out.push(theme.fg("dim", sides(plain(row.text), right, W)))
+              out.push(line(theme.fg("dim", sides(plain(row.text), right, I))))
             } else if (i === sel) {
-              const line = sides(`> ${plain(row.text)}`, right, W)
-              out.push(theme.bg("selectedBg", theme.fg("accent", line)))
+              out.push(line(theme.bg("selectedBg", theme.fg("accent", sides(`> ${plain(row.text)}`, right, I)))))
             } else {
               // The leading marker (a status letter, a graph glyph) is the first grapheme cluster; the rest is plain.
               const text = plain(row.text)
-              const body = sides(text, right, W - 2)
+              const body = sides(text, right, I - 2)
               const first = new Intl.Segmenter().segment(text)[Symbol.iterator]().next().value?.segment ?? ""
-              out.push("  " + (row.color && first && body.startsWith(first) ? theme.fg(row.color, first) + body.slice(first.length) : body))
+              out.push(line("  " + (row.color && first && body.startsWith(first) ? theme.fg(row.color, first) + body.slice(first.length) : body)))
             }
           }
-          while (out.length < 2 + area) out.push(" ".repeat(W))
+          while (out.length < 3 + area) out.push(line(" ".repeat(I)))
 
-          // The detail block: a rule, then the lines; blank fill up to the key bar.
-          out.push(theme.fg("dim", "─".repeat(W)))
-          for (const line of detail) out.push(pad(line, W))
-          while (out.length < H - KEY_BAR) out.push(" ".repeat(W))
+          // The detail block: a rule off the border, then the lines; blank fill up to the key bar.
+          out.push(theme.fg("border", box.teeRight + box.horizontal.repeat(W - 1)))
+          for (const text of detail) out.push(line(pad(text, I)))
+          // The bands and the bottom rule take the last KEY_BAR + 1 lines.
+          while (out.length < H - KEY_BAR - 1) out.push(line(" ".repeat(I)))
 
-          // The key bar: the tab's keys, then the panel's own, as `key description` pairs.
+          // The key bar, a band: the tab's keys, then the panel's own, as `key description` pairs.
           const bar = (pairs: Array<[string, string]>): string => {
             let plainText = ""
             let drawn = ""
             for (const [key, what] of pairs) {
               const piece = ` ${key} ${what}  `
-              if (width(plainText + piece) > W) break
+              if (width(plainText + piece) > I) break
               plainText += piece
               drawn += theme.bg("selectedBg", theme.fg("accent", ` ${key} `)) + theme.bg("statusLineBg", theme.fg("dim", `${what}  `))
             }
-            return drawn + theme.bg("statusLineBg", " ".repeat(Math.max(0, W - width(plainText))))
+            return line(drawn + theme.bg("statusLineBg", " ".repeat(Math.max(0, I - width(plainText)))))
           }
           out.push(bar(tab.keys))
           out.push(bar([["/", "filtrar"], ["esc", "cerrar"], ["j/k", "mover"], ["tab", "pestaña"]]))
+          out.push(theme.fg("border", box.bottomLeft + box.horizontal.repeat(W - 1)))
           return out.slice(0, H)
         },
         handleInput(data: string): void {

@@ -900,7 +900,9 @@ either way the call was refused, so only the refusal text changes. This is not a
   - `session.compacting`: the compression style hint. `before_subagent_spawn`: tier and inheritance routing.
   - `session_start` and `before_agent_start` (main only): skill-registry refresh, a one-time warning when `jq` is not on
     PATH (three gate scripts exit 0 silently without it), a one-time warning when
-    `~/.claude/skills/ecomono-sdd-shared` is missing, the todo scan and the side panel, prompt capture.
+    `~/.claude/skills/ecomono-sdd-shared` is missing, the startup banner (the wallpaper's engraving, as an inline image when the terminal draws one (kitty, iTerm2, sixel; the
+    PNG nixos-config builds, handed over in `ECOMONO_OMP_BANNER`), else a block-glyph cut; a widget above the editor, retired by the
+    first prompt), the todo scan and the side panel, prompt capture.
     `session_shutdown` closes the memory DB. The scan, the panel and their parser are imported on first use from `REPO`, inside their own
     `safe()`: a static import that failed would fail the whole extension and every gate with it.
 

@@ -231,16 +231,21 @@ const THEME_COLORS = new Set([
   "accent", "border", "borderAccent", "borderMuted", "success", "error", "warning", "muted", "dim", "text", "assistantMessageText", "thinkingText", "userMessageText", "customMessageText", "customMessageLabel", "toolTitle", "toolOutput", "mdHeading", "mdLink", "mdLinkUrl", "mdCode", "mdCodeBlock", "mdCodeBlockBorder", "mdQuote", "mdQuoteBorder", "mdHr", "mdListBullet", "toolDiffAdded", "toolDiffRemoved", "toolDiffContext", "syntaxComment", "syntaxKeyword", "syntaxFunction", "syntaxVariable", "syntaxString", "syntaxNumber", "syntaxType", "syntaxOperator", "syntaxPunctuation", "thinkingOff", "thinkingMinimal", "thinkingLow", "thinkingMedium", "thinkingHigh", "thinkingXhigh", "thinkingMax", "bashMode", "pythonMode", "statusLineSep", "statusLineModel", "statusLinePath", "statusLineGitClean", "statusLineGitDirty", "statusLineContext", "statusLineSpend", "statusLineStaged", "statusLineDirty", "statusLineUntracked", "statusLineOutput", "statusLineCost", "statusLineSubagents",
 ])
 const THEME_BGS = new Set(["selectedBg", "userMessageBg", "customMessageBg", "toolPendingBg", "toolSuccessBg", "toolErrorBg", "statusLineBg"])
-/** A theme over omp's name sets; `mark` wraps colored text as `<color>text</color>` so a test can see what was colored. */
-export const makeTheme = (mark = false) => ({
+/** A theme over omp's name sets; `mark` wraps colored text as `<color>text</color>` so a test can see what was colored.
+ *  `escapes` emits real SGR codes as omp does (fg ends with the default foreground, bg with the default background),
+ *  so a test can see a bg span cut short by a nested one. */
+export const makeTheme = (mark = false, escapes = false) => ({
   fg: (color: string, text: string) => {
     if (!THEME_COLORS.has(color)) throw new Error(`Unknown theme color ${color}`)
+    if (escapes) return `\x1b[38;5;1m${text}\x1b[39m`
     return mark ? `<${color}>${text}</${color}>` : text
   },
   bg: (color: string, text: string) => {
     if (!THEME_BGS.has(color)) throw new Error(`Unknown theme background color ${color}`)
-    return text
+    return escapes ? `\x1b[48;5;2m${text}\x1b[49m` : text
   },
+  // The sharp box glyphs of omp's unicode preset (tui/src/theme/symbols.ts); the panel draws its frame with them.
+  boxSharp: { topLeft: "┌", topRight: "┐", bottomLeft: "└", bottomRight: "┘", horizontal: "─", vertical: "│", teeRight: "├", teeLeft: "┤" },
 })
 /** The theme a widget or ctx.ui.custom component draws with: colors are dropped, so tests compare plain text. */
 export const FAKE_THEME = makeTheme()

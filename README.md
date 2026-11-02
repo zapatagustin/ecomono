@@ -367,6 +367,7 @@ forgetting, not against intent. Real enforcement belongs in CI or branch protect
 | `ECOMONO_ALLOW_UNREVIEWED_PUSH=1` | stand down `review-receipt-gate.sh` for one delivery, in a repo where review mode is armed |
 | `ECOMONO_COMPRESS=off` | turn bash-output compression off (Claude hook, opencode plugin and omp extension; opencode reads it from its managed service environment: export it, then run `opencode service restart`) |
 | `ECOMONO_ORG_DIR=<dir>` | org directory the omp todo scan reads (default `~/work/org`) |
+| `ECOMONO_OMP_BANNER=<png>` | the startup banner's picture; unset = block art |
 | `PI_CODING_AGENT_DIR` / `PI_CONFIG_DIR` | where `install.sh` puts the omp config, as omp itself reads them (default `~/.omp/agent`) |
 | `ECOMONO_TARGET=<id>` | override detected `OS_ID` (e.g. `nixos`, `arch`, `debian`, `ubuntu`) for unrecognized distros |
 
@@ -456,7 +457,9 @@ The omp target is one extension (`omp/extensions/ecomono`, loaded from
 posture, routes subagent tiers, guards memory writes of read-only agents, refreshes the
 skill registry, counts the open todos in the status line (TUI only: it scans `docs/` of
 the working directory and `ECOMONO_ORG_DIR`, newest report and most recently changed file
-first), serves a side panel (`/panel`, `alt+t` for todos, `alt+g` for git: the todo tab marks
+first), draws a startup banner in place of omp's welcome (the wallpaper's engraving, as an inline image when the
+terminal draws one (kitty, iTerm2, sixel; the PNG nixos-config builds, handed over in `ECOMONO_OMP_BANNER`), else a
+block-glyph cut; gone at the first prompt), serves a side panel (`/panel`, `alt+t` for todos, `alt+g` for git: the todo tab marks
 one done or opens it in `$EDITOR`, the files tab stages and unstages, the log tab draws the
 commit graph and switches branches; the editor opens in a Zellij pane, or a `foot` window
 outside Zellij), and captures your prompts

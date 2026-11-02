@@ -4,8 +4,8 @@
 import { dir, makeCtx, makePi, tick, withEnv } from "./fake-pi.ts"
 import assert from "node:assert/strict"
 import { spawnSync } from "node:child_process"
-import { mkdirSync, writeFileSync } from "node:fs"
-import { homedir } from "node:os"
+import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs"
+import { homedir, tmpdir } from "node:os"
 import { join } from "node:path"
 import { PATTERN, flipLine, parse, rank } from "../../opencode/tui-plugins/org-todo/core.ts"
 import { REPO, ecomono } from "../extensions/ecomono/index.ts"
@@ -191,7 +191,7 @@ for (const [label, over] of [
     assert.equal(ctx.recorded.setInterval.length, 1)
     assert.equal(ctx.recorded.setInterval[0]![1], 3000)
     assert.deepEqual(ctx.recorded.setStatus, [["org-todo", "todo 2"]])
-    assert.equal(ctx.recorded.setWidget.length, 0, "nothing below the editor")
+    assert.ok(!ctx.recorded.setWidget.some(([, , o]: [string, unknown, any]) => o?.placement === "belowEditor"), "nothing below the editor")
 
     out = ""
     await ctx.recorded.setInterval[0]![0]()
@@ -209,6 +209,85 @@ for (const [label, over] of [
     await start(ctx, fire)
     assert.equal(greps(calls)[0]![1].at(-1), join(homedir(), "work/org"))
   })
+}
+
+// ---- the banner: above the editor at session start, gone at the first prompt ------------------------------------
+
+{
+  const { ART, banner } = await import("../extensions/ecomono/panel/banner.ts")
+  const { makeTheme } = await import("./fake-pi.ts")
+  // The art: 72 columns each, only the half-block glyphs and spaces the VGA font has.
+  assert.equal(ART.length, 11)
+  for (const l of ART) {
+    assert.equal(Bun.stringWidth(l), 72)
+    assert.ok(/^[ ▀▄█]+$/.test(l), l)
+  }
+  // Wide: the art with the wordmark block at its right; narrow: the block alone. A blank line closes both.
+  const wide = banner("18.15.0", "/w", makeTheme(true)).render(120)
+  assert.equal(wide.length, ART.length + 1)
+  assert.ok(wide[0]!.startsWith("<text>" + ART[0] + "</text>"), wide[0])
+  assert.ok(wide.some((l: string) => l.includes("<accent>▄▀▀▄ █▀▄▀▄ █▀▀▄</accent>")), "the omp wordmark is drawn in accent")
+  assert.ok(wide.some((l: string) => l.includes("<dim>v18.15.0</dim>")))
+  assert.ok(wide.some((l: string) => l.includes("<muted>/w</muted>")))
+  assert.equal(wide.at(-1), "")
+  const narrow = banner("18.15.0", "/w", makeTheme(true)).render(60)
+  assert.ok(!narrow.some((l: string) => l.includes("█████")), "no art below the minimum width")
+  assert.ok(narrow.some((l: string) => l.includes("<dim>v18.15.0</dim>")))
+
+  // Every line fits the width: the side block is cut (the cwd keeps its tail), and the narrow layout cuts to width.
+  const cwd = "/home/surface/personal/ecomono"
+  const at90 = banner("18.15.0", cwd, makeTheme()).render(90)
+  assert.ok(at90.length > ART.length && at90[0]!.startsWith(ART[0]!), "90 columns is the wide layout")
+  assert.ok(at90.some((l: string) => l.endsWith("…" + cwd.slice(-(90 - 72 - 2 - 1)))), "the cwd is cut to its tail")
+  const at20 = banner("18.15.0", cwd, makeTheme()).render(20)
+  assert.ok(at20.includes("…" + cwd.slice(-19)), "narrow: the cwd is cut to the width, tail kept")
+  for (let w = 10; w <= 130; w++) {
+    for (const l of banner("18.15.0", cwd, makeTheme()).render(w)) assert.ok(Bun.stringWidth(l) <= w, `${w}: ${JSON.stringify(l)}`)
+  }
+
+  // With a picture whose terminal draws images, the picture's lines come first and the block goes under them;
+  // a picture whose terminal draws none falls back to the art. The picture is omp's Image: faked here.
+  const drawn = ["\x1b_Gpayload\x1b\\", "reserved", "reserved"]
+  const pic = { image: () => ({ render: () => drawn }) }
+  const withPic = banner("18.15.0", "/w", makeTheme(true), pic).render(120)
+  assert.deepEqual(withPic.slice(0, 3), drawn, "the picture's lines are kept verbatim")
+  assert.ok(!withPic.some((l: string) => l.includes("█████")), "no art beside a picture")
+  assert.ok(withPic.some((l: string) => l.includes("<accent>▄▀▀▄ █▀▄▀▄ █▀▀▄</accent>")), "the block still draws")
+  const noProto = banner("18.15.0", "/w", makeTheme(true), { image: () => undefined }).render(120)
+  assert.ok(noProto[0]!.startsWith("<text>" + ART[0] + "</text>"), "no protocol: the art")
+  const narrowPic = banner("18.15.0", "/w", makeTheme(true), pic).render(60)
+  assert.ok(!narrowPic.some((l: string) => l === drawn[0]), "narrow: no picture either")
+  // A picture that throws, building or rendering, falls back to the art instead of failing the paint.
+  const badBuild = banner("18.15.0", "/w", makeTheme(true), { image: () => { throw new Error("boom") } }).render(120)
+  assert.ok(badBuild[0]!.startsWith("<text>" + ART[0] + "</text>"), "image() throws: the art")
+  const badRender = banner("18.15.0", "/w", makeTheme(true), { image: () => ({ render: () => { throw new Error("boom") } }) }).render(120)
+  assert.ok(badRender[0]!.startsWith("<text>" + ART[0] + "</text>"), "render() throws: the art")
+  // Under the picture the block has the full width: the cwd is not cut to the art's remainder.
+  assert.ok(banner("18.15.0", cwd, makeTheme(true), pic).render(90).some((l: string) => l.includes(`<muted>${cwd}</muted>`)), "picture: the full cwd at 90")
+  // No PNG set: no picture is loaded and @oh-my-pi/pi-tui is never imported (the tests could not resolve it).
+  const { loadPicture } = await import("../extensions/ecomono/panel/banner.ts")
+  assert.equal(await loadPicture("/nonexistent/omp-banner.png"), undefined, "an unreadable PNG means no picture")
+  const png = join(mkdtempSync(join(tmpdir(), "banner-")), "b.png")
+  writeFileSync(png, "x")
+  assert.equal(await loadPicture(png, () => Promise.reject(new Error("no pi-tui"))), undefined, "a failing import means no picture")
+
+  // In a main TUI session it is set above the editor at session_start and cleared by the first prompt; a
+  // revive does not clear it, and a second prompt does not clear it again.
+  const { fire, calls, ctx } = setup({ mode: "tui", hasUI: true }, { exec: (command) => (command === "grep" ? grepOut("") : nodeOk) })
+  await start(ctx, fire)
+  await tick()
+  const shown = ctx.recorded.setWidget.filter(([key]: [string]) => key === "ecomono-banner")
+  assert.equal(shown.length, 1, JSON.stringify(ctx.recorded.setWidget))
+  assert.equal(typeof shown[0]![1], "function", "a component, not lines: omp caps string widgets at 10")
+  assert.deepEqual(shown[0]![2], { placement: "aboveEditor" })
+  await fire("before_agent_start", { reason: "revive", prompt: "x" }, ctx)
+  assert.equal(ctx.recorded.setWidget.filter(([key]: [string]) => key === "ecomono-banner").length, 1, "a revive keeps it")
+  await fire("before_agent_start", { reason: "prompt", prompt: "hello" }, ctx)
+  await fire("before_agent_start", { reason: "prompt", prompt: "again" }, ctx)
+  const gone = ctx.recorded.setWidget.filter(([key]: [string]) => key === "ecomono-banner")
+  assert.equal(gone.length, 2)
+  assert.deepEqual(gone[1], ["ecomono-banner", undefined])
+  assert.deepEqual(calls.failures, [])
 }
 
 // ---- failures -------------------------------------------------------------------------------------------------
