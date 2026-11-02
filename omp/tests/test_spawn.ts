@@ -521,8 +521,9 @@ const never = () => new Promise(() => {})
 }
 
 // ---- shape drift ---------------------------------------------------------------------------------------------------
-// An event or ctx field that is not the shape omp 18.14.0 sends skips the check that reads it. The extension still
-// allows, and says so once per kind and session, so a renamed field does not switch a gate off in silence.
+// An event or ctx field that is not the shape the tested omp (OMP_TESTED) sends skips the check that reads it. The
+// extension still allows, and says so once per kind and session, so a renamed field does not switch a gate off in
+// silence.
 
 {
   const drift = (c: ReturnType<typeof makePi>["calls"]) => c.warn.filter((l) => l.includes("unexpected omp shape"))

@@ -227,8 +227,8 @@ while [ "$(ls "${d}" | wc -l)" -lt ${n} ] && [ $i -lt 100 ]; do sleep 0.05; i=$(
 }
 
 {
-  // A task call with neither tasks[] nor a string agent is a shape omp 18.14.0 never sends: allowed, with one
-  // warning that the judge gate skipped it. A well-formed one stays silent.
+  // A task call with neither tasks[] nor a string agent is a shape the tested omp (OMP_TESTED) never sends: allowed,
+  // with one warning that the judge gate skipped it. A well-formed one stays silent.
   const hooksDir = hooks()
   stub(hooksDir, "judge-standards-gate", ALLOW)
   const { fire, calls, ctx } = setup({ hooksDir })

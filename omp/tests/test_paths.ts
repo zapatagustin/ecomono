@@ -316,8 +316,8 @@ const sample = (glob: string) => glob.replace(/\*\*\//g, "/x/").replace(/\*\*/g,
 }
 
 {
-  // A read whose input names no path under either key is a shape omp 18.14.0 never sends: it is allowed, and the
-  // warning says the path deny skipped it, once. A well-formed read stays silent.
+  // A read whose input names no path under either key is a shape the tested omp (OMP_TESTED) never sends: it is
+  // allowed, and the warning says the path deny skipped it, once. A well-formed read stays silent.
   const { fire, calls, ctx } = setup()
   for (const input of [{}, { file: ".env" }, { path: 7 }]) {
     assert.equal(await fire("tool_call", call("read", input), ctx), undefined, JSON.stringify(input))
@@ -707,8 +707,9 @@ const sample = (glob: string) => glob.replace(/\*\*\//g, "/x/").replace(/\*\*/g,
     assert.equal(await fire("tool_result", result(tool, files(".env")), ctx), undefined, tool)
   }
   assert.ok(!calls.warn.some((l) => l.includes("handler failed")), "safe() caught nothing: no handler threw")
-  // A non-error result with none of the path arrays is a shape omp 18.14.0 never sends: it passes, and drift() says
-  // so once per tool. Above, grep (undefined), glob ("secrets/x") and find ({ hits: "secrets/x" }) were such results.
+  // A non-error result with none of the path arrays is a shape the tested omp (OMP_TESTED) never sends: it passes,
+  // and drift() says so once per tool. Above, grep (undefined), glob ("secrets/x") and find ({ hits: "secrets/x" })
+  // were such results.
   const drifted = calls.warn.filter((l) => l.includes("unexpected omp shape"))
   assert.deepEqual(drifted.map((l) => /shape, (\w+ tool_result)/.exec(l)?.[1]), ["grep tool_result", "glob tool_result", "find tool_result"])
   assert.equal(calls.warn.length, drifted.length, calls.warn.join("\n"))

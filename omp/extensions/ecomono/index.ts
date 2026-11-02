@@ -419,10 +419,11 @@ export function ecomono(o: { repo: string; hooksDir?: string; timeoutMs?: number
         }
       }
 
-    // An event or ctx field that is not the shape omp OMP_TESTED sends (docs/DESIGN.md, Version coupling). The check
-    // that reads it finds nothing and allows, so a renamed field would switch a gate off in silence: this says so,
-    // once per kind per session. It still allows, because failing closed on a shape mismatch would brick every
-    // session after an omp upgrade; the smoke (omp/tests/smoke.sh) is where the mismatch is meant to be caught.
+    // An event or ctx field that is not the shape the tested omp (OMP_TESTED) sends (docs/DESIGN.md, Version
+    // coupling). The check that reads it finds nothing and allows, so a renamed field would switch a gate off in
+    // silence: this says so, once per kind per session. It still allows, because failing closed on a shape mismatch
+    // would brick every session after an omp upgrade; the smoke (omp/tests/smoke.sh) is where the mismatch is meant
+    // to be caught.
     const drifted = new Set<string>()
     const drift = (kind: string, why: string): void => {
       if (drifted.has(kind)) return
@@ -942,29 +943,6 @@ export function ecomono(o: { repo: string; hooksDir?: string; timeoutMs?: number
             isError: true,
           }
         }
-        // Search post-check. The path gate sees only the roots a call names, so a grep with no `path`, or over a
-        // parent directory, can list lines or names of a denied file below it. omp reports every path a search
-        // result shows in `details`: `files` and `fileMatches[].path` (grep, ast_grep; paths relative to the session
-        // cwd, absolute outside it; omp: tools/grep.ts:1287-1291, tools/ast-grep.ts:299,382), `files` (glob;
-        // tools/glob.ts:349-350), `hits[].rel` (find, the semantic search; tools/jfind/index.ts:139-148) and `files`
-        // and `fileReplacements[].path` (ast_edit, whose result holds the diff of every file it touched;
-        // tools/ast-edit.ts:324-335,491-502), and `parseErrors` (ast_grep and ast_edit: every file that failed to
-        // parse or to read, matched or not; tools/ast-grep.ts:270-295, tools/ast-edit.ts:303-330,498). They go
-        // through the same deny check, and a match withholds the whole result, error results included (one that
-        // still carries `details` is cut like any other): the text is not parsed per file. The notice and `details`
-        // are cut as in the read post-check.
-        // ecomono: ceilings. (1) The read post-check's artifact://N spill applies here too. (2) Only what omp lists in
-        // `details` is checked, so a result whose `details` lacks those fields passes; a non-error result with none of
-        // the four arrays, a shape omp 18.14.0 never sends, says so through drift(). (3) An ast_edit result is a
-        // staged preview (dryRun: true): withholding it hides the diff, not the queued apply, which xd://resolve can
-        // still run (the write ceiling at the tool_call path gate). (4) A tracked file under a deny glob (a fixture
-        // `.pem`, a `secrets/` doc) withholds every repo-wide search that lists it; the notice asks for a narrower
-        // `path`. (5) A withhold is itself a one-bit result: whether a pathless or parent-rooted grep, ast_grep, glob
-        // or find is withheld tells the model that a denied file under the searched root exists and matches the
-        // pattern it chose, so repeated calls can recover that file's content and, by narrowing `path`, its location.
-        // A directory read's withhold tells the same of its entries. Upgrade path: omp's tools.restrictedFolders, an
-        // approval prompt for any call at or below a folder and for a recursive search rooted above one (omp:
-        // tools/approval.ts restrictedFolderReason), which blocks headless and so refuses such searches up front.
         // A settled preview: the write result of xd://resolve or xd://reject (details.xdev; tools/resolve.ts
         // runResolveInvocation) carries the source tool's apply or reject result in inner.sourceResultDetails (for
         // ast_edit, its `files` and `fileReplacements`), which goes through the same deny check as a search result;
@@ -984,6 +962,30 @@ export function ecomono(o: { repo: string; hooksDir?: string; timeoutMs?: number
             isError: true,
           }
         }
+        // Search post-check. The path gate sees only the roots a call names, so a grep with no `path`, or over a
+        // parent directory, can list lines or names of a denied file below it. omp reports every path a search
+        // result shows in `details`: `files` and `fileMatches[].path` (grep, ast_grep; paths relative to the session
+        // cwd, absolute outside it; omp: tools/grep.ts:1287-1291, tools/ast-grep.ts:299,382), `files` (glob;
+        // tools/glob.ts:349-350), `hits[].rel` (find, the semantic search; tools/jfind/index.ts:139-148) and `files`
+        // and `fileReplacements[].path` (ast_edit, whose result holds the diff of every file it touched;
+        // tools/ast-edit.ts:324-335,491-502), and `parseErrors` (ast_grep and ast_edit: every file that failed to
+        // parse or to read, matched or not; tools/ast-grep.ts:270-295, tools/ast-edit.ts:303-330,498). They go
+        // through the same deny check, and a match withholds the whole result, error results included (one that
+        // still carries `details` is cut like any other): the text is not parsed per file. The notice and `details`
+        // are cut as in the read post-check.
+        // ecomono: ceilings. (1) The read post-check's artifact://N spill applies here too. (2) Only what omp lists in
+        // `details` is checked, so a result whose `details` lacks those fields passes; a non-error result with none of
+        // the four arrays, a shape the tested omp (OMP_TESTED) never sends, says so through drift(). (3) An ast_edit
+        // result is a staged preview (dryRun: true): withholding it hides the diff, not the queued apply, which
+        // xd://resolve can still run (the write ceiling at the tool_call path gate). (4) A tracked file under a deny
+        // glob (a fixture `.pem`, a `secrets/` doc) withholds every repo-wide search that lists it; the notice asks for
+        // a narrower `path`. (5) A withhold is itself a one-bit result: whether a pathless or parent-rooted grep,
+        // ast_grep, glob or find is withheld tells the model that a denied file under the searched root exists and
+        // matches the pattern it chose, so repeated calls can recover that file's content and, by narrowing `path`,
+        // its location. A directory read's withhold tells the same of its entries. Upgrade path: omp's
+        // tools.restrictedFolders, an approval prompt for any call at or below a folder and for a recursive search
+        // rooted above one (omp: tools/approval.ts restrictedFolderReason), which blocks headless and so refuses such
+        // searches up front.
         if (SEARCH_RESULT_TOOLS.has(event?.toolName)) {
           const d = event.details
           if (event.isError !== true && ![d?.files, d?.fileMatches, d?.fileReplacements, d?.hits].some(Array.isArray)) {
