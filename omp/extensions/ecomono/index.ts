@@ -359,6 +359,13 @@ const withheldDetails = (d: unknown): Record<string, number | boolean> =>
     ),
   )
 
+/** The result a post-check returns in place of a withheld one: the notice alone, `details` cut, an error. */
+const withheld = (text: string, details: unknown) => ({
+  content: [{ type: "text", text }],
+  details: withheldDetails(details),
+  isError: true,
+})
+
 /** The paths a search result's `details` lists (the search post-check below names each field's omp source). */
 const listedPaths = (d: any): string[] => {
   const list = (v: unknown): any[] => (Array.isArray(v) ? v : [])
@@ -947,16 +954,12 @@ export function ecomono(o: { repo: string; hooksDir?: string; timeoutMs?: number
           if (d?.isDirectory === true && typeof d.resolvedPath === "string") targets.push(...directoryEntries(d.resolvedPath))
           const hit = deny(ctx, targets)
           if (!hit) return undefined
-          return {
-            content: [
-              {
-                type: "text",
-                text: `ecomono: read resolved to a file that ${hit.glob} in opencode/opencode.json denies; content withheld.`,
-              },
-            ],
-            details: withheldDetails(d),
-            isError: true,
-          }
+          return withheld(
+            d?.isDirectory === true
+              ? `ecomono: read listed a path that ${hit.glob} in opencode/opencode.json denies; listing withheld.`
+              : `ecomono: read resolved to a file that ${hit.glob} in opencode/opencode.json denies; content withheld.`,
+            d,
+          )
         }
         // A settled preview: the write result of xd://resolve or xd://reject (details.xdev; tools/resolve.ts
         // runResolveInvocation) carries the source tool's apply or reject result in inner.sourceResultDetails (for
@@ -966,16 +969,10 @@ export function ecomono(o: { repo: string; hooksDir?: string; timeoutMs?: number
           const xdev = event.details?.xdev
           const hit = deny(ctx, listedPaths(xdev?.inner?.sourceResultDetails))
           if (!hit) return undefined
-          return {
-            content: [
-              {
-                type: "text",
-                text: `ecomono: xd://${xdev.tool} listed a file that ${hit.glob} in opencode/opencode.json denies; result withheld. Its staged edits may already be written to that file.`,
-              },
-            ],
-            details: withheldDetails(event.details),
-            isError: true,
-          }
+          return withheld(
+            `ecomono: xd://${xdev.tool} listed a file that ${hit.glob} in opencode/opencode.json denies; result withheld. Its staged edits may already be written to that file.`,
+            event.details,
+          )
         }
         // Search post-check. The path gate sees only the roots a call names, so a grep with no `path`, or over a
         // parent directory, can list lines or names of a denied file below it. omp reports every path a search
@@ -1010,16 +1007,10 @@ export function ecomono(o: { repo: string; hooksDir?: string; timeoutMs?: number
           if (!hit) return undefined
           // Steering, not a guard: xd://resolve would still apply the staged preview (ceiling (3) above).
           const discard = event.toolName === "ast_edit" ? " Its edits stay staged: write a reason to xd://reject to discard them." : ""
-          return {
-            content: [
-              {
-                type: "text",
-                text: `ecomono: ${event.toolName} listed a file that ${hit.glob} in opencode/opencode.json denies; result withheld. Narrow \`path\` or the pattern so the result lists no file that glob matches.${discard}`,
-              },
-            ],
-            details: withheldDetails(d),
-            isError: true,
-          }
+          return withheld(
+            `ecomono: ${event.toolName} listed a file that ${hit.glob} in opencode/opencode.json denies; result withheld. Narrow \`path\` or the pattern so the result lists no file that glob matches.${discard}`,
+            d,
+          )
         }
         // shellMinimizer: coexist, not disabled. omp's minimizer runs inside the bash executor, before tool_result,
         // and only for commands it has a filter for; it keeps the raw bytes as an artifact. compressBash then sees

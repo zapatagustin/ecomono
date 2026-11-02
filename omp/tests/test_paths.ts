@@ -582,6 +582,7 @@ const sample = (glob: string) => glob.replace(/\*\*\//g, "/x/").replace(/\*\*/g,
   const lr = await fire("tool_result", listing(tree), ctx)
   assert.equal(lr?.isError, true)
   assert.ok(!JSON.stringify(lr).includes(tree), lr.content[0].text)
+  assert.match(lr.content[0].text, /^ecomono: read listed a path that \S+ in opencode\/opencode\.json denies; listing withheld\.$/)
   assert.equal(await fire("tool_result", result({ isDirectory: false, resolvedPath: tree }), ctx), undefined)
 
   // Delimited parts: one denied target is enough, and none of them is named.
