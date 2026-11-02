@@ -802,7 +802,7 @@ either way the call was refused, so only the refusal text changes. This is not a
   `file://`, `~` and `~x`, then `resolve`. An internal URL (`skill://`, `artifact://`, `xd://`, ...) returns
   `undefined`. The path gate keeps `ssh://` parts and matches their URL path as text, whatever the host. A bash
   call whose `cwd` is an internal URL is judged on the session cwd: omp runs it in its embedded shell, which reads
-  host files and runs external programs (`tools/bash.ts:1150-1170`, `internal-urls/url-filesystem.ts`), so
+  host files and runs external programs (`tools/bash.ts:1151-1171`, `internal-urls/url-filesystem.ts`), so
   failing open there would let a credential read skip the secret gate.
 - **Handlers**, in registration order:
   - `tool_call` on `bash`: in-process `rm -rf` literal check, then `secret-access-gate`, `check-diff-size` and
@@ -1057,7 +1057,15 @@ Surfaces relied on:
   `debug.enabled` / `eval.py` / `eval.js` / `lsp.enabled` / `astEdit.enabled` / `task.file` defaults behind the
   accepted ceilings, `tools.restrictedFolders`, `bash.patterns`.
 
-Last re-diff, 18.14.0 to 18.15.0 as installed (github rev 256b3211, a commit of master after the 18.15.0 release that
+Last re-diff, omp rev 6c7cd82 to ebb4fcf (github can1357/oh-my-pi, both reporting 18.15.0, so the tested version stays
+18.15.0). The extension surface (`extensibility/`), the keybindings, the theme schema and the config CLI are
+byte-identical. Behaviour notes: bash results gain `.minimized(...)` meta, shown as a TUI card line; the read
+column-truncation notice still starts `[Some lines truncated to` and keeps its `:raw:N-N` hint; a new optional
+`rawByteCap` (`packages/tui/src/tools/output-meta.ts:88`, wording at `:412-414`) only swaps "to read line N whole" for
+"uncut, byte-capped at <bytes>"; `write` refuses column-truncated read output. Only cited line numbers moved, and they
+were re-pinned.
+
+Previous re-diff, 18.14.0 to 18.15.0 as installed (github rev 256b3211, a commit of master after the 18.15.0 release that
 reports 18.15.0; the npm 18.15.0 tarballs, sha512-verified, differ from it only by later commits), over the omp,
 pi-tui, pi-utils, pi-ai and pi-agent-core sources plus the pi-edit grammar files. Changed: a directory read also lists
 the children of `node_modules`, `.git` and caches (`workspace-tree.ts` `pruneExcludedDirs: false`), which
@@ -1084,7 +1092,7 @@ were re-pinned.
 
 Recorded for omp 18.13.3; this table is the record the code comments cite. Every spike ran offline against a
 mock provider, in a temp tree, with the data and state directories isolated. The spikes were not re-run on 18.14.0
-or 18.15.0; both re-diffs above found the loader and event surfaces they recorded unchanged, and what they list as
+or 18.15.0; every re-diff above found the loader and event surfaces they recorded unchanged, and what they list as
 changed lies outside them.
 
 | Spike | Result | Consumed as |

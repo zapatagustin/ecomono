@@ -171,7 +171,7 @@ function frontmatter(src: string, rel: string): Record<string, unknown> {
 const toolList = (v: unknown): string[] =>
   (Array.isArray(v) ? v.map(String) : typeof v === "string" ? v.split(",") : []).map((t) => t.trim()).filter(Boolean)
 
-// WebFetch and WebSearch are accepted but dropped by omp (omp: sdk.ts:4450); the agent just has no web tools there.
+// WebFetch and WebSearch are accepted but dropped by omp (omp: sdk.ts:4454); the agent just has no web tools there.
 const OMP_TOOLS = new Set(["Read", "Grep", "Glob", "Bash", "Edit", "Write"])
 const DROPPED_TOOLS = new Set(["WebFetch", "WebSearch"])
 

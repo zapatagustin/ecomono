@@ -79,8 +79,8 @@ const MEMORY_TOOL = "mcp__ecomono_memory_"
 const MEMORY_TOOL_CLAUDE = "mcp__ecomono-memory__"
 
 // omp appends model-facing notices after the body: wall time, raw-output artifact, temp-shell notice,
-// spill/truncation, timeout, exit code (omp: tools/bash.ts:745,766-783; exec/bash-executor.ts:853-871;
-// pi-tui: tools/bash.ts:201-207, tools/output-meta.ts:205-252). Known prefixes only: a body that ends in a
+// spill/truncation, timeout, exit code (omp: tools/bash.ts:745,766-783; exec/bash-executor.ts:856-877;
+// pi-tui: tools/bash.ts:202-208, tools/output-meta.ts:255-302). Known prefixes only: a body that ends in a
 // one-line JSON array must not be mistaken for a notice. An unknown future notice stays in the body,
 // where the tail budget keeps it: degrades, never drops.
 const OMP_NOTICE = /^(?:\[(?:raw output: artifact:\/\/|Showing |Some lines truncated |\d+ (?:matches|results) limit|Command timed out).*\]|Wall time: [\d.]+ seconds|Command exited with code -?\d+|Ran in a temporary shell while .*)$/
@@ -235,7 +235,7 @@ const strings = (v: unknown): string[] =>
 /**
  * The raw value plus the parts omp may split it into, plus each part with `\` as `/`.
  * - read fans a missing or over-long `a;b` list out into separate reads, and splits a `;` list that mixes URLs and paths
- *   before URL detection, so `skill://x;.env` reads `.env` (omp: tools/read.ts:1774-1779,2055-2061). The parts run
+ *   before URL detection, so `skill://x;.env` reads `.env` (omp: tools/read.ts:1865-1870,2146-2152). The parts run
  *   through the tool's own execute, so no per-part tool_call fires.
  * - grep reads `path` or `paths`, each a string or an array, and splits a root on /[;,\s]+/
  *   (omp: tools/grep.ts:563-566; tools/search-approval-targets.ts:23). The split here is that superset.
@@ -266,8 +266,8 @@ function pathParts(value: string): string[] {
 
 /**
  * The local path a part reads. read's one `path` field takes a local path, an internal URI or a URL, selectors
- * inline (omp: tools/read.ts:821); the search and write tools take the same spellings. ompPath covers `file://`
- * (omp: tools/read.ts:1768-1770), quotes, `@`/`:` prefixes and `~`; internal URLs (skill://, artifact://, xd://,
+ * inline (omp: tools/read.ts:884); the search and write tools take the same spellings. ompPath covers `file://`
+ * (omp: tools/read.ts:1859-1861), quotes, `@`/`:` prefixes and `~`; internal URLs (skill://, artifact://, xd://,
  * http(s)://) resolve to undefined and are skipped.
  * `ssh://` is not skipped: it reads, searches and writes files on whatever host OpenSSH resolves, `localhost`
  * included, at the decoded URL pathname (omp: internal-urls/ssh-protocol.ts:67-97). That pathname is matched as
@@ -296,7 +296,7 @@ function resolvePart(cwd: string, part: string): string | undefined {
  * is at the FIRST `:` of the last segment: a cut at the last `:` would leave `.env:1-5` or `.env:raw`, which no
  * glob matches. A direct read sets no details target for the post-check either, so this is the only place that
  * catches it.
- * An archive member `b.zip:.ssh/k` (omp: prompts/tools/read.md:12; tools/grep.ts:309 and tools/write.ts:645 parse
+ * An archive member `b.zip:.ssh/k` (omp: prompts/tools/read.md:12; tools/grep.ts:309 and tools/write.ts:667 parse
  * it too) has its `:` in a middle segment, where the cut above does not look, so the path is also tested with
  * every `:` as a `/`: `b.zip/.ssh/k` meets the `.ssh` glob, stacked selectors and `::` included.
  * A SQLite selector may hold a `/` too (`agent.db:auth_credentials:a/b`), so neither cut above leaves the bare file:
@@ -378,7 +378,7 @@ const listedPaths = (d: any): string[] => {
 
 /**
  * The entries a `read` of a directory can name: omp lists them to depth 2, hidden ones included and .gitignore
- * ignored (omp: tools/read.ts:3038-3067 #readDirectory, workspace-tree.ts:57-69 buildDirectoryTree). Every entry is
+ * ignored (omp: tools/read.ts:3186-3215 #readDirectory, workspace-tree.ts:57-69 buildDirectoryTree). Every entry is
  * returned, past omp's 12-entry cap per child directory, so the check over-matches. omp 18.15.0 passes
  * `pruneExcludedDirs: false` (workspace-tree.ts:68), so the listing also holds the children of node_modules, .git,
  * build outputs and caches; every entry is re-listed here, so this stays a superset. An unreadable directory adds
@@ -774,7 +774,7 @@ export function ecomono(o: { repo: string; hooksDir?: string; timeoutMs?: number
       }
       // A cwd that is an internal URL (skill://, local://, ...) has no host directory to run a script in, yet omp
       // still runs the command, in its embedded shell, which reads host files and runs external programs
-      // (omp: tools/bash.ts:1150-1170; internal-urls/url-filesystem.ts:4-6,289-294,559). Such a call is judged
+      // (omp: tools/bash.ts:1151-1171; internal-urls/url-filesystem.ts:4-6,289-294,559). Such a call is judged
       // on the session cwd, like a call with no cwd: the secret gate reads only the command text, and the
       // delivery gates then judge the session repository, which can only err toward a block.
       const raw = typeof input.cwd === "string" ? input.cwd : ""
@@ -962,11 +962,11 @@ export function ecomono(o: { repo: string; hooksDir?: string; timeoutMs?: number
       "tool_result",
       safe(async (event: any, ctx: any) => {
         // Read post-check (docs/DESIGN.md, omp target > Handler contracts): omp resolves some reads to a file the model never named, and
-        // reports where in `details`. A suffix match (`read prod` -> `secrets/prod`, omp: tools/read.ts:2066-2079,
+        // reports where in `details`. A suffix match (`read prod` -> `secrets/prod`, omp: tools/read.ts:2157-2170,
         // details.suffixResolution.to) and the parts of a delimited list (details.displayReadTargets) never fire
         // their own tool_call, so the path gate cannot see them. `details.resolvedPath`, the absolute file omp read
-        // (an internal URL's backing file included, tools/read.ts:830-835,3006), goes the same way. A directory read
-        // (details.isDirectory) lists the entries below resolvedPath, the directory itself (tools/read.ts:3038-3067),
+        // (an internal URL's backing file included, tools/read.ts:893-898,3154), goes the same way. A directory read
+        // (details.isDirectory) lists the entries below resolvedPath, the directory itself (tools/read.ts:3186-3215),
         // so they are re-listed (directoryEntries) and checked too. The targets go through the same deny check and a
         // match withholds the content. A result is never rewritten otherwise: hashline anchors feed `edit`.
         // A withhold names the glob, never the file, so the notice carries no path the model did not type. That keeps
