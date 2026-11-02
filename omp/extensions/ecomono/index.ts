@@ -492,14 +492,22 @@ export function ecomono(o: { repo: string; hooksDir?: string; timeoutMs?: number
     // (omp/tests/test_paths.ts holds it there), which is the order the Nix deploy hands OpenCode too:
     // builtins.toJSON sorts attribute names. Any other value ("ask", a typo) is skipped, so it can never lift a deny
     // before it. The `.env` templates are not such an exception: see templates() below.
-    let denyGlobs: { glob: string; deny: boolean; matcher: { match(path: string): boolean } }[] | undefined
+    // Each key also keeps `whole`, whether it holds a "/" and so matches the whole path in deny(), and `tokens`, its
+    // runs of literal characters. A key of only literals, `*` and `/` matches a string only if every run is in it,
+    // whatever `*` and `**` expand to, so deny() skips the match when one is missing. A key with any other Bun.Glob
+    // syntax (`?`, `[`, `]`, `{`, `}`, `!`, `\`) keeps no tokens and is always matched.
+    let denyGlobs:
+      | { glob: string; deny: boolean; whole: boolean; tokens: string[]; matcher: { match(path: string): boolean } }[]
+      | undefined
     const globs = () => {
       if (denyGlobs === undefined) {
         denyGlobs = []
         try {
           const read = JSON.parse(readFileSync(join(o.repo, "opencode/opencode.json"), "utf8"))?.permission?.read
           for (const [glob, value] of Object.entries(typeof read === "object" && read !== null ? read : {})) {
-            if (value === "deny" || value === "allow") denyGlobs.push({ glob, deny: value === "deny", matcher: new Bun.Glob(glob) })
+            if (value !== "deny" && value !== "allow") continue
+            const tokens = /^[^?[\]{}!\\]*$/.test(glob) ? glob.split(/[*/]+/).filter(Boolean) : []
+            denyGlobs.push({ glob, deny: value === "deny", whole: glob.includes("/"), tokens, matcher: new Bun.Glob(glob) })
           }
         } catch (e) {
           denyGlobs = []
@@ -544,8 +552,10 @@ export function ecomono(o: { repo: string; hooksDir?: string; timeoutMs?: number
     // itself, only what is below it, and so is its symlink-resolved form (realish). Any probe that ends on a deny
     // is enough, so an allowed file inside a denied directory still meets that directory's glob through "/x". The
     // probe of a file named for a `.env` template (templates()) is the one that never denies: only its "/x" can.
-    // Shared by the tool_call path gate, the task @-mention, taskFile and sourceSession checks and the read post-check, so a
-    // target omp resolved gets the same verdict as one the model typed.
+    // Shared by the tool_call path gate, the task @-mention, taskFile and sourceSession checks, and the read, search
+    // and xd://resolve write post-checks, so a target omp resolved gets the same verdict as one the model typed.
+    // A glob is matched only when every literal run of it is in the probe (tokens, globs() above): a directory read
+    // can send tens of thousands of entries here, and a Bun.Glob match per glob and probe cost ~30 µs an entry.
     // ecomono: the match is case-sensitive (Bun.Glob has no nocase option), so on a case-insensitive filesystem
     // `~/.SSH/id` or `.ENV` reads the file the glob means and passes. Ceiling: macOS and Windows hosts. Upgrade
     // path: lowercase the candidate and the glob keys on darwin and win32, or omp's tools.restrictedFolders.
@@ -561,9 +571,11 @@ export function ecomono(o: { repo: string; hooksDir?: string; timeoutMs?: number
             for (const c of real === candidate ? [candidate] : [candidate, real]) {
               for (const probe of [c, `${c}/x`]) {
                 const name = basename(probe)
-                const last = list.findLast(({ glob, matcher }) =>
-                  glob.includes("/") ? matcher.match(probe.replace(/^\//, "")) : matcher.match(name),
-                )
+                const rooted = probe.replace(/^\//, "")
+                const last = list.findLast(({ whole, matcher, tokens }) => {
+                  const s = whole ? rooted : name
+                  return tokens.every((t) => s.includes(t)) && matcher.match(s)
+                })
                 if (last?.deny && !(probe === c && templates().some((t) => name.endsWith(t)))) return { value, glob: last.glob }
               }
             }

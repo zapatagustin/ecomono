@@ -78,6 +78,15 @@ const sample = (glob: string) => glob.replace(/\*\*\//g, "/x/").replace(/\*\*/g,
   // Allow entries alone deny nothing.
   const allowOnly = order({ "*": "allow", "*.foo": "allow" })
   assert.equal(await allowOnly.fire("tool_call", call("read", { path: "a.foo" }), allowOnly.ctx), undefined)
+  // A key with Bun.Glob syntax past `*` and `/` keeps no literal tokens, so deny() matches it on every probe instead
+  // of skipping it on a missing literal: `?`, a class, a brace set and an escaped `*` all still deny.
+  const syntax = order({ "*": "allow", "**/[st]ecret": "deny", "**/k?y.{pem,crt}": "deny", "**/lit\\*eral": "deny" })
+  for (const p of ["/x/secret", "/x/tecret", "/x/key.crt", "/x/kay.pem", "/x/lit*eral"]) {
+    assert.equal((await syntax.fire("tool_call", call("read", { path: p }), syntax.ctx))?.block, true, p)
+  }
+  for (const p of ["/x/becret", "/x/key.txt", "/x/litXeral"]) {
+    assert.equal(await syntax.fire("tool_call", call("read", { path: p }), syntax.ctx), undefined, p)
+  }
 
   // The extension reads the keys in file order and OpenCode gets them in byte order on the Nix deploy (builtins.toJSON
   // sorts attribute names), so the file keeps them in byte order: both hosts then see the same last match.
