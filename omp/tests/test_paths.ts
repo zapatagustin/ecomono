@@ -98,7 +98,9 @@ const sample = (glob: string) => glob.replace(/\*\*\//g, "/x/").replace(/\*\*/g,
   writeFileSync(join(noEnvRepo, "opencode/opencode.json"), JSON.stringify({ permission: { read: { "*": "allow", "**/*.key": "deny" } } }))
   const noEnv = setup(noEnvRepo)
   for (const [p, blocked] of [["server.key.env.example", true], ["prod.env.example", false], [".env.example", false]] as const) {
-    assert.equal((await noEnv.fire("tool_call", call("read", { path: p }), noEnv.ctx))?.block === true, blocked, p)
+    const r = await noEnv.fire("tool_call", call("read", { path: p }), noEnv.ctx)
+    assert.equal(r?.block === true, blocked, p)
+    if (blocked) assert.ok(r.reason.includes(`"**/*.key"`), r.reason)
   }
 
   // The extension reads the keys in file order and OpenCode gets them in byte order on the Nix deploy (builtins.toJSON
@@ -119,9 +121,11 @@ const sample = (glob: string) => glob.replace(/\*\*\//g, "/x/").replace(/\*\*/g,
     (await real.fire("tool_call", call("read", { path }), real.ctx))?.block === true ? "deny" : "allow"
   // Both hosts agree on a template inside a denied directory, on the `.env` names, and on omp's credential store.
   // A template whose name, without it, meets a glob of its own is denied too: the extension judges what the bash
-  // gate's scrub leaves.
+  // gate's scrub leaves. `.aws/credentials.env.example` leaves `credentials`, which only `**/.aws/credentials` with
+  // its directory denies, so it pins that the name left keeps its directory.
   const agreed: Array<[string, string]> = [
     ["/h/server.key.env.example", "deny"],
+    ["/h/.aws/credentials.env.example", "deny"],
     ["/h/a.pem.env.example", "deny"],
     ["/h/.omp/agent/agent.db.env.example", "deny"],
     ["x/credentials.json.env.example", "deny"],
