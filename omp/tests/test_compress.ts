@@ -1,7 +1,7 @@
 // Bash compression and compaction style in the omp extension, driven through fake-pi. Plain assert script.
 import { ISOLATED, dir, makeCtx, makePi, withEnv } from "./fake-pi.ts"
 import assert from "node:assert/strict"
-import { existsSync, readFileSync, statSync } from "node:fs"
+import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs"
 import { createRequire } from "node:module"
 import { homedir } from "node:os"
 import { join } from "node:path"
@@ -203,6 +203,24 @@ const bash = (text: string, over: Record<string, any> = {}) => ({
   assert.equal(r.content[0].text, ref.compressBash(body, command))
   assert.notEqual(ref.compressBash(body, command), ref.compressBash(body), "the fixture must be one where the hint matters")
   assert.ok(r.content[0].text.includes('"metadata"'), "the hinted key survived")
+}
+
+{
+  // (14) A compressor that throws is a compression fault, not a gate fault: the result passes unchanged, the logger
+  // gets a plain warning, and there is no fail-open line and no UI notice (those belong to a skipped gate).
+  const repo = dir("throwing-repo")
+  mkdirSync(join(repo, "claude/hooks"), { recursive: true })
+  writeFileSync(
+    join(repo, "claude/hooks/ecomono-compress.js"),
+    'exports.compressBash = () => { throw new Error("squash broke") }\nexports.logStats = () => {}\n',
+  )
+  const { fire, calls } = setup(repo)
+  const ctx = makeCtx({ hasUI: true })
+  assert.equal(await fire("tool_result", bash(bigBody), ctx), undefined)
+  assert.equal(calls.warn.length, 1, calls.warn.join("\n"))
+  assert.ok(calls.warn[0].startsWith("ecomono: bash compression failed") && calls.warn[0].includes("squash broke"), calls.warn[0])
+  assert.ok(!calls.warn.some((l) => l.includes("failing open")), calls.warn.join("\n"))
+  assert.deepEqual(ctx.recorded.notify, [])
 }
 
 console.log("test_compress: all assertions passed")

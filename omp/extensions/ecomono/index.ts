@@ -496,7 +496,8 @@ export function ecomono(o: { repo: string; hooksDir?: string; timeoutMs?: number
 
     // The keys of opencode/opencode.json permission.read whose value is "deny" or "allow", in file order, each
     // compiled once and cached. Derived from the file rather than copied, so the three hosts cannot drift. A file
-    // that cannot be read or parsed warns once and leaves the list empty: the gate then denies nothing.
+    // that cannot be read or parsed warns once and leaves the list empty: the gate then denies nothing. The warning
+    // goes through extensionFault (the logger, the state log and the UI), since every path deny is then off.
     // OpenCode lets the last matching key win (opencode.ai/docs/permissions), so an "allow" after a "deny" carves
     // an exception out of it; deny() reads the list the same way. The file keeps its keys in byte order
     // (omp/tests/test_paths.ts holds it there), which is the order the Nix deploy hands OpenCode too:
@@ -509,7 +510,7 @@ export function ecomono(o: { repo: string; hooksDir?: string; timeoutMs?: number
     let denyGlobs:
       | { glob: string; deny: boolean; whole: boolean; tokens: string[]; matcher: { match(path: string): boolean } }[]
       | undefined
-    const globs = () => {
+    const globs = (ctx: any) => {
       if (denyGlobs === undefined) {
         denyGlobs = []
         try {
@@ -521,9 +522,7 @@ export function ecomono(o: { repo: string; hooksDir?: string; timeoutMs?: number
           }
         } catch (e) {
           denyGlobs = []
-          pi.logger.warn(
-            `ecomono: path deny disabled, cannot read opencode/opencode.json from ${o.repo}: ${errText(e)}`,
-          )
+          extensionFault(ctx, "path-deny", `path deny disabled, cannot read opencode/opencode.json from ${o.repo}: ${errText(e)}`)
         }
       }
       return denyGlobs
@@ -573,7 +572,7 @@ export function ecomono(o: { repo: string; hooksDir?: string; timeoutMs?: number
     // `~/.SSH/id` or `.ENV` reads the file the glob means and passes. Ceiling: macOS and Windows hosts. Upgrade
     // path: lowercase the candidate and the glob keys on darwin and win32, or omp's tools.restrictedFolders.
     const deny = (ctx: any, values: string[]): { value: string; glob: string } | undefined => {
-      const list = globs()
+      const list = globs(ctx)
       if (!list.some((g) => g.deny)) return undefined
       const lastMatch = (probe: string) => {
         const name = basename(probe)
@@ -936,6 +935,11 @@ export function ecomono(o: { repo: string; hooksDir?: string; timeoutMs?: number
       return compressor ?? undefined
     }
 
+    // A throw lets the result through unchanged. One in a post-check goes through extensionFault, as a throw in the
+    // tool_call handler does, so a result that was not checked leaves the same trace there: the logger, the state
+    // log and the UI. One in bash compression stays on the logger: no gate was skipped, so "NOT checked" would be
+    // false, it would spend the single per-session UI notice (failOpen's `notified`) a real gate fault needs, and a
+    // compressor that keeps throwing would append a line to <stateDir>/tool-result.log on every bash call.
     pi.on(
       "tool_result",
       safe(async (event: any, ctx: any) => {
@@ -1040,18 +1044,23 @@ export function ecomono(o: { repo: string; hooksDir?: string; timeoutMs?: number
         }
         if (texts.length === 0) return undefined
 
-        const c = loadCompressor()
-        if (!c) return undefined
+        try {
+          const c = loadCompressor()
+          if (!c) return undefined
 
-        const [body, tail] = peel(texts.join("\n"))
-        const command = typeof event.input.command === "string" ? event.input.command : undefined
-        // isError results are compressed too: a failing build's log is exactly the output worth trimming.
-        const out = c.compressBash(body, command)
-        if (out === body) return undefined
-        c.logStats("omp.bash", body, out)
-        // Image (and any other non-text) parts go after the text, in their original order.
-        return { content: [{ type: "text", text: out + tail }, ...rest] }
-      }),
+          const [body, tail] = peel(texts.join("\n"))
+          const command = typeof event.input.command === "string" ? event.input.command : undefined
+          // isError results are compressed too: a failing build's log is exactly the output worth trimming.
+          const out = c.compressBash(body, command)
+          if (out === body) return undefined
+          c.logStats("omp.bash", body, out)
+          // Image (and any other non-text) parts go after the text, in their original order.
+          return { content: [{ type: "text", text: out + tail }, ...rest] }
+        } catch (e) {
+          pi.logger.warn(`ecomono: bash compression failed, result passed unchanged: ${errText(e)}`)
+          return undefined
+        }
+      }, (why, _event, ctx) => extensionFault(ctx, "tool-result", why)),
     )
 
     // LLM summaries only: omp's snapcompact and shake modes ignore it.

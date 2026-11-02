@@ -162,6 +162,8 @@ const sample = (glob: string) => glob.replace(/\*\*\//g, "/x/").replace(/\*\*/g,
     assert.equal(await u.fire("tool_call", call("read", { path: ".env" }), u.ctx), undefined, label)
     assert.equal(await u.fire("tool_call", call("read", { path: ".env" }), u.ctx), undefined, label)
     assert.equal(u.calls.warn.filter((l) => l.includes("path deny disabled")).length, warns, label)
+    // Through extensionFault, so the state log and the UI hear that every path deny is off.
+    assert.equal(u.calls.warn.filter((l) => l.startsWith("[path-deny] failing open")).length, warns, label)
   }
 }
 
@@ -617,6 +619,11 @@ const sample = (glob: string) => glob.replace(/\*\*\//g, "/x/").replace(/\*\*/g,
   // Only `read`: another tool's details are not looked at.
   assert.equal(await fire("tool_result", result(sr, { toolName: "lsp" }), ctx), undefined)
   assert.deepEqual(calls.warn, [], "safe() caught nothing: no handler threw")
+
+  // A post-check that throws lets the result through and leaves the fail-open trace, as a tool_call fault does.
+  const boom = { get resolvedPath(): string { throw new Error("boom") } }
+  assert.equal(await fire("tool_result", result(boom), ctx), undefined)
+  assert.ok(calls.warn.some((l) => l.startsWith("[tool-result] failing open") && l.includes("boom")), calls.warn.join("\n"))
 }
 
 // ---- search post-check --------------------------------------------------------------------------------------
