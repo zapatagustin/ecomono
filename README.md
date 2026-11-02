@@ -366,7 +366,7 @@ forgetting, not against intent. Real enforcement belongs in CI or branch protect
 | `ECOMONO_ALLOW_SECRET_PATHS=1` | stand down `secret-access-gate.sh`, for headless runs that must touch a credential path; on omp it never lifts the in-process path deny |
 | `ECOMONO_ALLOW_UNREVIEWED_PUSH=1` | stand down `review-receipt-gate.sh` for one delivery, in a repo where review mode is armed |
 | `ECOMONO_COMPRESS=off` | turn bash-output compression off (Claude hook, opencode plugin and omp extension; opencode reads it from its managed service environment: export it, then run `opencode service restart`) |
-| `ECOMONO_ORG_DIR=<dir>` | org directory the omp org-todo widget scans (default `~/work/org`) |
+| `ECOMONO_ORG_DIR=<dir>` | org directory the omp todo scan reads (default `~/work/org`) |
 | `PI_CODING_AGENT_DIR` / `PI_CONFIG_DIR` | where `install.sh` puts the omp config, as omp itself reads them (default `~/.omp/agent`) |
 | `ECOMONO_TARGET=<id>` | override detected `OS_ID` (e.g. `nixos`, `arch`, `debian`, `ubuntu`) for unrecognized distros |
 
@@ -454,10 +454,12 @@ The omp target is one extension (`omp/extensions/ecomono`, loaded from
 `~/.omp/agent/extensions/ecomono`) plus the links above. It compresses bash output
 (`stats.jsonl` lines tagged `omp.bash`), runs the gates described under Permission
 posture, routes subagent tiers, guards memory writes of read-only agents, refreshes the
-skill registry, shows an org-todo widget below the editor (TUI only: it scans `docs/` of
+skill registry, counts the open todos in the status line (TUI only: it scans `docs/` of
 the working directory and `ECOMONO_ORG_DIR`, newest report and most recently changed file
-first; `/org-todo` or `alt+t` opens a picker that marks a todo done or opens it in `$EDITOR`
-in a Zellij pane), and captures your prompts
+first), serves a side panel (`/panel`, `alt+t` for todos, `alt+g` for git: the todo tab marks
+one done or opens it in `$EDITOR`, the files tab stages and unstages, the log tab draws the
+commit graph and switches branches; the editor opens in a Zellij pane, or a `foot` window
+outside Zellij), and captures your prompts
 into the shared ecomono-memory database, as OpenCode does. The persona is `RULES.md`; the
 style is `PERSONALITY.md`; each skill is also `/skill:<name>`.
 

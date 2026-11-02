@@ -761,7 +761,7 @@ rather than copied from its own subdirectory.
 | `opencode/opencode.json` `permission.read` entries with value `deny` | path-tool deny globs, parsed lazily | OpenCode |
 | `claude/agents/<name>.md` `tools:` | per-agent memory allowlist, parsed lazily, cached | Claude |
 | `opencode/plugins/storage/*.ts` | prompt capture, dynamic import | OpenCode memory |
-| `opencode/tui-plugins/org-todo/core.ts` | `PATTERN`, `parse` for the org-todo widget; `rank`, `flipLine` for omp's widget and picker | OpenCode TUI and omp |
+| `opencode/tui-plugins/org-todo/core.ts` | `PATTERN`, `parse` for the org-todo panel; `rank`, `flipLine` for omp's todo status and tab | OpenCode TUI and omp |
 
 Two path resolvers exist on purpose, one per host. The OpenCode receipt gate keeps its copy of OpenCode's
 `resolvePath` and the omp extension mirrors omp's `normalizePathLikeInput` + `expandPath` + `resolveToCwd`
@@ -900,8 +900,8 @@ either way the call was refused, so only the refusal text changes. This is not a
   - `session.compacting`: the compression style hint. `before_subagent_spawn`: tier and inheritance routing.
   - `session_start` and `before_agent_start` (main only): skill-registry refresh, a one-time warning when `jq` is not on
     PATH (three gate scripts exit 0 silently without it), a one-time warning when
-    `~/.claude/skills/ecomono-sdd-shared` is missing, the org-todo widget, prompt capture. `session_shutdown`
-    closes the memory DB. The widget and its parser are imported on first use from `REPO`, inside their own
+    `~/.claude/skills/ecomono-sdd-shared` is missing, the todo scan and the side panel, prompt capture.
+    `session_shutdown` closes the memory DB. The scan, the panel and their parser are imported on first use from `REPO`, inside their own
     `safe()`: a static import that failed would fail the whole extension and every gate with it.
 
 ### Settings mapping
@@ -928,7 +928,7 @@ Every key of `claude/settings.template.json` and `opencode/cli.json`, and the ho
 | `theme: gruvbox` | omp follows the terminal |
 | `opencode-subagent-statusline` | the native `subagents` segment, opt-in |
 | `cyndaquill.tsx` | skipped: omp has no home-logo slot |
-| `org-todo.tsx` | a widget below the editor, sharing `org-todo/core.ts`, plus a picker (`/org-todo`, `alt+t`) that marks a todo done as the Claude Code pane does |
+| `org-todo.tsx` | a `todo N` status entry sharing `org-todo/core.ts`, plus the `todo` tab of the side panel (`/panel`, `alt+t`), which marks a todo done as the Claude Code pane does; the `files` and `log` tabs (`alt+g`) have no OpenCode counterpart |
 
 | `opencode/opencode.json` | omp |
 |---|---|
@@ -1012,7 +1012,7 @@ Not covered by the smoke, and so resting on the fake-pi tests (events built by h
 mirror table: the read post-check (`details.{suffixResolution,displayReadTargets,resolvedPath,isDirectory}`), the
 search post-check (`details.{files,fileMatches,fileReplacements,hits,parseErrors}`) and the `details` it replaces, the
 resolve result withhold (`write` `details.xdev.inner.sourceResultDetails`), the `taskFile` and `sourceSession` deny,
-edit and `ast_edit` inputs, prompt capture, the compaction style, the org-todo widget and the `ui.confirm` flow. The
+edit and `ast_edit` inputs, prompt capture, the compaction style, the todo status and the `ui.confirm` flow. The
 upgrade protocol in the README starts here. Ranges are relative to the omp, pi-tui and pi-utils package sources and
 to the tagged pi-edit repository; the `ecomono:` comments in `omp/extensions/ecomono/index.ts` cite them at the code
 that mirrors them.

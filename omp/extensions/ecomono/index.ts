@@ -19,7 +19,8 @@
  * - Maps the agents' haiku/sonnet/opus tiers to omp's @smol/@task/@slow roles.
  * - Blocks the ecomono-memory tools an agent's own `tools:` line does not list.
  * - From the main session, refreshes the skill registry and saves each user prompt into the shared
- *   ecomono-memory DB; in the main TUI session, lists the open TODOs below the editor (org-todo.ts).
+ *   ecomono-memory DB; in the main TUI session, counts the open TODOs in the status line and serves the side
+ *   panel (/panel, alt+t, alt+g: todos, the git working tree and the commit graph; org-todo.ts, panel/).
  *
  * omp loads the DEFAULT export only (the named exports are test seams).
  *
@@ -1143,32 +1144,54 @@ export function ecomono(o: { repo: string; hooksDir?: string; timeoutMs?: number
       if (ctx.hasUI) notify(ctx, text)
       else pi.logger.warn(text)
     }
-    // The org-todo widget and its parser load here, on first use, and not at the top of the file: a static import
-    // that fails (a missing or broken org-todo file) would fail the whole extension, and every gate with it. Its own
-    // safe(), so a failed load or start costs the widget only, and the skills check after it still runs.
-    // The picker (/org-todo, alt+t) reuses the module and the handle of the session's widget: no widget, no picker.
-    let orgTodo: { mod: any; core: any; handle: any } | undefined
-    const startWidget = safe(
+    // The todo scan, the panel and their parser load here, on first use, and not at the top of the file: a static
+    // import that fails (a missing or broken panel file) would fail the whole extension, and every gate with it.
+    // Its own safe(), so a failed load or start costs the panel only, and the skills check after it still runs.
+    // The panel (/panel, alt+t, alt+g) reuses the tabs built for the session's scan: no scan, no panel.
+    let panel: { open: (ctx: any, tab: string) => Promise<void> } | undefined
+    const startPanel = safe(
       async (ctx: any) => {
-        const [mod, core] = await Promise.all([
+        const [todo, core, panelMod, files, log, editor] = await Promise.all([
           import(join(o.repo, "omp/extensions/ecomono/org-todo.ts")),
           import(join(o.repo, "opencode/tui-plugins/org-todo/core.ts")),
+          import(join(o.repo, "omp/extensions/ecomono/panel/panel.ts")),
+          import(join(o.repo, "omp/extensions/ecomono/panel/files.ts")),
+          import(join(o.repo, "omp/extensions/ecomono/panel/log.ts")),
+          import(join(o.repo, "omp/extensions/ecomono/panel/editor.ts")),
         ])
-        orgTodo = { mod, core, handle: mod.startOrgTodo(pi, ctx, core) }
+        const handle = todo.startOrgTodo(pi, ctx, core)
+        // What the tabs take from omp. exec goes through pi.exec, which resolves on a timeout with `killed` set
+        // and an empty code: the tabs read `code`, so a killed git counts as a failure.
+        const host = {
+          cwd: ctx.cwd,
+          exec: async (cmd: string, args: string[], opts?: { timeout?: number; cwd?: string }) => {
+            const r = await pi.exec(cmd, args, { cwd: opts?.cwd ?? ctx.cwd, timeout: opts?.timeout ?? 10_000 })
+            return { stdout: String(r?.stdout ?? ""), stderr: String(r?.stderr ?? ""), code: r?.killed ? 124 : Number(r?.code ?? 0), killed: r?.killed }
+          },
+          openEditor: (file: string, line: number) => editor.openEditor(ctx, file, line),
+          notify: (text: string) => notify(ctx, text),
+        }
+        const tabs = [todo.todoTab(core, handle, host), files.filesTab(host), log.logTab(host)]
+        panel = { open: (c, tab) => panelMod.openPanel(c, tabs, Math.max(0, tabs.findIndex((t: any) => t.name === tab))) }
       },
-      (why) => pi.logger.warn(`ecomono: org-todo widget not started: ${why}`),
+      (why) => pi.logger.warn(`ecomono: side panel not started: ${why}`),
     )
-    const openTodos = safe(
-      async (ctx: any) => {
-        if (!orgTodo) return notify(ctx, "ecomono: org-todo runs in the main TUI session only")
-        await orgTodo.mod.openPicker(ctx, orgTodo.core, orgTodo.handle)
+    const openPanel = safe(
+      async (ctx: any, tab: string) => {
+        if (!panel) return notify(ctx, "ecomono: the panel runs in the main TUI session only")
+        await panel.open(ctx, tab)
       },
-      (why, ctx) => notify(ctx, `ecomono: org-todo picker failed: ${why}`),
+      (why, ctx) => notify(ctx, `ecomono: panel failed: ${why}`),
     )
-    const pickerHelp = "Open todos: mark one done, or open it in $EDITOR"
-    pi.registerCommand("org-todo", { description: pickerHelp, handler: async (_args: string, ctx: any) => void (await openTodos(ctx)) })
-    // The widget header names this key (org-todo.ts SHORTCUT); omp/tests/test_org_todo.ts pins both.
-    pi.registerShortcut("alt+t", { description: pickerHelp, handler: async (ctx: any) => void (await openTodos(ctx)) })
+    const panelHelp = "Side panel: todos, git working tree, commit graph"
+    pi.registerCommand("panel", {
+      description: `${panelHelp} (/panel [todo|files|log])`,
+      handler: async (args: string, ctx: any) => void (await openPanel(ctx, args.trim() || "todo")),
+    })
+    pi.registerCommand("org-todo", { description: "Open the todo tab of the side panel", handler: async (_args: string, ctx: any) => void (await openPanel(ctx, "todo")) })
+    // omp/tests/test_panel_tabs.ts pins both keys; neither is reserved or bound by omp 18.15.0.
+    pi.registerShortcut("alt+t", { description: `${panelHelp}: todos`, handler: async (ctx: any) => void (await openPanel(ctx, "todo")) })
+    pi.registerShortcut("alt+g", { description: `${panelHelp}: git`, handler: async (ctx: any) => void (await openPanel(ctx, "files")) })
     pi.on(
       "session_start",
       safe(async (_event: any, ctx: any) => {
@@ -1187,8 +1210,9 @@ export function ecomono(o: { repo: string; hooksDir?: string; timeoutMs?: number
           warnOnce(ctx, text)
         }
         refresh(ctx)
-        // The org-todo widget, the counterpart of OpenCode's org-todo panel: the interactive main session only.
-        if (ctx.mode === "tui" && ctx.hasUI) await startWidget(ctx)
+        // The todo scan and the side panel, the counterpart of OpenCode's org-todo panel: the interactive main
+        // session only.
+        if (ctx.mode === "tui" && ctx.hasUI) await startPanel(ctx)
         if (skillsWarned) return undefined
         // The remaining prose dependency: the ecomono-sdd-* commands and agents read ~/.claude/skills by path, and
         // omp reads skills only from ~/.agents/skills, so a missing tree is a silent half-working install.

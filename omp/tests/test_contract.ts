@@ -22,7 +22,7 @@ export const IMPORTED_MODULES = [
   "opencode/plugins/hook-runner/core.ts",
   "opencode/plugins/cave-compress/core.ts",
   "claude/hooks/ecomono-compress.js",
-  // Loaded lazily by the org-todo widget at session_start, with omp/extensions/ecomono/org-todo.ts.
+  // Loaded lazily by the todo scan at session_start, with omp/extensions/ecomono/org-todo.ts and panel/.
   "opencode/tui-plugins/org-todo/core.ts",
   // Loaded lazily by prompt capture; db.ts is imported again at session_shutdown to close it.
   "opencode/plugins/storage/sessions.ts",
@@ -42,6 +42,10 @@ export const REPO_READS = [
   "opencode/opencode.json",
   "claude/agents",
   "omp/extensions/ecomono/org-todo.ts",
+  "omp/extensions/ecomono/panel/panel.ts",
+  "omp/extensions/ecomono/panel/files.ts",
+  "omp/extensions/ecomono/panel/log.ts",
+  "omp/extensions/ecomono/panel/editor.ts",
   ...IMPORTED_MODULES,
 ]
 

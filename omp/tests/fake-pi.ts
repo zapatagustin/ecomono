@@ -225,11 +225,30 @@ export function makePi(opts: PiOpts = {}) {
  * ctx.recorded; none of them ever fires on its own. ctx.recorded.confirmResult is what ui.confirm resolves to:
  * false by default, which is what a headless omp does (spike 4).
  */
+// The names omp's Theme accepts (tui/src/theme/schema.ts in omp 18.15.0: ThemeColor :55-125, ThemeBg :190-198).
+// Theme.fg / Theme.bg throw on any other name (theme-class.ts:359-381), so the fake does too.
+const THEME_COLORS = new Set([
+  "accent", "border", "borderAccent", "borderMuted", "success", "error", "warning", "muted", "dim", "text", "assistantMessageText", "thinkingText", "userMessageText", "customMessageText", "customMessageLabel", "toolTitle", "toolOutput", "mdHeading", "mdLink", "mdLinkUrl", "mdCode", "mdCodeBlock", "mdCodeBlockBorder", "mdQuote", "mdQuoteBorder", "mdHr", "mdListBullet", "toolDiffAdded", "toolDiffRemoved", "toolDiffContext", "syntaxComment", "syntaxKeyword", "syntaxFunction", "syntaxVariable", "syntaxString", "syntaxNumber", "syntaxType", "syntaxOperator", "syntaxPunctuation", "thinkingOff", "thinkingMinimal", "thinkingLow", "thinkingMedium", "thinkingHigh", "thinkingXhigh", "thinkingMax", "bashMode", "pythonMode", "statusLineSep", "statusLineModel", "statusLinePath", "statusLineGitClean", "statusLineGitDirty", "statusLineContext", "statusLineSpend", "statusLineStaged", "statusLineDirty", "statusLineUntracked", "statusLineOutput", "statusLineCost", "statusLineSubagents",
+])
+const THEME_BGS = new Set(["selectedBg", "userMessageBg", "customMessageBg", "toolPendingBg", "toolSuccessBg", "toolErrorBg", "statusLineBg"])
+/** A theme over omp's name sets; `mark` wraps colored text as `<color>text</color>` so a test can see what was colored. */
+export const makeTheme = (mark = false) => ({
+  fg: (color: string, text: string) => {
+    if (!THEME_COLORS.has(color)) throw new Error(`Unknown theme color ${color}`)
+    return mark ? `<${color}>${text}</${color}>` : text
+  },
+  bg: (color: string, text: string) => {
+    if (!THEME_BGS.has(color)) throw new Error(`Unknown theme background color ${color}`)
+    return text
+  },
+})
 /** The theme a widget or ctx.ui.custom component draws with: colors are dropped, so tests compare plain text. */
-export const FAKE_THEME = { fg: (_color: string, text: string) => text, bg: (_color: string, text: string) => text }
+export const FAKE_THEME = makeTheme()
 
 /** The data each `tui.select.*` action matches here (omp: tui/src/keybindings.ts, KeybindingsManager.matches). */
 export const FAKE_KEYS: Record<string, string> = {
+  "tab": "\t",
+  "shift+tab": "\x1b[Z",
   "tui.select.up": "\x1b[A",
   "tui.select.down": "\x1b[B",
   "tui.select.pageUp": "\x1b[5~",
@@ -251,6 +270,7 @@ export function makeCtx(over: Record<string, any> = {}) {
     confirm: [] as any[][],
     notify: [] as any[][],
     setWidget: [] as any[][],
+    setStatus: [] as any[][],
     setInterval: [] as any[][],
     custom: [] as CustomEntry[],
     openTerminal: [] as any[],
@@ -266,18 +286,20 @@ export function makeCtx(over: Record<string, any> = {}) {
       confirm: (...args: any[]) => (recorded.confirm.push(args), Promise.resolve(recorded.confirmResult)),
       notify: (...args: any[]) => void recorded.notify.push(args),
       setWidget: (...args: any[]) => void recorded.setWidget.push(args),
+      setStatus: (...args: any[]) => void recorded.setStatus.push(args),
       // Builds the component at once and resolves with done()'s value, as omp's overlay does when it closes.
       custom: (factory: any, options: any) =>
         new Promise((resolve) => {
           const entry: CustomEntry = { options, closed: false, renders: 0 }
           recorded.custom.push(entry)
-          const tui = { requestRender: () => void entry.renders++ }
+          // The terminal size omp's TUI exposes (tui.terminal.rows/columns); a test sets ctx.terminal first.
+          const tui = { requestRender: () => void entry.renders++, terminal: ctx.terminal ?? { rows: 24, columns: 80 } }
           const keybindings = { matches: (data: string, id: string) => FAKE_KEYS[id] === data }
           const done = (result: unknown) => {
             entry.closed = true
             resolve(result)
           }
-          void Promise.resolve(factory(tui, FAKE_THEME, keybindings, done)).then((c) => (entry.component = c))
+          void Promise.resolve(factory(tui, ctx.theme ?? FAKE_THEME, keybindings, done)).then((c) => (entry.component = c))
         }),
       openTerminal: (request: any) => (recorded.openTerminal.push(request), Promise.resolve({ multiplexer: request.multiplexer, placement: request.placement })),
     },
