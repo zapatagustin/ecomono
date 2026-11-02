@@ -761,7 +761,7 @@ rather than copied from its own subdirectory.
 | `opencode/opencode.json` `permission.read` entries with value `deny` | path-tool deny globs, parsed lazily | OpenCode |
 | `claude/agents/<name>.md` `tools:` | per-agent memory allowlist, parsed lazily, cached | Claude |
 | `opencode/plugins/storage/*.ts` | prompt capture, dynamic import | OpenCode memory |
-| `opencode/tui-plugins/org-todo/core.ts` | `PATTERN`, `parse` for the org-todo widget | OpenCode TUI and omp |
+| `opencode/tui-plugins/org-todo/core.ts` | `PATTERN`, `parse` for the org-todo widget; `rank`, `flipLine` for omp's widget and picker | OpenCode TUI and omp |
 
 Two path resolvers exist on purpose, one per host. The OpenCode receipt gate keeps its copy of OpenCode's
 `resolvePath` and the omp extension mirrors omp's `normalizePathLikeInput` + `expandPath` + `resolveToCwd`
@@ -928,7 +928,7 @@ Every key of `claude/settings.template.json` and `opencode/cli.json`, and the ho
 | `theme: gruvbox` | omp follows the terminal |
 | `opencode-subagent-statusline` | the native `subagents` segment, opt-in |
 | `cyndaquill.tsx` | skipped: omp has no home-logo slot |
-| `org-todo.tsx` | a widget below the editor, sharing `org-todo/core.ts` |
+| `org-todo.tsx` | a widget below the editor, sharing `org-todo/core.ts`, plus a picker (`/org-todo`, `alt+t`) that marks a todo done as the Claude Code pane does |
 
 | `opencode/opencode.json` | omp |
 |---|---|

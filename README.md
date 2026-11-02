@@ -454,8 +454,10 @@ The omp target is one extension (`omp/extensions/ecomono`, loaded from
 `~/.omp/agent/extensions/ecomono`) plus the links above. It compresses bash output
 (`stats.jsonl` lines tagged `omp.bash`), runs the gates described under Permission
 posture, routes subagent tiers, guards memory writes of read-only agents, refreshes the
-skill registry, shows an org-todo widget below the editor (TUI only, display only: it
-scans `docs/` of the working directory and `ECOMONO_ORG_DIR`), and captures your prompts
+skill registry, shows an org-todo widget below the editor (TUI only: it scans `docs/` of
+the working directory and `ECOMONO_ORG_DIR`, newest report and most recently changed file
+first; `/org-todo` or `alt+t` opens a picker that marks a todo done or opens it in `$EDITOR`
+in a Zellij pane), and captures your prompts
 into the shared ecomono-memory database, as OpenCode does. The persona is `RULES.md`; the
 style is `PERSONALITY.md`; each skill is also `/skill:<name>`.
 

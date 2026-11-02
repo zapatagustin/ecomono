@@ -87,6 +87,9 @@ export interface Calls {
   debug: string[]
   /** Handler failures omp reports through emitError instead of failing the event: event name and message. */
   failures: Array<{ event: string; error: string }>
+  /** Every pi.registerCommand as [name, options], and every pi.registerShortcut as [key id, options]. */
+  commands: Array<[string, any]>
+  shortcuts: Array<[string, any]>
 }
 
 export interface PiOpts {
@@ -111,7 +114,7 @@ export const OMP_TESTED = tested[1]
 
 export function makePi(opts: PiOpts = {}) {
   const handlers = new Map<string, Handler[]>()
-  const calls: Calls = { on: [], exec: [], warn: [], info: [], error: [], debug: [], failures: [] }
+  const calls: Calls = { on: [], exec: [], warn: [], info: [], error: [], debug: [], failures: [], commands: [], shortcuts: [] }
 
   const logger = Object.fromEntries(
     (["warn", "info", "error", "debug"] as Level[]).map((level) => [
@@ -133,6 +136,8 @@ export function makePi(opts: PiOpts = {}) {
       const out = opts.exec ? opts.exec(command, args, options) : { stdout: "", stderr: "", code: 0, killed: false }
       return Promise.resolve(out)
     },
+    registerCommand: (name: string, options: any) => void calls.commands.push([name, options]),
+    registerShortcut: (key: string, options: any) => void calls.shortcuts.push([key, options]),
     logger,
     // omp's injected SDK exports, of which the extension reads VERSION. A test replaces it to stand in for another omp.
     pi: { VERSION: OMP_TESTED },
@@ -220,12 +225,35 @@ export function makePi(opts: PiOpts = {}) {
  * ctx.recorded; none of them ever fires on its own. ctx.recorded.confirmResult is what ui.confirm resolves to:
  * false by default, which is what a headless omp does (spike 4).
  */
+/** The theme a widget or ctx.ui.custom component draws with: colors are dropped, so tests compare plain text. */
+export const FAKE_THEME = { fg: (_color: string, text: string) => text, bg: (_color: string, text: string) => text }
+
+/** The data each `tui.select.*` action matches here (omp: tui/src/keybindings.ts, KeybindingsManager.matches). */
+export const FAKE_KEYS: Record<string, string> = {
+  "tui.select.up": "\x1b[A",
+  "tui.select.down": "\x1b[B",
+  "tui.select.pageUp": "\x1b[5~",
+  "tui.select.pageDown": "\x1b[6~",
+  "tui.select.confirm": "\r",
+  "tui.select.cancel": "\x1b",
+}
+
+/** One ctx.ui.custom call: the component the factory built, the options, and whether done() closed it. */
+export interface CustomEntry {
+  component?: any
+  options: any
+  closed: boolean
+  renders: number
+}
+
 export function makeCtx(over: Record<string, any> = {}) {
   const recorded = {
     confirm: [] as any[][],
     notify: [] as any[][],
     setWidget: [] as any[][],
     setInterval: [] as any[][],
+    custom: [] as CustomEntry[],
+    openTerminal: [] as any[],
     confirmResult: false as boolean,
   }
   const ctx: any = {
@@ -238,6 +266,20 @@ export function makeCtx(over: Record<string, any> = {}) {
       confirm: (...args: any[]) => (recorded.confirm.push(args), Promise.resolve(recorded.confirmResult)),
       notify: (...args: any[]) => void recorded.notify.push(args),
       setWidget: (...args: any[]) => void recorded.setWidget.push(args),
+      // Builds the component at once and resolves with done()'s value, as omp's overlay does when it closes.
+      custom: (factory: any, options: any) =>
+        new Promise((resolve) => {
+          const entry: CustomEntry = { options, closed: false, renders: 0 }
+          recorded.custom.push(entry)
+          const tui = { requestRender: () => void entry.renders++ }
+          const keybindings = { matches: (data: string, id: string) => FAKE_KEYS[id] === data }
+          const done = (result: unknown) => {
+            entry.closed = true
+            resolve(result)
+          }
+          void Promise.resolve(factory(tui, FAKE_THEME, keybindings, done)).then((c) => (entry.component = c))
+        }),
+      openTerminal: (request: any) => (recorded.openTerminal.push(request), Promise.resolve({ multiplexer: request.multiplexer, placement: request.placement })),
     },
     sessionManager: { getSessionId: () => "sess-1" },
     setInterval: (...args: any[]) => (recorded.setInterval.push(args), recorded.setInterval.length),

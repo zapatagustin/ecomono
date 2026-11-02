@@ -1146,16 +1146,29 @@ export function ecomono(o: { repo: string; hooksDir?: string; timeoutMs?: number
     // The org-todo widget and its parser load here, on first use, and not at the top of the file: a static import
     // that fails (a missing or broken org-todo file) would fail the whole extension, and every gate with it. Its own
     // safe(), so a failed load or start costs the widget only, and the skills check after it still runs.
+    // The picker (/org-todo, alt+t) reuses the module and the handle of the session's widget: no widget, no picker.
+    let orgTodo: { mod: any; core: any; handle: any } | undefined
     const startWidget = safe(
       async (ctx: any) => {
-        const [{ startOrgTodo }, core] = await Promise.all([
+        const [mod, core] = await Promise.all([
           import(join(o.repo, "omp/extensions/ecomono/org-todo.ts")),
           import(join(o.repo, "opencode/tui-plugins/org-todo/core.ts")),
         ])
-        startOrgTodo(pi, ctx, core)
+        orgTodo = { mod, core, handle: mod.startOrgTodo(pi, ctx, core) }
       },
       (why) => pi.logger.warn(`ecomono: org-todo widget not started: ${why}`),
     )
+    const openTodos = safe(
+      async (ctx: any) => {
+        if (!orgTodo) return notify(ctx, "ecomono: org-todo runs in the main TUI session only")
+        await orgTodo.mod.openPicker(ctx, orgTodo.core, orgTodo.handle)
+      },
+      (why, ctx) => notify(ctx, `ecomono: org-todo picker failed: ${why}`),
+    )
+    const pickerHelp = "Open todos: mark one done, or open it in $EDITOR"
+    pi.registerCommand("org-todo", { description: pickerHelp, handler: async (_args: string, ctx: any) => void (await openTodos(ctx)) })
+    // The widget header names this key (org-todo.ts SHORTCUT); omp/tests/test_org_todo.ts pins both.
+    pi.registerShortcut("alt+t", { description: pickerHelp, handler: async (ctx: any) => void (await openTodos(ctx)) })
     pi.on(
       "session_start",
       safe(async (_event: any, ctx: any) => {
