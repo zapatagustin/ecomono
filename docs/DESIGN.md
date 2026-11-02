@@ -722,7 +722,7 @@ repo is hooks and drift checks rather than prose.
 
 ## omp target
 
-omp (oh-my-pi) is the third harness, tested against 18.14.0. The README carries the user-facing side
+omp (oh-my-pi) is the third harness, tested against 18.15.0. The README carries the user-facing side
 (install paths, posture, every accepted ceiling, the opt-ins, the upgrade protocol); this section records
 why the target is built the way it is. Evidence paths below are relative to the omp package sources.
 
@@ -795,7 +795,7 @@ either way the call was refused, so only the refusal text changes. This is not a
   `file://`, `~` and `~x`, then `resolve`. An internal URL (`skill://`, `artifact://`, `xd://`, ...) returns
   `undefined`. The path gate keeps `ssh://` parts and matches their URL path as text, whatever the host. A bash
   call whose `cwd` is an internal URL is judged on the session cwd: omp runs it in its embedded shell, which reads
-  host files and runs external programs (`tools/bash.ts:1127-1147`, `internal-urls/url-filesystem.ts`), so
+  host files and runs external programs (`tools/bash.ts:1150-1170`, `internal-urls/url-filesystem.ts`), so
   failing open there would let a credential read skip the secret gate.
 - **Handlers**, in registration order:
   - `tool_call` on `bash`: in-process `rm -rf` literal check, then `secret-access-gate`, `check-diff-size` and
@@ -851,7 +851,9 @@ either way the call was refused, so only the refusal text changes. This is not a
   - `tool_result` on `read`: the read post-check, which withholds content omp resolved to a denied file
     (`suffixResolution.to`, `displayReadTargets`, `resolvedPath`) and a directory listing that names one: with
     `isDirectory`, `resolvedPath` is the directory itself, so its entries are re-listed to omp's depth 2, hidden
-    files included (`tools/read.ts` `#readDirectory`, `workspace-tree.ts` `buildDirectoryTree`), and checked.
+    files included (`tools/read.ts` `#readDirectory`, `workspace-tree.ts` `buildDirectoryTree`), and checked. Since
+    18.15.0 that tree also holds the children of `node_modules`, `.git`, build outputs and caches
+    (`pruneExcludedDirs: false`); `directoryEntries` re-lists every entry, so it stays a superset.
   - `tool_result` on `grep`, `ast_grep`, `glob`, `find` and `ast_edit`: the search post-check. The path gate sees
     only the roots a call names, and a grep with no `path` returned lines of tracked `server.key`, `secrets/a.txt`
     and `.env` on omp 18.13.3. The paths omp lists in `details` (`files` and `fileMatches[].path` for grep and
@@ -941,7 +943,7 @@ to hide them.
 
 | Question | Resolution |
 |---|---|
-| Provider and models | Tiers become `@smol` / `@task` / `@slow` in `before_subagent_spawn`; silent inheritance goes to `@task`. The consumer binds roles and per-agent `task.agentModelOverrides`. Roles over explicit ids: ids go stale and lock the provider. |
+| Provider and models | Tiers become `@smol` / `@task` / `@slow` in `before_subagent_spawn`; silent inheritance goes to `@task`, and so does a selector that is exactly the main model (a ceiling: the event carries no selection source). Task items also carry an optional `model` (`task.perCallModel`, off by default), so with it on a model-chosen per-call model equal to the main model reaches that rule too. The consumer binds roles and per-agent `task.agentModelOverrides`. Roles over explicit ids: ids go stale and lock the provider. |
 | `xd://` mounting | Accept omp's default; the memory protocol arrives through MCP server instructions. Opt-ins `tools.xdevDocs: inline`, `tools.xdev: false`. |
 | Symlinked extension imports | Yes, by source and by spike 1: realpath import, relative graph resolution. |
 | Persona to subagents | `RULES.md` -> `opencode/AGENTS.md`, omp's only file-based carrier that reaches subagents; not also `AGENTS.md` (double injection). |
@@ -962,7 +964,7 @@ to hide them.
 | Item | Trigger | Upgrade path |
 |---|---|---|
 | Loop-breaker block | A session log shows two or more consecutive native loop-guard steers for one call | Lower `model.toolCallLoopGuard.threshold`; then extract `opencode/plugins/loop-breaker/core.ts` with polling tools exempted |
-| Claude-only persona tail | Autonomous delegation is missed on omp | First set `task.eager: preferred`, a setting with no code: omp adds its own delegation guidance to the system prompt (`task/settings.ts` `cfgTaskEager`). Only if that fails, write an omp tail and generalise `check-persona-drift.sh` to N carriers. omp's "No subagents unless..." line renders only for a `gated` delegation bias (`prompts/system/system-prompt.md`), which 18.14.0 assigns to OpenAI's 5.6 revision alone (pi-catalog `rules/classes/openai.kdl`); Claude models get the default `eager` |
+| Claude-only persona tail | Autonomous delegation is missed on omp | First set `task.eager: preferred`, a setting with no code: omp adds its own delegation guidance to the system prompt (`task/settings.ts` `cfgTaskEager`). Only if that fails, write an omp tail and generalise `check-persona-drift.sh` to N carriers. omp's "No subagents unless..." line renders only for a `gated` delegation bias (`prompts/system/system-prompt.md`), which 18.15.0 assigns to OpenAI's 5.6 revision alone (pi-catalog `rules/classes/openai.kdl`); Claude models get the default `eager` |
 | Skill description routing sentence | Routing misses observed on omp | Front-load a routing sentence repo-wide |
 | Judge gate for eval `agent()` | An eval judge spawn observed | Run the script with an empty prompt from `before_subagent_spawn` |
 | Search leak the post-check cannot see | A denied file's lines observed in a search result the post-check passed (its `details` lacked the path) | `tools.restrictedFolders`: an approval prompt for any call at or below a listed folder and for a recursive search rooted above one, in every approval mode, blocking headless (`tools/approval.ts` `restrictedFolderReason`); it does not filter inside the search |
@@ -980,7 +982,7 @@ to hide them.
 
 ### Version coupling
 
-The extension relies on these omp 18.14.0 surfaces. The tested version is `OMP_TESTED` in
+The extension relies on these omp 18.15.0 surfaces. The tested version is `OMP_TESTED` in
 `omp/extensions/ecomono/index.ts`, the one source the smoke and fake-pi read; on any other omp the first main prompt
 of a process warns once (`pi.pi.VERSION`) and blocks nothing, so an upgrade made outside the protocol is not silent.
 A change to one of the surfaces is caught by one of three nets, in this order of strength:
@@ -999,7 +1001,7 @@ A change to one of the surfaces is caught by one of three nets, in this order of
   `pi.pi.VERSION` that is not a string.
 - **The mirror table** below, re-diffed on every upgrade.
 
-Not covered by the smoke, and so resting on the fake-pi tests (events built by hand to the 18.14.0 shape) and the
+Not covered by the smoke, and so resting on the fake-pi tests (events built by hand to the 18.15.0 shape) and the
 mirror table: the read post-check (`details.{suffixResolution,displayReadTargets,resolvedPath,isDirectory}`), the
 search post-check (`details.{files,fileMatches,fileReplacements,hits,parseErrors}`) and the `details` it replaces, the
 resolve result withhold (`write` `details.xdev.inner.sourceResultDetails`), the `taskFile` and `sourceSession` deny,
@@ -1014,11 +1016,11 @@ Mirrored code, re-diffed on every omp upgrade:
 |---|---|
 | `normalizePathLikeInput`, `stripOuterDoubleQuotes`, `normalizePathSeparators`, `expandPath`, `resolveToCwd` | omp `tools/path-utils.ts:75-133,332-344,541-543,571-578` |
 | Selector peel (`splitPathAndSel`) | pi-tui `tools/read.ts:147-184` |
-| `ssh://` path rule | omp `internal-urls/ssh-protocol.ts:76-106` |
+| `ssh://` path rule | omp `internal-urls/ssh-protocol.ts:67-97` |
 | Search-root splitter `/[;,\s]+/` | omp `tools/search-approval-targets.ts:23` |
 | `extractFileMentions` (task `@path` mentions) | omp `utils/file-mentions.ts:33-55,168-186` |
-| Task items carry two file fields, so they and the mentions are the only task paths to deny: `taskFile` (setting `task.file`, off by default, new in 18.14.0: an absolute path or `local://` URL read at dispatch) and `sourceSession` (the bundled `seance` agent, advertised by default: an omp session id, or a path, one with `/` or `\` or ending in `.jsonl`, resolved with `resolveToCwd` and forked into the child). The schema omp runs, `createTaskSchema`, has no other and deletes unknown keys (`"+": "delete"`); `keepSeanceItemKeys` keeps the seance keys on batch items | omp `task/types.ts:53-73,172-260`, `task/seance.ts:110-132`, `task/index.ts:372-408` |
-| `repairDoubleEncodedJsonString` (`repairedTask`, the double-encoded `task` and `context`) | pi-tui `tools/task-repair-args.ts`, called from omp `task/index.ts:460` |
+| Task items carry two file fields, so they and the mentions are the only task paths to deny: `taskFile` (setting `task.file`, off by default, new in 18.14.0: an absolute path or `local://` URL read at dispatch) and `sourceSession` (the bundled `seance` agent, advertised by default: an omp session id, or a path, one with `/` or `\` or ending in `.jsonl`, resolved with `resolveToCwd` and forked into the child). The schema omp runs, `createTaskSchema`, has no other and deletes unknown keys (`"+": "delete"`); `keepSeanceItemKeys` keeps the seance keys on batch items | omp `task/types.ts:53-73,176-266`, `task/seance.ts:110-132`, `task/index.ts:412-447` |
+| `repairDoubleEncodedJsonString` (`repairedTask`, the double-encoded `task` and `context`) | pi-tui `tools/task-repair-args.ts`, called from omp `task/index.ts:500` |
 | Edit header grammar (`[PATH#TAG]`, `¶`, `*** ... File:`, `*** Move to:`, `MV`, sloppy `*** Edit File`) | omp `extensibility/tool-event-input.ts:35-90`; pi-edit `modes/hashline/input.rs`, `tokenizer.rs`, `modes/sloppy/parse.rs:48` |
 | SQLite path end (`SQLITE_PATH_PATTERN`, `parseSqlitePathCandidates`) | omp `tools/sqlite-reader.ts:63,547-570` |
 | Agent frontmatter (`parseFrontmatter` on Bun.YAML, `tools:` through `parseArrayOrCSV`) | pi-utils `frontmatter.ts`; omp `discovery/helpers.ts` `parseArrayOrCSV`, `parseAgentFields` |
@@ -1035,7 +1037,7 @@ Surfaces relied on:
   `session.compacting` (`{context}`), `before_agent_start` (`reason`), `session_start`, `session_shutdown`.
 - `ctx` and `pi`: `agent.{kind,id,name}`, `hasUI`, `mode`, `model.{provider,id}`, `ui.{confirm,notify,setWidget}`,
   `setInterval`, `sessionManager.getSessionId()`; `pi.exec`, `pi.logger`, `pi.pi.VERSION` (a lazy SDK getter in
-  18.14.0, read on a prompt rather than at startup).
+  18.15.0, read on a prompt rather than at startup).
 - Tool inputs: `bash.{command,cwd}`, `read.path` (selectors, `;` lists, `file://`), `grep`/`glob`/`find`/`write`/
   `ast_grep.path`, `edit.{path,paths,input}`, `ast_edit.paths`, `github.op`,
   `task.{context,agent,task,taskFile,sourceSession,tasks[]}`; read
@@ -1048,7 +1050,20 @@ Surfaces relied on:
   `debug.enabled` / `eval.py` / `eval.js` / `lsp.enabled` / `astEdit.enabled` / `task.file` defaults behind the
   accepted ceilings, `tools.restrictedFolders`, `bash.patterns`.
 
-Last re-diff, 18.13.3 to 18.14.0 (the omp, pi-tui, pi-utils, pi-ai and pi-agent-core package sources, plus the
+Last re-diff, 18.14.0 to 18.15.0 as installed (github rev 256b3211, a commit of master after the 18.15.0 release that
+reports 18.15.0; the npm 18.15.0 tarballs, sha512-verified, differ from it only by later commits), over the omp,
+pi-tui, pi-utils, pi-ai and pi-agent-core sources plus the pi-edit grammar files. Changed: a directory read also lists
+the children of `node_modules`, `.git` and caches (`workspace-tree.ts` `pruneExcludedDirs: false`), which
+`directoryEntries` already re-listed; the bash tool's own approval now also refuses an intercepted command (`policy:
+"deny"`) before any prompt, with `execute()` keeping its own refusal, so a nested dispatch of one no longer fires
+`tool_call` (the wrapper throws a pre-resolved deny before emitting it), and it is refused anyway; task items gained
+an optional per-call `model` behind `task.perCallModel` (off by default), a model selector that reaches the extension
+only as `before_subagent_spawn` patterns. Every mirror in the table, the result `details` the post-checks read, the
+event names and payloads the extension subscribes to, the MCP tool naming and the pi-edit header grammar are
+unchanged; the cited line ranges moved and were re-pinned, and the `exec/exec.ts` and `path-utils.ts` citations that
+were already wrong in 18.14.0 were corrected.
+
+Previous re-diff, 18.13.3 to 18.14.0 (the omp, pi-tui, pi-utils, pi-ai and pi-agent-core package sources, plus the
 pi-edit grammar files from the tagged repository). Changed: task items gained `taskFile` behind `task.file`, now
 denied as a path, with its contents a ceiling; `read` also fans a `;` list out on `ENAMETOOLONG`, and an opaque
 `name:rest` that no MCP server advertises falls back to a plain path, both still under the same split and selector
@@ -1061,8 +1076,8 @@ were re-pinned.
 ### Spike results
 
 Recorded for omp 18.13.3; this table is the record the code comments cite. Every spike ran offline against a
-mock provider, in a temp tree, with the data and state directories isolated. The spikes were not re-run on 18.14.0;
-the re-diff above found the surfaces they recorded unchanged.
+mock provider, in a temp tree, with the data and state directories isolated. The spikes were not re-run on 18.14.0 or 18.15.0;
+both re-diffs above found the surfaces they recorded unchanged.
 
 | Spike | Result | Consumed as |
 |---|---|---|

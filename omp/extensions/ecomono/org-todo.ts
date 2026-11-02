@@ -28,7 +28,7 @@ const clip = (s: string): string => (s.length > MAX_CHARS ? `${s.slice(0, MAX_CH
  * Tick once now, then every POLL_MS through ctx.setInterval (omp contains a throw there and clears the timer on
  * session_shutdown). Every failure leaves the previous widget in place and is logged, once per kind and session;
  * nothing here rejects.
- * pi.exec resolves on a timeout instead of rejecting (omp: exec/exec.ts:57-64), with `killed` set and whatever
+ * pi.exec resolves on a timeout instead of rejecting (omp: exec/exec.ts:34-56), with `killed` set and whatever
  * stdout came before the kill, so a killed grep is a failure too: its partial output is not the answer. The exit
  * code is not checked: `grep -s` exits 2 whenever one of the directories is missing, matches or not.
  * ecomono: ticks are not deduplicated, so a grep slower than POLL_MS overlaps the next one; the exec timeout bounds

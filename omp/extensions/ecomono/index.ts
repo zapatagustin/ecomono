@@ -48,7 +48,7 @@ export const REPO = resolve(dirname(realpathSync(fileURLToPath(import.meta.url))
 
 // The omp version the gates are tested on (README.md, upgrade protocol): omp/tests/smoke.sh and omp/tests/fake-pi.ts
 // read it from this line, so a bump is one edit. A session on any other omp warns once per process.
-const OMP_TESTED = "18.14.0"
+const OMP_TESTED = "18.15.0"
 // Module scope, not the factory's: omp re-runs the factory per subagent session in the same process.
 let versionWarned = false
 
@@ -79,7 +79,7 @@ const MEMORY_TOOL = "mcp__ecomono_memory_"
 const MEMORY_TOOL_CLAUDE = "mcp__ecomono-memory__"
 
 // omp appends model-facing notices after the body: wall time, raw-output artifact, temp-shell notice,
-// spill/truncation, timeout, exit code (omp: tools/bash.ts:715,736-753; exec/bash-executor.ts:853-871;
+// spill/truncation, timeout, exit code (omp: tools/bash.ts:745,766-783; exec/bash-executor.ts:853-871;
 // pi-tui: tools/bash.ts:201-207, tools/output-meta.ts:205-252). Known prefixes only: a body that ends in a
 // one-line JSON array must not be mistaken for a notice. An unknown future notice stays in the body,
 // where the tail budget keeps it: degrades, never drops.
@@ -97,11 +97,11 @@ function peel(text: string): [string, string] {
 /** The message of a caught value, for a log line. */
 const errText = (e: unknown): string => (e instanceof Error ? e.message : String(e))
 
-/** One pair of outer double quotes removed, as omp's stripOuterDoubleQuotes (tools/path-utils.ts:577-578). */
+/** One pair of outer double quotes removed, as omp's stripOuterDoubleQuotes (tools/path-utils.ts:541-543). */
 const unquote = (s: string): string => (s.length > 1 && s.startsWith('"') && s.endsWith('"') ? s.slice(1, -1) : s)
 
 // ecomono: mirrors omp's normalizePathLikeInput + expandPath + resolveToCwd
-// (tools/path-utils.ts:75-133,332-344,541-543,577-578), which extensions cannot import. Ceiling: a new omp path
+// (tools/path-utils.ts:75-133,332-344,541-543,571-578), which extensions cannot import. Ceiling: a new omp path
 // shorthand is not mirrored until test_paths.ts gains its case; the smoke pins the omp version. Every step can
 // only widen what the deny check sees.
 function ompPath(cwd: string, raw: string): string | undefined {
@@ -180,7 +180,7 @@ function editTargets(input: any): string[] {
 
 /**
  * A task field as the child sees it. omp's task tool runs repairTaskParams AFTER the tool_call event (pi-tui:
- * tools/task-repair-args.ts, called from omp: task/index.ts:460) on `task`, the batch `context` and every item's
+ * tools/task-repair-args.ts, called from omp: task/index.ts:500) on `task`, the batch `context` and every item's
  * `task`: a string that carries the signature of double-encoding (a `\"`, `\\`, `\/` or `\uXXXX` escape, or two
  * escape sequences) and whose whole body parses as a JSON string is replaced by that decode, so `a\n@.env\nb` reaches
  * the child as a real `@.env` mention and a heading line. The condition is mirrored exactly: a decode omp would not
@@ -235,14 +235,14 @@ const strings = (v: unknown): string[] =>
 /**
  * The raw value plus the parts omp may split it into, plus each part with `\` as `/`.
  * - read fans a missing or over-long `a;b` list out into separate reads, and splits a `;` list that mixes URLs and paths
- *   before URL detection, so `skill://x;.env` reads `.env` (omp: tools/read.ts:1761-1766,2042-2048). The parts run
+ *   before URL detection, so `skill://x;.env` reads `.env` (omp: tools/read.ts:1774-1779,2055-2061). The parts run
  *   through the tool's own execute, so no per-part tool_call fires.
  * - grep reads `path` or `paths`, each a string or an array, and splits a root on /[;,\s]+/
- *   (omp: tools/grep.ts:568-571; tools/search-approval-targets.ts:23). The split here is that superset.
+ *   (omp: tools/grep.ts:563-566; tools/search-approval-targets.ts:23). The split here is that superset.
  * - Search roots turn every `\` into `/` (normalizePathSeparators, omp: tools/path-utils.ts:571-575), so grep
  *   `~\.ssh` searches `~/.ssh`; the backslash form is kept as well, since read does not rewrite it.
  * - grep, glob and ast_grep decode a string that trims to a JSON string array (`'[".env"]'`) into its entries
- *   before resolving (omp: tools/grep.ts:677, glob.ts:212, ast-grep.ts:217, via pi-tui render/render-utils.ts
+ *   before resolving (omp: tools/grep.ts:672, glob.ts:212, ast-grep.ts:217, via pi-tui render/render-utils.ts
  *   toPathList). Each entry is added next to the raw value, whatever the tool: a decode omp would not do only
  *   costs a false block.
  */
@@ -267,10 +267,10 @@ function pathParts(value: string): string[] {
 /**
  * The local path a part reads. read's one `path` field takes a local path, an internal URI or a URL, selectors
  * inline (omp: tools/read.ts:821); the search and write tools take the same spellings. ompPath covers `file://`
- * (omp: tools/read.ts:1755-1757), quotes, `@`/`:` prefixes and `~`; internal URLs (skill://, artifact://, xd://,
+ * (omp: tools/read.ts:1768-1770), quotes, `@`/`:` prefixes and `~`; internal URLs (skill://, artifact://, xd://,
  * http(s)://) resolve to undefined and are skipped.
  * `ssh://` is not skipped: it reads, searches and writes files on whatever host OpenSSH resolves, `localhost`
- * included, at the decoded URL pathname (omp: internal-urls/ssh-protocol.ts:76-106). That pathname is matched as
+ * included, at the decoded URL pathname (omp: internal-urls/ssh-protocol.ts:67-97). That pathname is matched as
  * text, never resolved against cwd and whatever the host, so a remote `.env` or `~/.ssh/*` is denied like a local
  * one. It lives here and not in ompPath, which the bash cwd handling shares.
  */
@@ -296,7 +296,7 @@ function resolvePart(cwd: string, part: string): string | undefined {
  * is at the FIRST `:` of the last segment: a cut at the last `:` would leave `.env:1-5` or `.env:raw`, which no
  * glob matches. A direct read sets no details target for the post-check either, so this is the only place that
  * catches it.
- * An archive member `b.zip:.ssh/k` (omp: prompts/tools/read.md:12; tools/grep.ts:308 and tools/write.ts:645 parse
+ * An archive member `b.zip:.ssh/k` (omp: prompts/tools/read.md:12; tools/grep.ts:309 and tools/write.ts:645 parse
  * it too) has its `:` in a middle segment, where the cut above does not look, so the path is also tested with
  * every `:` as a `/`: `b.zip/.ssh/k` meets the `.ssh` glob, stacked selectors and `::` included.
  * A SQLite selector may hold a `/` too (`agent.db:auth_credentials:a/b`), so neither cut above leaves the bare file:
@@ -349,7 +349,7 @@ function realish(path: string): string {
  * nothing else. omp persists a tool result's details in the session file (session/session-manager.ts appendMessage)
  * and the TUI renders from them (`displayContent`), so the matching lines, find's snippets, the diff, the path lists
  * that name the denied file and the spill link in `meta` must not outlive the withhold. Always an object: omp keeps
- * the original details when a handler returns undefined or null for them (extensibility/extensions/wrapper.ts:548,
+ * the original details when a handler returns undefined or null for them (extensibility/extensions/wrapper.ts:550,
  * `resultResult.details ?? result.details`).
  */
 const withheldDetails = (d: unknown): Record<string, number | boolean> =>
@@ -378,8 +378,10 @@ const listedPaths = (d: any): string[] => {
 
 /**
  * The entries a `read` of a directory can name: omp lists them to depth 2, hidden ones included and .gitignore
- * ignored (omp: tools/read.ts:3025-3054 #readDirectory, workspace-tree.ts:56-67 buildDirectoryTree). Every entry is
- * returned, past omp's 12-entry cap per child directory, so the check over-matches. An unreadable directory adds
+ * ignored (omp: tools/read.ts:3038-3067 #readDirectory, workspace-tree.ts:57-69 buildDirectoryTree). Every entry is
+ * returned, past omp's 12-entry cap per child directory, so the check over-matches. omp 18.15.0 passes
+ * `pruneExcludedDirs: false` (workspace-tree.ts:68), so the listing also holds the children of node_modules, .git,
+ * build outputs and caches; every entry is re-listed here, so this stays a superset. An unreadable directory adds
  * nothing.
  */
 const directoryEntries = (root: string): string[] => {
@@ -682,7 +684,7 @@ export function ecomono(o: { repo: string; hooksDir?: string; timeoutMs?: number
     // never rejects. Main session only: a subagent shares the parent's project and would only repeat the work.
     // A failed run warns once per session, since it runs on every prompt: pi.exec rejects when `node` is not on
     // PATH (an omp-only host can lack it) and resolves with `killed` or a non-zero code on a timeout or a crash
-    // (omp: exec/exec.ts:41-64). `node` from PATH as in OpenCode; process.execPath is bun here.
+    // (omp: exec/exec.ts:34-56). `node` from PATH as in OpenCode; process.execPath is bun here.
     // ecomono: runs are not deduplicated, so a prompt during a slow refresh starts a second one. Add an in-flight
     // guard if overlapping runs ever cause harm.
     let refreshWarned = false
@@ -755,7 +757,7 @@ export function ecomono(o: { repo: string; hooksDir?: string; timeoutMs?: number
       }
       // A cwd that is an internal URL (skill://, local://, ...) has no host directory to run a script in, yet omp
       // still runs the command, in its embedded shell, which reads host files and runs external programs
-      // (omp: tools/bash.ts:1127-1147; internal-urls/url-filesystem.ts:4-6,289-294,559). Such a call is judged
+      // (omp: tools/bash.ts:1150-1170; internal-urls/url-filesystem.ts:4-6,289-294,559). Such a call is judged
       // on the session cwd, like a call with no cwd: the secret gate reads only the command text, and the
       // delivery gates then judge the session repository, which can only err toward a block.
       const raw = typeof input.cwd === "string" ? input.cwd : ""
@@ -799,27 +801,27 @@ export function ecomono(o: { repo: string; hooksDir?: string; timeoutMs?: number
 
     // Every item with an agent goes through the judge gate; the script alone knows which agents are judges,
     // so there is no list of judge names here. The prompt is rebuilt from the two fields omp hands the child as
-    // text: the batch `context` (its subagent system prompt, omp: task/executor.ts:3976,4786) and the item's
-    // `task` (the initial prompt, executor.ts:2531), each in the form repairedTask gives, because omp repairs a
+    // text: the batch `context` (its subagent system prompt, omp: task/executor.ts:3987,4840) and the item's
+    // `task` (the initial prompt, executor.ts:2540), each in the form repairedTask gives, because omp repairs a
     // double-encoded field after this event and the heading is judged where the child reads it. `solutionSpace`
     // is left out on purpose: omp feeds it only to the auto-thinking classifier
-    // (session/agent-session-types.ts:457), so a heading that sits only there never reaches the judge. omp drops
-    // `context` when task.batch is off, but then it rejects a call that carries one (task/index.ts:235-247), so
+    // (session/agent-session-types.ts:471), so a heading that sits only there never reaches the judge. omp drops
+    // `context` when task.batch is off, but then it rejects a call that carries one (task/index.ts:243-255), so
     // no judge launches without it.
     // ecomono: an eval `agent()` spawn of a judge skips this gate. before_subagent_spawn carries no prompt
     // (omp: extensibility/extensions/types.ts:1174-1186), so there is nothing to hand the script. Upgrade
     // path: when such a spawn is observed, run the script with an empty prompt from before_subagent_spawn.
     // Before the judge gate, the path deny on the @-mentions of every item's `task`, whatever its agent: omp
-    // reads each mentioned file into the child's first prompt with no tool_call (task/executor.ts:2498,2531;
-    // session/agent-session.ts:8882-8891). `context` becomes the system prompt and is never scanned for
+    // reads each mentioned file into the child's first prompt with no tool_call (task/executor.ts:2507,2540;
+    // session/agent-session.ts:8935-8944). `context` becomes the system prompt and is never scanned for
     // mentions, so it is not checked. fileMentions scans each `task` as typed and as repairedTask decodes it.
     // An item has two file fields. `taskFile` (setting task.file, off by default) is an absolute path or local://
-    // URL whose contents omp reads at dispatch and hands the child as its `task` (task/index.ts:373-408).
+    // URL whose contents omp reads at dispatch and hands the child as its `task` (task/index.ts:412-447).
     // `sourceSession` (the bundled seance agent, advertised by default: task.disabledAgents is []) names the omp
     // session a seance child forks: a value with `/` or `\`, or ending in `.jsonl`, is a path resolved against
     // cwd and read; any other is an id omp looks up in its own session directories, never a path the caller names
     // (task/seance.ts:110-132). Both paths are denied like a path tool's, top-level and per item; local:// is
-    // skipped as an internal URL. The schema omp runs (createTaskSchema, task/types.ts:53-73,172-260) has no
+    // skipped as an internal URL. The schema omp runs (createTaskSchema, task/types.ts:53-73,176-266) has no
     // other path field and deletes every other unknown key (`"+": "delete"`), so there is nothing else to deny.
     // ecomono: ceiling. A seance child loads no extensions (task/seance-policy.ts disableExtensionDiscovery), so
     // its read, grep and glob skip the path deny and its answer returns here as the task result. Upgrade path:
@@ -828,7 +830,7 @@ export function ecomono(o: { repo: string; hooksDir?: string; timeoutMs?: number
     // their headings are not checked: a same-message write can change them after any check here. Upgrade path:
     // keep task.file off (omp's default), or omp's tools.restrictedFolders, which covers task files.
     // ecomono: other text omp sends through the same prompt path, such as the queued hidden next-turn messages
-    // (session/agent-session.ts:9856-9871), has its mentions read too and is not seen here. Upgrade path: deny
+    // (session/agent-session.ts:9909-9924), has its mentions read too and is not seen here. Upgrade path: deny
     // their mentions at the event that carries them, if one is ever exposed to extensions.
     const taskCall = async (input: any, ctx: any) => {
       if (!Array.isArray(input.tasks) && typeof input.agent !== "string") drift("task tool_call", "the input has neither tasks[] nor a string agent")
@@ -938,11 +940,11 @@ export function ecomono(o: { repo: string; hooksDir?: string; timeoutMs?: number
       "tool_result",
       safe(async (event: any, ctx: any) => {
         // Read post-check (docs/DESIGN.md, omp target > Handler contracts): omp resolves some reads to a file the model never named, and
-        // reports where in `details`. A suffix match (`read prod` -> `secrets/prod`, omp: tools/read.ts:2053-2066,
+        // reports where in `details`. A suffix match (`read prod` -> `secrets/prod`, omp: tools/read.ts:2066-2079,
         // details.suffixResolution.to) and the parts of a delimited list (details.displayReadTargets) never fire
         // their own tool_call, so the path gate cannot see them. `details.resolvedPath`, the absolute file omp read
-        // (an internal URL's backing file included, tools/read.ts:830-835,2993), goes the same way. A directory read
-        // (details.isDirectory) lists the entries below resolvedPath, the directory itself (tools/read.ts:3025-3054),
+        // (an internal URL's backing file included, tools/read.ts:830-835,3006), goes the same way. A directory read
+        // (details.isDirectory) lists the entries below resolvedPath, the directory itself (tools/read.ts:3038-3067),
         // so they are re-listed (directoryEntries) and checked too. The targets go through the same deny check and a
         // match withholds the content. A result is never rewritten otherwise: hashline anchors feed `edit`.
         // A withhold names the glob, never the file, so the notice carries no path the model did not type. That keeps
@@ -983,7 +985,7 @@ export function ecomono(o: { repo: string; hooksDir?: string; timeoutMs?: number
         // Search post-check. The path gate sees only the roots a call names, so a grep with no `path`, or over a
         // parent directory, can list lines or names of a denied file below it. omp reports every path a search
         // result shows in `details`: `files` and `fileMatches[].path` (grep, ast_grep; paths relative to the session
-        // cwd, absolute outside it; omp: tools/grep.ts:1287-1291, tools/ast-grep.ts:299,382), `files` (glob;
+        // cwd, absolute outside it; omp: tools/grep.ts:1282-1286, tools/ast-grep.ts:299,382), `files` (glob;
         // tools/glob.ts:349-350), `hits[].rel` (find, the semantic search; tools/jfind/index.ts:139-148) and `files`
         // and `fileReplacements[].path` (ast_edit, whose result holds the diff of every file it touched;
         // tools/ast-edit.ts:324-335,491-502), and `parseErrors` (ast_grep and ast_edit: every file that failed to
@@ -1069,7 +1071,9 @@ export function ecomono(o: { repo: string; hooksDir?: string; timeoutMs?: number
     // event as [mainModel] with modelRole undefined, identical to silent inheritance (the event carries no selection
     // source and extensions get no settings access), so it is rerouted to @task. Workaround: bind the override
     // through a role alias such as `@slow`, which sets modelRole. Upgrade path: use the selection source if omp adds
-    // it to BeforeSubagentSpawnEvent.
+    // it to BeforeSubagentSpawnEvent. Task items also carry an optional `model` (setting `task.perCallModel`, off by
+    // default; task/types.ts:193-195, task/index.ts:374-378 spawnModelFields, structured-subagent.ts:595-597), so with
+    // that setting on a model-chosen per-call model equal to the main model reaches this rule too.
     pi.on(
       "before_subagent_spawn",
       safe((event: any, ctx: any) => {
@@ -1174,7 +1178,7 @@ export function ecomono(o: { repo: string; hooksDir?: string; timeoutMs?: number
     // `message_start` instead and keep `message.role === "user" && !message.synthetic && message.attribution !==
     // "agent"` (omp sends its own prompts as `developer` messages); omp/tests/fake-pi.ts must then accept the event.
     // Queued steer and follow-up messages reach one before_agent_start with their texts joined by a blank line
-    // (omp: session/agent-session.ts:8578-8601), so N queued messages are stored as one row; the same upgrade path
+    // (omp: session/agent-session.ts:8628-8651), so N queued messages are stored as one row; the same upgrade path
     // stores them one by one.
     // ecomono: the storage modules report a few faults with console.error (db.ts when stat fails, observations.ts
     // for a stranded legacy project key), which draws over the TUI. Upgrade path: pass them a sink backed by
@@ -1228,9 +1232,9 @@ export function ecomono(o: { repo: string; hooksDir?: string; timeoutMs?: number
     // The running omp against OMP_TESTED, main session only. The read and search post-checks read result `details`
     // fields by name that neither the smoke nor drift() covers (docs/DESIGN.md, Version coupling), so any omp
     // other than the tested one says so before any gate runs. It warns, never blocks. On a prompt, not in
-    // session_start: in omp 18.14.0 `pi.pi` is a getter that requires the SDK index on first access (omp:
-    // extensibility/extensions/loader.ts:211-213, extensibility/host-api.ts:3-6), about 50 ms measured in print mode
-    // that would otherwise land on startup. Its own safe(), so a throwing getter costs this check and never the
+    // session_start: in the tested omp (OMP_TESTED) `pi.pi` is a getter that requires the SDK index on first access
+    // (omp: extensibility/extensions/loader.ts:211-213, extensibility/host-api.ts:3-6), about 50 ms measured in print
+    // mode that would otherwise land on startup. Its own safe(), so a throwing getter costs this check and never the
     // refresh or the capture. A throw ends the check for the session (versionUnread), so it logs once and not on
     // every prompt; the flag is the factory's, so it never silences the check in another session.
     let versionUnread = false

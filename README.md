@@ -491,7 +491,7 @@ Notes:
   prompt template as its expanded body. The session id a model passes to the memory tools
   is not joined to the omp session id, as in OpenCode.
 
-Upgrade protocol. The tested version is **omp 18.14.0**, set once as `OMP_TESTED` in
+Upgrade protocol. The tested version is **omp 18.15.0**, set once as `OMP_TESTED` in
 `omp/extensions/ecomono/index.ts`; the smoke reads it and exits non-zero on any other omp
 unless `ECOMONO_OMP_UNTESTED=1` is set. The net for an upgrade made outside this protocol:
 on any other omp, the first prompt logs a warning, once per process and shown where there
