@@ -176,6 +176,8 @@ const bash = (text: string, over: Record<string, any> = {}) => ({
 {
   // (12) A throw inside the handler leaves the result as omp produced it and is logged. The throwing getter sits
   // inside content, which fake-pi passes by reference; on the event itself fake-pi's spread would hit it first.
+  // The content split runs inside compression's own try, so it is a compression fault: a plain logger warning, no
+  // fail-open line.
   const { fire, calls, ctx } = setup()
   const content = [
     {
@@ -186,7 +188,8 @@ const bash = (text: string, over: Record<string, any> = {}) => ({
     },
   ]
   assert.equal(await fire("tool_result", bash("", { content }), ctx), undefined)
-  assert.ok(calls.warn.some((l) => l.includes("handler failed") && l.includes("text gone")), calls.warn.join("\n"))
+  assert.ok(calls.warn.some((l) => l.startsWith("ecomono: bash compression failed") && l.includes("text gone")), calls.warn.join("\n"))
+  assert.ok(!calls.warn.some((l) => l.includes("failing open")), calls.warn.join("\n"))
   assert.deepEqual(calls.failures, [])
 }
 
@@ -216,11 +219,15 @@ const bash = (text: string, over: Record<string, any> = {}) => ({
   )
   const { fire, calls } = setup(repo)
   const ctx = makeCtx({ hasUI: true })
+  const log = join(process.env.XDG_STATE_HOME!, "ecomono", "tool-result.log")
+  const size = () => (existsSync(log) ? statSync(log).size : 0)
+  const before = size()
   assert.equal(await fire("tool_result", bash(bigBody), ctx), undefined)
   assert.equal(calls.warn.length, 1, calls.warn.join("\n"))
   assert.ok(calls.warn[0].startsWith("ecomono: bash compression failed") && calls.warn[0].includes("squash broke"), calls.warn[0])
   assert.ok(!calls.warn.some((l) => l.includes("failing open")), calls.warn.join("\n"))
   assert.deepEqual(ctx.recorded.notify, [])
+  assert.equal(size(), before, "no state-log line: compression is not a skipped gate")
 }
 
 console.log("test_compress: all assertions passed")

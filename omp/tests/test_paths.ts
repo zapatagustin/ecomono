@@ -4,7 +4,7 @@
 // from os.homedir(); HOME is never changed (Bun's os.homedir() ignores a runtime change).
 import { dir, makeCtx, makePi, withEnv } from "./fake-pi.ts"
 import assert from "node:assert/strict"
-import { copyFileSync, mkdirSync, readFileSync, symlinkSync, writeFileSync } from "node:fs"
+import { copyFileSync, existsSync, mkdirSync, readFileSync, symlinkSync, writeFileSync } from "node:fs"
 import { homedir } from "node:os"
 import { join } from "node:path"
 import { REPO, ecomono } from "../extensions/ecomono/index.ts"
@@ -170,6 +170,15 @@ const sample = (glob: string) => glob.replace(/\*\*\//g, "/x/").replace(/\*\*/g,
     // Through extensionFault, so the state log and the UI hear that every path deny is off.
     assert.equal(u.calls.warn.filter((l) => l.startsWith("[path-deny] failing open")).length, warns, label)
   }
+  // The state log and the UI do hear it, once: the empty list is cached, so the fault does not repeat.
+  const pdLog = join(process.env.XDG_STATE_HOME!, "ecomono", "path-deny.log")
+  const pdLines = () => (existsSync(pdLog) ? readFileSync(pdLog, "utf8").split("\n").filter(Boolean).length : 0)
+  const pdBefore = pdLines()
+  const pd = setup(bad)
+  const pdCtx = makeCtx({ cwd: dir("cwd"), hasUI: true })
+  for (let i = 0; i < 2; i++) await pd.fire("tool_call", call("read", { path: ".env" }), pdCtx)
+  assert.equal(pdLines() - pdBefore, 1)
+  assert.equal(pdCtx.recorded.notify.length, 1)
 }
 
 // ---- denied -------------------------------------------------------------------------------------------------
@@ -629,6 +638,39 @@ const sample = (glob: string) => glob.replace(/\*\*\//g, "/x/").replace(/\*\*/g,
   const boom = { get resolvedPath(): string { throw new Error("boom") } }
   assert.equal(await fire("tool_result", result(boom), ctx), undefined)
   assert.ok(calls.warn.some((l) => l.startsWith("[tool-result] failing open") && l.includes("boom")), calls.warn.join("\n"))
+
+  // The same fault again: the state log keeps a line per unchecked result, while the logger line and the notice do
+  // not repeat.
+  const trLog = join(process.env.XDG_STATE_HOME!, "ecomono", "tool-result.log")
+  const trLines = () => (existsSync(trLog) ? readFileSync(trLog, "utf8").split("\n").filter(Boolean).length : 0)
+  const ui = setup()
+  const uiCtx = makeCtx({ cwd: dir("cwd"), hasUI: true })
+  const trBefore = trLines()
+  for (let i = 0; i < 2; i++) assert.equal(await ui.fire("tool_result", result(boom), uiCtx), undefined)
+  assert.equal(trLines() - trBefore, 2)
+  assert.equal(ui.calls.warn.filter((l) => l.startsWith("[tool-result] failing open")).length, 1, ui.calls.warn.join("\n"))
+  assert.equal(uiCtx.recorded.notify.length, 1)
+
+  // Different error texts of one kind: one logger line (with the later-faults note), a state-log line each.
+  const diff = setup()
+  const throwing = (msg: string) => ({ get resolvedPath(): string { throw new Error(msg) } })
+  const dBefore = trLines()
+  for (const msg of ["ENOENT /a/one", "ENOENT /b/two"]) assert.equal(await diff.fire("tool_result", result(throwing(msg)), ctx), undefined)
+  const dLines = diff.calls.warn.filter((l) => l.startsWith("[tool-result] failing open"))
+  assert.equal(dLines.length, 1, diff.calls.warn.join("\n"))
+  assert.ok(dLines[0].includes("ENOENT /a/one") && dLines[0].includes("later tool-result faults"), dLines[0])
+  assert.equal(trLines() - dBefore, 2)
+
+  // A first fault without a UI does not spend the session's notice: the next fault with a UI notifies.
+  const late = setup()
+  const lateCtx = makeCtx({ cwd: dir("cwd"), hasUI: true })
+  const noUi = makeCtx({ cwd: dir("cwd"), hasUI: false })
+  assert.equal(await late.fire("tool_result", result(boom), noUi), undefined)
+  assert.equal(lateCtx.recorded.notify.length + noUi.recorded.notify.length, 0)
+  assert.equal(await late.fire("tool_result", result(boom), lateCtx), undefined)
+  assert.equal(lateCtx.recorded.notify.length, 1)
+  assert.equal(await late.fire("tool_result", result(boom), lateCtx), undefined)
+  assert.equal(lateCtx.recorded.notify.length, 1)
 }
 
 // ---- search post-check --------------------------------------------------------------------------------------

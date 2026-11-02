@@ -784,13 +784,20 @@ either way the call was refused, so only the refusal text changes. This is not a
 
 - **Error contract.** omp fails a `tool_call` closed on a throw, a rejection or its 30 s per-handler budget
   (`extensibility/extensions/runner.ts`). ecomono's gates fail open. Every handler body therefore runs inside
-  one `safe()` wrapper that catches, logs through `pi.logger.warn` and returns `undefined`; child processes get
+  one `safe()` wrapper that catches, logs through `pi.logger.warn` (or, for the `tool_call` handler and the
+  `tool_result` post-checks, reports through `extensionFault`, below) and returns `undefined`; child processes get
   20 s (`GATE_TIMEOUT_MS`, which `test_gates.ts` holds under omp's 30 s) and run concurrently; there are no raw timers (`ctx.setInterval` only), no floating promises and no
   `console.error` (it draws over the TUI). No handler returns a `systemPrompt`.
 - **Fail-open reporting.** `runHook`'s `report` is `pi.logger.warn`, plus the state log written by the core, plus
   one `ctx.ui.notify` per session when a UI exists. A `tool_call` handler that throws (a rejected confirm
   included) is reported the same way through the core's exported `logFailOpen`, to `tool-call.log`, so an
-  unchecked call always leaves the same trace.
+  unchecked call always leaves the same trace. So is a `tool_result` post-check that throws, to `tool-result.log`
+  (the result passes unchecked), and an `opencode/opencode.json` that cannot be read or parsed, to `path-deny.log`
+  (every path deny is off for the session). A fault in bash compression is not a skipped gate and stays a logger
+  line. The state log gets every fault in full; the logger gets the first fault of each kind (`tool-call`,
+  `tool-result`, `path-deny`) in the session, with a note that later ones go to the state log only, so a fault
+  that repeats on every call does not flood it. The UI notice is once per session, on the first fault that has a
+  UI, even if an earlier fault had none.
 - **`ompPath(cwd, raw)`** mirrors omp's path normalisation: trim, outer double quotes, a leading `@` or `:`,
   `file://`, `~` and `~x`, then `resolve`. An internal URL (`skill://`, `artifact://`, `xd://`, ...) returns
   `undefined`. The path gate keeps `ssh://` parts and matches their URL path as text, whatever the host. A bash

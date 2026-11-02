@@ -460,16 +460,30 @@ export function ecomono(o: { repo: string; hooksDir?: string; timeoutMs?: number
     // Synchronous on purpose: runHook shields a report that throws but not one that returns a rejected promise.
     // Notify once per session, and only where there is a UI to notify.
     let notified = false
-    const failOpen = (ctx: any, line: string): void => {
-      pi.logger.warn(line)
+    const noticeOnce = (ctx: any): void => {
       if (notified || !ctx?.hasUI) return
       notified = true
       notify(ctx, `ecomono gate failed open: see ${stateDir()}/`)
     }
+    const failOpen = (ctx: any, line: string): void => {
+      pi.logger.warn(line)
+      noticeOnce(ctx)
+    }
     // A fault found here rather than in a gate script: the same report, plus a line in <stateDir>/<name>.log
     // written by the hook runner's own helper, so both kinds of fail-open leave the same trace. `name` is a file
     // name.
-    const extensionFault = (ctx: any, name: string, why: string): void => logFailOpen(name, why, (l) => failOpen(ctx, l))
+    // The state log gets a full line for every fault, so every unchecked call keeps its trace there. The logger
+    // gets only the first fault of each name (tool-call, tool-result, path-deny) in the session, with a note that
+    // later ones go to the state log only, so a fault that repeats on every call does not flood it; `why` is not
+    // part of the key, as it often carries per-call data. The session's one notice is separate from that: it is
+    // tried on every fault, so the first fault that has a UI notifies even if an earlier one had none.
+    const reported = new Set<string>()
+    const extensionFault = (ctx: any, name: string, why: string): void =>
+      logFailOpen(name, why, (l) => {
+        if (reported.has(name)) return noticeOnce(ctx)
+        reported.add(name)
+        failOpen(ctx, `${l} (later ${name} faults this session go to ${stateDir()}/${name}.log only)`)
+      })
 
     // The `Bash(<literal>)` entries of Claude's deny list, whitespace-normalised, parsed on first use and
     // cached. Derived from the template rather than copied, so the two hosts cannot drift. A template that
@@ -522,7 +536,11 @@ export function ecomono(o: { repo: string; hooksDir?: string; timeoutMs?: number
           }
         } catch (e) {
           denyGlobs = []
-          extensionFault(ctx, "path-deny", `path deny disabled, cannot read opencode/opencode.json from ${o.repo}: ${errText(e)}`)
+          extensionFault(
+            ctx,
+            "path-deny",
+            `path deny disabled for this session, cannot read opencode/opencode.json from ${o.repo}: ${errText(e)}`,
+          )
         }
       }
       return denyGlobs
@@ -1036,15 +1054,16 @@ export function ecomono(o: { repo: string; hooksDir?: string; timeoutMs?: number
         if (process.env.ECOMONO_COMPRESS === "off") return undefined
         if (!Array.isArray(event.content) || typeof event.input !== "object" || event.input === null) return undefined
 
-        const texts: string[] = []
-        const rest: unknown[] = []
-        for (const part of event.content) {
-          if (part?.type === "text" && typeof part.text === "string") texts.push(part.text)
-          else rest.push(part)
-        }
-        if (texts.length === 0) return undefined
-
+        // The content split is compression's too, so a part that throws when read stays a compression fault.
         try {
+          const texts: string[] = []
+          const rest: unknown[] = []
+          for (const part of event.content) {
+            if (part?.type === "text" && typeof part.text === "string") texts.push(part.text)
+            else rest.push(part)
+          }
+          if (texts.length === 0) return undefined
+
           const c = loadCompressor()
           if (!c) return undefined
 
