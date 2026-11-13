@@ -12,6 +12,8 @@ process.env.ECOMONO_LEGACY_DB = join(tmpdir(), "ecomono-no-such-legacy.db")
 
 const { registryByName } = await import("./tools")
 const Obs = await import("./observations")
+// The default guard is the cwd project, whatever the checkout directory is called.
+const P = Obs.currentProject().project
 const call = (name: string, args: any = {}) => registryByName[name].handler(args)
 
 // every tool has a name, description, args shape, handler
@@ -23,20 +25,28 @@ for (const t of registry) {
   assert(t.args && typeof t.args === "object", `${t.name} has args shape`)
 }
 
-const saved = call("mem_save", { title: "Ported engram to bun", content: "native sqlite", type: "architecture", project: "ecomono" }) as any
+const saved = call("mem_save", { title: "Ported engram to bun", content: "native sqlite", type: "architecture", project: P }) as any
 assert(saved.id > 0, "mem_save returns id")
 
-const found = call("mem_search", { query: "engram bun", project: "ecomono" }) as any
+const found = call("mem_search", { query: "engram bun", project: P }) as any
 assert(found.match_mode === "all" && found.results.length === 1 && found.results[0].id === saved.id, "mem_search finds it")
 
 const got = call("mem_get_observation", { id: saved.id }) as any
 assert(got.title === "Ported engram to bun", "mem_get_observation")
 
 assert((call("mem_update", { id: saved.id, expected_project: "*", content: "native bun:sqlite storage" }) as any).updated, "mem_update")
-assert((call("mem_search", { query: "storage", project: "ecomono" }) as any).results.length === 1, "update reindexed")
+assert((call("mem_search", { query: "storage", project: P }) as any).results.length === 1, "update reindexed")
 
 assert((call("mem_pin", { id: saved.id }) as any).pinned, "mem_pin")
 assert((call("mem_unpin", { id: saved.id }) as any).unpinned, "mem_unpin")
+
+// no project argument -> guard defaults to the current project: a row elsewhere is refused
+const foreign = call("mem_save", { title: "Foreign row", content: "other project", project: "not-" + P }) as any
+const fp = call("mem_pin", { id: foreign.id }) as any
+assert(fp.pinned === false && fp.reason === "project mismatch" && fp.row_project === "not-" + P, "mem_pin default guard refuses another project")
+Obs.pin(foreign.id, "*")
+const fu = call("mem_unpin", { id: foreign.id }) as any
+assert(fu.unpinned === false && fu.reason === "project mismatch" && fu.row_project === "not-" + P, "mem_unpin default guard refuses another project")
 
 // --- admission boundary: mem_save/mem_update/mem_save_prompt reject blank fields (engram #767) ---
 assert.throws(() => call("mem_save", { title: " \t\n ", content: "x", project: "admissiontools" }),
@@ -46,8 +56,8 @@ assert.throws(() => call("mem_update", { id: saved.id, expected_project: "*", ti
 assert.throws(() => call("mem_save_prompt", { session_id: "sess-admission", content: "  " }),
   /prompt content is required/, "mem_save_prompt rejects whitespace-only content")
 
-assert((call("mem_timeline", { project: "ecomono" }) as any).observations.length === 1, "mem_timeline")
-assert((call("mem_stats", { project: "ecomono" }) as any).observations === 1, "mem_stats")
+assert((call("mem_timeline", { project: P }) as any).observations.length === 1, "mem_timeline")
+assert((call("mem_stats", { project: P }) as any).observations === 1, "mem_stats")
 assert((call("mem_suggest_topic_key", { title: "Auth Model!" }) as any).topic_key === "auth-model", "mem_suggest_topic_key")
 
 // --- mem_search: uniform { results, match_mode } envelope, auto-fallback only when implicit ---

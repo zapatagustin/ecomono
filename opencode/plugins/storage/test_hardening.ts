@@ -70,6 +70,15 @@ const priv = call("mem_save", { title: "Key <private>sk-123</private> rotated", 
 const row = Obs.getObservation(priv.id)!
 assert(!/sk-123|secret|LEAK|never closed|private/i.test(row.title + row.content), `private stripped: ${row.title} | ${row.content}`)
 assert(row.content.includes("tail") && row.content.startsWith("a "), "surrounding text kept")
+// tag variants (whitespace, attributes) fail closed too; a longer tag name is not the tag
+for (const [o, c] of [["<private >", "</private >"], ["< private>", "</ private>"], ["<private\n>", "</private\n>"], ["<private class=x>", "</private>"]]) {
+  const v = call("mem_save", { title: `variant ${JSON.stringify(o)}`, content: `a ${o}SECRET${c} b`, project: "pv" })
+  assert(Obs.getObservation(v.id)!.content === "a  b" && /stripped/.test(v.private_stripped), `variant ${JSON.stringify(o)} stripped and signalled`)
+}
+for (const t of ["privateer", "private-key"]) {
+  const k = call("mem_save", { title: `kept ${t}`, content: `<${t}>secret</${t}>`, project: "pv" })
+  assert(Obs.getObservation(k.id)!.content === `<${t}>secret</${t}>` && k.private_stripped === undefined, `<${t}> untouched`)
+}
 const n1 = Obs.save({ title: "Judge a", content: "alpha", project: "p" })!
 const n2 = Obs.save({ title: "Judge b", content: "beta", project: "p" })!
 db.run("INSERT INTO judgments (id,new_id,candidate_id,project_id,suggested_relation,confidence) VALUES ('j1',?,?,?,?,?)", [n2.id, n1.id, "p", "related", 0.5])
@@ -133,7 +142,7 @@ assert(Obs.search({ query: "tail", project: "p" }).length === 1, "rows still in 
 // --- 8. protocol text ---
 assert(!MEMORY_INSTRUCTIONS.includes("IMMEDIATELY after any of these"), "no per-event save rule")
 assert(/once.*request/i.test(MEMORY_INSTRUCTIONS), "save-once-per-request rule")
-assert(/blindly repeat/i.test(MEMORY_INSTRUCTIONS), "no blind retry rule")
+assert(/failed `mem_save` wrote nothing/.test(MEMORY_INSTRUCTIONS) && /checkpoint/i.test(MEMORY_INSTRUCTIONS), "retry rule and checkpoint rule")
 assert(MEMORY_INSTRUCTIONS.includes("#id"), "protocol mentions ids from mem_context")
 
 // --- review fixes: handoff survives pinned flood; mem_review guard hint; protocol header ---

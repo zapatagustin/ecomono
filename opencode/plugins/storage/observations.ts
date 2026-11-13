@@ -10,14 +10,15 @@ export function normalizedHash(title: string, content: string): string {
 // Drop <private>...</private> spans before anything is persisted. Depth-counted so
 // a nested block cannot leak its tail; an unterminated <private> never returns to
 // depth 0, so it strips to the end of the text (fail closed). A stray </private>
-// is dropped too. Idempotent.
+// is dropped too. The tag tolerates whitespace and attributes (`< private x=1>`)
+// but not a longer name (`<privateer>`, `<private-key>`). Idempotent.
 export function stripPrivate(text: string): string {
   return scanPrivate(text).out
 }
 
 function scanPrivate(text: string): { out: string; unterminated: boolean } {
   let depth = 0, out = "", last = 0
-  for (const m of text.matchAll(/<(\/?)private>/gi)) {
+  for (const m of text.matchAll(/<\s*(\/?)\s*private(?![\w-])[^>]*>/gi)) {
     if (depth === 0) out += text.slice(last, m.index)
     depth = m[1] ? Math.max(0, depth - 1) : depth + 1
     last = m.index! + m[0].length

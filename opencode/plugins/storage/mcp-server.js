@@ -19734,7 +19734,7 @@ function stripPrivate(text) {
 }
 function scanPrivate(text) {
   let depth = 0, out = "", last = 0;
-  for (const m of text.matchAll(/<(\/?)private>/gi)) {
+  for (const m of text.matchAll(/<\s*(\/?)\s*private(?![\w-])[^>]*>/gi)) {
     if (depth === 0)
       out += text.slice(last, m.index);
     depth = m[1] ? Math.max(0, depth - 1) : depth + 1;
@@ -20420,7 +20420,9 @@ Call \`mem_save\` after any of these:
 
 Save once per request, when it is done, not after every fix; a fix with a non-obvious root cause still gets its own entry. The save can share a turn with other tool calls.
 
-Do not blindly repeat a memory write that returned an error: check whether the row exists first (\`mem_search\`, \`mem_context\`), a retry can duplicate it.
+Checkpoint exception: save at once a decision whose rationale would be expensive to re-derive, and save before a long-running step or when a compaction is imminent, so a crash or compaction does not lose the request's decisions.
+
+A failed \`mem_save\` wrote nothing and may be retried. For any other write tool, check whether the row exists first (\`mem_search\`, \`mem_context\`) before repeating it: a retry can duplicate it.
 
 Format for \`mem_save\`:
 - **title**: Verb + what \u2014 short, searchable (e.g. "Fixed N+1 query in UserList", "Chose Zustand over Redux")
