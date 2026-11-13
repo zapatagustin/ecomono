@@ -1,6 +1,6 @@
 // The three tabs of the omp side panel against real files: a temp git repo for files and log, fixture todo files
 // for todo. The Host is a fake that runs git for real (spawnSync) and records editor opens and notices. Plain
-// assert script; the extension's registration of /panel, /org-todo, alt+t and alt+g is pinned at the end.
+// assert script; the extension's registration of /panel, /org-todo, alt+t and alt+w is pinned at the end.
 import { dir, makeCtx, makePi, tick, withEnv } from "./fake-pi.ts"
 import assert from "node:assert/strict"
 import { spawnSync } from "node:child_process"
@@ -288,13 +288,13 @@ const texts = (tab: Tab, filter = "") => tab.rows(filter).map((r) => (r.kind ===
   })
 }
 
-// ---- /panel, /org-todo, alt+t and alt+g are registered at load; without a session they say why -------------
+// ---- /panel, /org-todo, alt+t and alt+w are registered at load; without a session they say why -------------
 
 {
   const { pi, calls } = makePi()
   ecomono({ repo: REPO })(pi)
   assert.deepEqual(calls.commands.map(([name]) => name), ["panel", "org-todo"])
-  assert.deepEqual(calls.shortcuts.map(([key]) => key), ["alt+t", "alt+g"])
+  assert.deepEqual(calls.shortcuts.map(([key]) => key), ["alt+t", "alt+w"])
   const ctx = makeCtx({ mode: "tui", hasUI: true })
   await calls.commands[0]![1].handler("files", ctx)
   await calls.shortcuts[1]![1].handler(ctx)

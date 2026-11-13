@@ -194,6 +194,16 @@ const sample = (glob: string) => glob.replace(/\*\*\//g, "/x/").replace(/\*\*/g,
     ["read", { path: ".env:raw" }],
     ["read", { path: ".env:1-5:raw" }], // compound selector
     ["read", { path: ".env:raw:1-5" }], // compound selector, raw first
+    // pi-tui splitPathAndSel, both grammars: the classic `a:1-5,10-12,-3` list, and from omp 18.19 the colon-dash list
+    // `a:20:40,85:100` (a colon written as the range dash). Our cut is the first `:` of the last segment, so every
+    // spelling, readable by either omp or not, still ends at the denied file.
+    ["read", { path: ".env:1:5" }],
+    ["read", { path: ".env:20:40,85:100" }],
+    ["read", { path: ".env:1-5,-3" }],
+    ["read", { path: ".env:20:40,85:100:raw" }],
+    ["read", { path: ".env:raw:20:40,85:100" }],
+    ["read", { path: "secrets/k.txt:20:40,85:100" }], // a denied directory
+    ["read", { path: "~/.ssh/id_rsa:1:5,9:12" }],
     ["read", { path: "/x/a.key?q=1" }],
     ["read", { path: "/x/k.pem" }],
     ["read", { path: "/x/.aws/credentials" }],
@@ -244,6 +254,18 @@ const sample = (glob: string) => glob.replace(/\*\*\//g, "/x/").replace(/\*\*/g,
     ["grep", { path: '".env"' }], // outer quotes
     ["grep", { path: "src,secrets" }], // the `,` split
     ["grep", { path: "src secrets" }], // the whitespace split
+    // Every list form omp splits at 18.16.0 and at 18.20 (path-utils.ts expandDelimitedPathEntries, mixedLocalPaths:
+    // grep and glob), each isolating the denied entry; our split is the /[;,\s]+/ superset.
+    ["grep", { path: "src;.env" }],
+    ["grep", { path: "src,.env" }],
+    ["grep", { path: "src\t.env" }],
+    ["grep", { path: "src\n.env" }],
+    ["grep", { path: "src;.env:20:40,85:100" }], // a selector-shaped tail inside a list
+    ["grep", { path: "{a,b};.env" }], // omp keeps a brace group whole; the split still reaches the next entry
+    ["grep", { path: "skill://x;.env" }], // mixedLocalPaths: an internal URL then a local path
+    ["grep", { path: "artifact://1; .env:1-5" }],
+    ["glob", { path: "local://x,secrets" }],
+    ["grep", { paths: ["src;.env", "lib"] }],
     // Archive members: `archive.ext:member/path`.
     ["read", { path: "x.zip:.ssh/k" }],
     ["read", { path: "x.tar.gz:secrets/a" }],
@@ -464,6 +486,10 @@ const sample = (glob: string) => glob.replace(/\*\*\//g, "/x/").replace(/\*\*/g,
     { agent: "task", task: "see\\n@~/.ssh/id_ed25519\\n" }, // non-batch
     { tasks: [{ task: 'read @\\"secrets/a b.txt\\" now' }] }, // a structural `\"`: decodes to a quoted mention
     { tasks: [{ task: "look at @\\u002eenv" }] }, // a `\uXXXX` escape: decodes to `@.env`
+    // omp 18.19 `steps: string[]` (task.steps) stands in for `task`; every step is a prompt the child reads.
+    { tasks: [{ agent: "task", steps: ["plan", "then read @.env"] }] },
+    { agent: "task", steps: ["see @~/.ssh/id_ed25519"] }, // non-batch
+    { tasks: [{ steps: ["ok", 7, "Summarize.\\n@.env\\nThanks."] }] }, // non-strings skipped; a repaired step is decoded
   ]
   for (const input of denied) {
     const r = await fire("tool_call", task(input), ctx)
@@ -481,6 +507,8 @@ const sample = (glob: string) => glob.replace(/\*\*\//g, "/x/").replace(/\*\*/g,
     { tasks: [{ task: "see\\n@.env" }] }, // one escape: no double-encoding signature
     { tasks: [{ task: "C:\\Users\\@.env\\n" }] }, // not a JSON string body: `\U` is no escape
     { tasks: [{ task: "Summarize.\\n@src/a.ts\\nThanks." }] }, // decoded, still an ordinary mention
+    { tasks: [{ steps: ["see @src/a.ts", "mail user@.env"] }] },
+    { tasks: [{ steps: "@.env" }] }, // not an array: omp rejects it, nothing to scan
   ]) {
     assert.equal(await fire("tool_call", task(input), ctx), undefined, JSON.stringify(input))
   }

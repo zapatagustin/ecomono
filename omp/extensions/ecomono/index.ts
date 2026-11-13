@@ -20,7 +20,7 @@
  * - Blocks the ecomono-memory tools an agent's own `tools:` line does not list.
  * - From the main session, refreshes the skill registry and saves each user prompt into the shared
  *   ecomono-memory DB; in the main TUI session, counts the open TODOs in the status line and serves the side
- *   panel (/panel, alt+t, alt+g: todos, the git working tree and the commit graph; org-todo.ts, panel/).
+ *   panel (/panel, alt+t, alt+w: todos, the git working tree and the commit graph; org-todo.ts, panel/).
  *
  * omp loads the DEFAULT export only (the named exports are test seams).
  *
@@ -49,7 +49,7 @@ export const REPO = resolve(dirname(realpathSync(fileURLToPath(import.meta.url))
 
 // The omp version the gates are tested on (README.md, upgrade protocol): omp/tests/smoke.sh and omp/tests/fake-pi.ts
 // read it from this line, so a bump is one edit. A session on any other omp warns once per process.
-const OMP_TESTED = "18.15.0"
+const OMP_TESTED = "18.16.0"
 // Module scope, not the factory's: omp re-runs the factory per subagent session in the same process.
 let versionWarned = false
 
@@ -205,6 +205,16 @@ function repairedTask(text: string): string {
 }
 
 /**
+ * The text an item hands its child as prompt: `task`, and from omp 18.19 each string of `steps` (task.steps, off by
+ * default, on under rpc and acp), which stands in for `task` (omp: task/index.ts validateTaskInput). Read both, so a
+ * mention or a heading cannot hide in the field a given omp version does not use.
+ */
+function taskTexts(item: any): string[] {
+  const steps = Array.isArray(item?.steps) ? item.steps : []
+  return [item?.task, ...steps].filter((s): s is string => typeof s === "string")
+}
+
+/**
  * The `@path` mentions of a prompt, exactly as omp's extractFileMentions finds them (omp: utils/file-mentions.ts:
  * 33-55,168-186): a mention starts the text or follows whitespace or an opening bracket or quote; a quoted one is
  * only trimmed, a bare one also loses leading and trailing punctuation. omp reads each mentioned file into the
@@ -296,8 +306,9 @@ function resolvePart(cwd: string, part: string): string | undefined {
  * compound `:1-50:raw` / `:raw:1-50` down to the path (pi-tui: tools/read.ts:147-184, splitPathAndSel), so the cut
  * is at the FIRST `:` of the last segment: a cut at the last `:` would leave `.env:1-5` or `.env:raw`, which no
  * glob matches. A direct read sets no details target for the post-check either, so this is the only place that
- * catches it.
- * An archive member `b.zip:.ssh/k` (omp: prompts/tools/read.md:12; tools/grep.ts:309 and tools/write.ts:667 parse
+ * catches it. The same cut covers the colon-dash list omp 18.19 also peels (`a:20:40,85:100`, a colon written as the
+ * range dash): it is no grammar mirror, so a newer selector shape cannot slip past it.
+ * An archive member `b.zip:.ssh/k` (omp: prompts/tools/read.md:12; tools/grep.ts:309 and tools/write.ts:668 parse
  * it too) has its `:` in a middle segment, where the cut above does not look, so the path is also tested with
  * every `:` as a `/`: `b.zip/.ssh/k` meets the `.ssh` glob, stacked selectors and `::` included.
  * A SQLite selector may hold a `/` too (`agent.db:auth_credentials:a/b`), so neither cut above leaves the bare file:
@@ -380,7 +391,7 @@ const listedPaths = (d: any): string[] => {
 /**
  * The entries a `read` of a directory can name: omp lists them to depth 2, hidden ones included and .gitignore
  * ignored (omp: tools/read.ts:3186-3215 #readDirectory, workspace-tree.ts:57-69 buildDirectoryTree). Every entry is
- * returned, past omp's 12-entry cap per child directory, so the check over-matches. omp 18.15.0 passes
+ * returned, past omp's 12-entry cap per child directory, so the check over-matches. omp 18.16.0 passes
  * `pruneExcludedDirs: false` (workspace-tree.ts:68), so the listing also holds the children of node_modules, .git,
  * build outputs and caches; every entry is re-listed here, so this stays a superset. An unreadable directory adds
  * nothing.
@@ -831,8 +842,9 @@ export function ecomono(o: { repo: string; hooksDir?: string; timeoutMs?: number
     // path: when such a spawn is observed, run the script with an empty prompt from before_subagent_spawn.
     // Before the judge gate, the path deny on the @-mentions of every item's `task`, whatever its agent: omp
     // reads each mentioned file into the child's first prompt with no tool_call (task/executor.ts:2507,2540;
-    // session/agent-session.ts:8935-8944). `context` becomes the system prompt and is never scanned for
-    // mentions, so it is not checked. fileMentions scans each `task` as typed and as repairedTask decodes it.
+    // session/agent-session.ts:8946-8955). `context` becomes the system prompt and is never scanned for
+    // mentions, so it is not checked. fileMentions scans each `task` (and, from omp 18.19, each string of `steps`,
+    // see taskTexts) as typed and as repairedTask decodes it.
     // An item has two file fields. `taskFile` (setting task.file, off by default) is an absolute path or local://
     // URL whose contents omp reads at dispatch and hands the child as its `task` (task/index.ts:412-447).
     // `sourceSession` (the bundled seance agent, advertised by default: task.disabledAgents is []) names the omp
@@ -848,7 +860,7 @@ export function ecomono(o: { repo: string; hooksDir?: string; timeoutMs?: number
     // their headings are not checked: a same-message write can change them after any check here. Upgrade path:
     // keep task.file off (omp's default), or omp's tools.restrictedFolders, which covers task files.
     // ecomono: other text omp sends through the same prompt path, such as the queued hidden next-turn messages
-    // (session/agent-session.ts:9909-9924), has its mentions read too and is not seen here. Upgrade path: deny
+    // (session/agent-session.ts:9920-9935), has its mentions read too and is not seen here. Upgrade path: deny
     // their mentions at the event that carries them, if one is ever exposed to extensions.
     const taskCall = async (input: any, ctx: any) => {
       if (!Array.isArray(input.tasks) && typeof input.agent !== "string") drift("task tool_call", "the input has neither tasks[] nor a string agent")
@@ -868,7 +880,7 @@ export function ecomono(o: { repo: string; hooksDir?: string; timeoutMs?: number
           reason: `Blocked: sourceSession "${sourceSession.value}" is denied by "${sourceSession.glob}" in opencode/opencode.json (permission.read); omp reads a sourceSession path into a seance subagent.`,
         }
       }
-      const mentions = items.flatMap((item: any) => (typeof item?.task === "string" ? fileMentions(item.task) : []))
+      const mentions = items.flatMap((item: any) => taskTexts(item).flatMap(fileMentions))
       const mentioned = deny(ctx, mentions)
       if (mentioned) {
         return {
@@ -881,7 +893,7 @@ export function ecomono(o: { repo: string; hooksDir?: string; timeoutMs?: number
         items.flatMap((item: any) => {
           if (typeof item?.agent !== "string") return []
           // The fields as the child gets them: each one through omp's own double-encoding repair (repairedTask).
-          const prompt = [input.context, item.task]
+          const prompt = [input.context, ...taskTexts(item)]
             .filter((s): s is string => typeof s === "string" && s !== "")
             .map(repairedTask)
             .join("\n")
@@ -1147,7 +1159,7 @@ export function ecomono(o: { repo: string; hooksDir?: string; timeoutMs?: number
     // The todo scan, the panel and their parser load here, on first use, and not at the top of the file: a static
     // import that fails (a missing or broken panel file) would fail the whole extension, and every gate with it.
     // Its own safe(), so a failed load or start costs the panel only, and the skills check after it still runs.
-    // The panel (/panel, alt+t, alt+g) reuses the tabs built for the session's scan: no scan, no panel.
+    // The panel (/panel, alt+t, alt+w) reuses the tabs built for the session's scan: no scan, no panel.
     let panel: { open: (ctx: any, tab: string) => Promise<void> } | undefined
     const startPanel = safe(
       async (ctx: any) => {
@@ -1200,9 +1212,10 @@ export function ecomono(o: { repo: string; hooksDir?: string; timeoutMs?: number
       handler: async (args: string, ctx: any) => void (await openPanel(ctx, args.trim() || "todo")),
     })
     pi.registerCommand("org-todo", { description: "Open the todo tab of the side panel", handler: async (_args: string, ctx: any) => void (await openPanel(ctx, "todo")) })
-    // omp/tests/test_panel_tabs.ts pins both keys; neither is reserved or bound by omp 18.15.0.
+    // omp/tests/test_panel_tabs.ts pins both keys; neither is bound by an omp 18.16.0 app keybinding (alt+g is app.local.open, which
+    // took the key before this extension could) and neither is reserved.
     pi.registerShortcut("alt+t", { description: `${panelHelp}: todos`, handler: async (ctx: any) => void (await openPanel(ctx, "todo")) })
-    pi.registerShortcut("alt+g", { description: `${panelHelp}: git`, handler: async (ctx: any) => void (await openPanel(ctx, "files")) })
+    pi.registerShortcut("alt+w", { description: `${panelHelp}: git`, handler: async (ctx: any) => void (await openPanel(ctx, "files")) })
     pi.on(
       "session_start",
       safe(async (_event: any, ctx: any) => {
@@ -1257,7 +1270,7 @@ export function ecomono(o: { repo: string; hooksDir?: string; timeoutMs?: number
     // `message_start` instead and keep `message.role === "user" && !message.synthetic && message.attribution !==
     // "agent"` (omp sends its own prompts as `developer` messages); omp/tests/fake-pi.ts must then accept the event.
     // Queued steer and follow-up messages reach one before_agent_start with their texts joined by a blank line
-    // (omp: session/agent-session.ts:8628-8651), so N queued messages are stored as one row; the same upgrade path
+    // (omp: session/agent-session.ts:8639-8662), so N queued messages are stored as one row; the same upgrade path
     // stores them one by one.
     // ecomono: the storage modules report a few faults with console.error (db.ts when stat fails, observations.ts
     // for a stranded legacy project key), which draws over the TUI. Upgrade path: pass them a sink backed by

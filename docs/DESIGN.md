@@ -722,7 +722,7 @@ repo is hooks and drift checks rather than prose.
 
 ## omp target
 
-omp (oh-my-pi) is the third harness, tested against 18.15.0. The README carries the user-facing side
+omp (oh-my-pi) is the third harness, tested against 18.16.0. The README carries the user-facing side
 (install paths, posture, every accepted ceiling, the opt-ins, the upgrade protocol); this section records
 why the target is built the way it is. Evidence paths below are relative to the omp package sources.
 
@@ -859,7 +859,7 @@ either way the call was refused, so only the refusal text changes. This is not a
     (`suffixResolution.to`, `displayReadTargets`, `resolvedPath`) and a directory listing that names one: with
     `isDirectory`, `resolvedPath` is the directory itself, so its entries are re-listed to omp's depth 2, hidden
     files included (`tools/read.ts` `#readDirectory`, `workspace-tree.ts` `buildDirectoryTree`), and checked. Since
-    18.15.0 that tree also holds the children of `node_modules`, `.git`, build outputs and caches
+    18.16.0 that tree also holds the children of `node_modules`, `.git`, build outputs and caches
     (`pruneExcludedDirs: false`); `directoryEntries` re-lists every entry, so it stays a superset.
   - `tool_result` on `grep`, `ast_grep`, `glob`, `find` and `ast_edit`: the search post-check. The path gate sees
     only the roots a call names, and a grep with no `path` returned lines of tracked `server.key`, `secrets/a.txt`
@@ -930,7 +930,7 @@ Every key of `claude/settings.template.json` and `opencode/cli.json`, and the ho
 | `theme: gruvbox` | omp follows the terminal |
 | `opencode-subagent-statusline` | the native `subagents` segment, opt-in |
 | `cyndaquill.tsx` | skipped: omp has no home-logo slot |
-| `org-todo.tsx` | a `todo N` status entry sharing `org-todo/core.ts`, plus the `todo` tab of the side panel (`/panel`, `alt+t`), which marks a todo done as the Claude Code pane does; the `files` and `log` tabs (`alt+g`) have no OpenCode counterpart |
+| `org-todo.tsx` | a `todo N` status entry sharing `org-todo/core.ts`, plus the `todo` tab of the side panel (`/panel`, `alt+t`), which marks a todo done as the Claude Code pane does; the `files` and `log` tabs (`alt+w`) have no OpenCode counterpart |
 
 | `opencode/opencode.json` | omp |
 |---|---|
@@ -973,7 +973,7 @@ to hide them.
 | Item | Trigger | Upgrade path |
 |---|---|---|
 | Loop-breaker block | A session log shows two or more consecutive native loop-guard steers for one call | Lower `model.toolCallLoopGuard.threshold`; then extract `opencode/plugins/loop-breaker/core.ts` with polling tools exempted |
-| Claude-only persona tail | Autonomous delegation is missed on omp | First set `task.eager: preferred`, a setting with no code: omp adds its own delegation guidance to the system prompt (`task/settings.ts` `cfgTaskEager`). Only if that fails, write an omp tail and generalise `check-persona-drift.sh` to N carriers. omp's "No subagents unless..." line renders only for a `gated` delegation bias (`prompts/system/system-prompt.md`), which 18.15.0 assigns to OpenAI's 5.6 revision alone (pi-catalog `rules/classes/openai.kdl`); Claude models get the default `eager` |
+| Claude-only persona tail | Autonomous delegation is missed on omp | First set `task.eager: preferred`, a setting with no code: omp adds its own delegation guidance to the system prompt (`task/settings.ts` `cfgTaskEager`). Only if that fails, write an omp tail and generalise `check-persona-drift.sh` to N carriers. omp's "No subagents unless..." line renders only for a `gated` delegation bias (`prompts/system/system-prompt.md`), which 18.16.0 assigns to OpenAI's 5.6 revision alone (pi-catalog `rules/classes/openai.kdl`); Claude models get the default `eager` |
 | Skill description routing sentence | Routing misses observed on omp | Front-load a routing sentence repo-wide |
 | Judge gate for eval `agent()` | An eval judge spawn observed | Run the script with an empty prompt from `before_subagent_spawn` |
 | Search leak the post-check cannot see | A denied file's lines observed in a search result the post-check passed (its `details` lacked the path) | `tools.restrictedFolders`: an approval prompt for any call at or below a listed folder and for a recursive search rooted above one, in every approval mode, blocking headless (`tools/approval.ts` `restrictedFolderReason`); it does not filter inside the search |
@@ -991,7 +991,7 @@ to hide them.
 
 ### Version coupling
 
-The extension relies on these omp 18.15.0 surfaces. The tested version is `OMP_TESTED` in
+The extension relies on these omp 18.16.0 surfaces. The tested version is `OMP_TESTED` in
 `omp/extensions/ecomono/index.ts`, the one source the smoke and fake-pi read; on any other omp the first main prompt
 of a process warns once (`pi.pi.VERSION`) and blocks nothing, so an upgrade made outside the protocol is not silent.
 A change to one of the surfaces is caught by one of three nets, in this order of strength:
@@ -1010,7 +1010,7 @@ A change to one of the surfaces is caught by one of three nets, in this order of
   `pi.pi.VERSION` that is not a string.
 - **The mirror table** below, re-diffed on every upgrade.
 
-Not covered by the smoke, and so resting on the fake-pi tests (events built by hand to the 18.15.0 shape) and the
+Not covered by the smoke, and so resting on the fake-pi tests (events built by hand to the 18.16.0 shape) and the
 mirror table: the read post-check (`details.{suffixResolution,displayReadTargets,resolvedPath,isDirectory}`), the
 search post-check (`details.{files,fileMatches,fileReplacements,hits,parseErrors}`) and the `details` it replaces, the
 resolve result withhold (`write` `details.xdev.inner.sourceResultDetails`), the `taskFile` and `sourceSession` deny,
@@ -1046,10 +1046,10 @@ Surfaces relied on:
   `session.compacting` (`{context}`), `before_agent_start` (`reason`), `session_start`, `session_shutdown`.
 - `ctx` and `pi`: `agent.{kind,id,name}`, `hasUI`, `mode`, `model.{provider,id}`, `ui.{confirm,notify,setWidget}`,
   `setInterval`, `sessionManager.getSessionId()`; `pi.exec`, `pi.logger`, `pi.pi.VERSION` (a lazy SDK getter in
-  18.15.0, read on a prompt rather than at startup).
+  18.16.0, read on a prompt rather than at startup).
 - Tool inputs: `bash.{command,cwd}`, `read.path` (selectors, `;` lists, `file://`), `grep`/`glob`/`find`/`write`/
   `ast_grep.path`, `edit.{path,paths,input}`, `ast_edit.paths`, `github.op`,
-  `task.{context,agent,task,taskFile,sourceSession,tasks[]}`; read
+  `task.{context,agent,task,taskFile,sourceSession,tasks[]}`, plus `task.steps[]` from omp 18.19 (the gate reads it when `task.steps` is on; absent at 18.18); read
   `details.{suffixResolution,displayReadTargets,resolvedPath,isDirectory}`; search `details.{files,fileMatches,hits}`,
   `ast_edit` `details.{files,fileReplacements}` and `ast_grep` / `ast_edit` `details.parseErrors`; the `xd://resolve` / `xd://reject` write result
   `details.xdev.{tool,inner.sourceResultDetails}`.
@@ -1059,7 +1059,16 @@ Surfaces relied on:
   `debug.enabled` / `eval.py` / `eval.js` / `lsp.enabled` / `astEdit.enabled` / `task.file` defaults behind the
   accepted ceilings, `tools.restrictedFolders`, `bash.patterns`.
 
-Last re-diff, omp rev 6c7cd82 to ebb4fcf (github can1357/oh-my-pi, both reporting 18.15.0, so the tested version stays
+Last re-diff, omp rev ebb4fcf to 650f3a1 (github can1357/oh-my-pi, tag v18.16.0, which is the installed version, so the
+tested version moves from 18.15.0 to 18.16.0). No change to the extension API (`extensibility/` differs only in the
+bundled `/review` and `/annotate` custom commands), the theme schema (`tui/src/theme/schema.ts`), the keybinding ids
+(`tui/src/app-keybindings.ts`), `OverlayOptions` or the config CLI. Only cited line numbers moved (5 of the 83 recorded
+citations, none with changed content), and they were re-pinned. The re-diff also showed that `alt+g`, the files/git
+panel key, is the omp default of `app.local.open` (`tui/src/app-keybindings.ts:163`, handled in a global input listener
+at `modes/controllers/input-controller.ts:450`), so the extension's shortcut never fired; the panel key is now `alt+w`,
+bound by no omp app keybinding: `alt+w` is absent from `tui/src/app-keybindings.ts` at v18.16.0, at v18.20.0 and at the clone's HEAD (2999ca56b1, v18.20.0-146).
+
+Previous re-diff, omp rev 6c7cd82 to ebb4fcf (github can1357/oh-my-pi, both reporting 18.15.0, so the tested version stayed
 18.15.0). The extension surface (`extensibility/`), the keybindings, the theme schema and the config CLI are
 byte-identical. Behaviour notes: bash results gain `.minimized(...)` meta, shown as a TUI card line; the read
 column-truncation notice still starts `[Some lines truncated to` and keeps its `:raw:N-N` hint; a new optional
@@ -1089,6 +1098,16 @@ cut; `out://` (a write-only reply channel) is new; the extension API only gained
 `details` the post-checks read, the event names and payloads the extension subscribes to, the MCP tool naming and
 the pi-edit header grammar are unchanged (the Rust files changed by refactor only); the cited line ranges moved and
 were re-pinned.
+
+Before bumping omp past 18.18 (changes read from the upstream tree at 18.19 and 18.20; re-verify each on the target):
+
+- `taskFile` / `task.file` is removed in 18.19.0: drop the `taskFile` deny in `index.ts` and its mentions here.
+- The task tool accepts `steps: string[]` in place of `task` when `task.steps` is on (18.19, off by default, on under
+  rpc and acp). The @-mention deny and the judge gate already read `steps`; keep that.
+- `keepSeanceItemKeys` becomes `keepGatedItemKeys`, with the per-item `model` gated by `task.perCallModel`.
+- `sdk.ts:4454` becomes `sdk.ts:4524` in `omp/tests/test_contract.ts`.
+- About 57 of the cited line ranges move or change; recompute them against the target rev rather than patching by hand.
+- `pi.getShortcutConflict` becomes available: the panel keys could be checked at load instead of by this document.
 
 ### Spike results
 

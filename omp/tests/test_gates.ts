@@ -575,6 +575,11 @@ while [ "$(ls "${d}" | wc -l)" -lt ${n} ] && [ $i -lt 100 ]; do sleep 0.05; i=$(
   assert.deepEqual(seen(), [{ tool_input: { subagent_type: "a3", prompt: "C\nT" } }])
   for (const f of readdirSync(d)) rmSync(join(d, f))
 
+  // omp 18.19 `steps` replaces `task`: the context, then each string step, one per line; non-strings are dropped.
+  assert.equal(await fire("tool_call", task({ agent: "a4", context: "C", steps: ["S1", 3, "S2"] }), ctx), undefined)
+  assert.deepEqual(seen(), [{ tool_input: { subagent_type: "a4", prompt: "C\nS1\nS2" } }])
+  for (const f of readdirSync(d)) rmSync(join(d, f))
+
   // Nothing to gate: no script runs.
   for (const input of [{}, { task: "x" }, { tasks: [] }, { tasks: [{ task: "x" }] }, { agent: 7 }, { tasks: "nope", task: "x" }]) {
     assert.equal(await fire("tool_call", task(input), ctx), undefined, JSON.stringify(input))

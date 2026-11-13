@@ -225,8 +225,8 @@ export function makePi(opts: PiOpts = {}) {
  * ctx.recorded; none of them ever fires on its own. ctx.recorded.confirmResult is what ui.confirm resolves to:
  * false by default, which is what a headless omp does (spike 4).
  */
-// The names omp's Theme accepts (tui/src/theme/schema.ts in omp 18.15.0: ThemeColor :55-125, ThemeBg :190-198).
-// Theme.fg / Theme.bg throw on any other name (theme-class.ts:359-381), so the fake does too.
+// The names omp's Theme accepts (tui/src/theme/schema.ts in omp 18.16.0: ThemeColor :55-125, ThemeBg :190-198).
+// Theme.fg / Theme.bg throw on any other name (theme-class.ts:361-383), so the fake does too.
 const THEME_COLORS = new Set([
   "accent", "border", "borderAccent", "borderMuted", "success", "error", "warning", "muted", "dim", "text", "assistantMessageText", "thinkingText", "userMessageText", "customMessageText", "customMessageLabel", "toolTitle", "toolOutput", "mdHeading", "mdLink", "mdLinkUrl", "mdCode", "mdCodeBlock", "mdCodeBlockBorder", "mdQuote", "mdQuoteBorder", "mdHr", "mdListBullet", "toolDiffAdded", "toolDiffRemoved", "toolDiffContext", "syntaxComment", "syntaxKeyword", "syntaxFunction", "syntaxVariable", "syntaxString", "syntaxNumber", "syntaxType", "syntaxOperator", "syntaxPunctuation", "thinkingOff", "thinkingMinimal", "thinkingLow", "thinkingMedium", "thinkingHigh", "thinkingXhigh", "thinkingMax", "bashMode", "pythonMode", "statusLineSep", "statusLineModel", "statusLinePath", "statusLineGitClean", "statusLineGitDirty", "statusLineContext", "statusLineSpend", "statusLineStaged", "statusLineDirty", "statusLineUntracked", "statusLineOutput", "statusLineCost", "statusLineSubagents",
 ])

@@ -459,7 +459,7 @@ skill registry, counts the open todos in the status line (TUI only: it scans `do
 the working directory and `ECOMONO_ORG_DIR`, newest report and most recently changed file
 first), draws a startup banner in place of omp's welcome (the wallpaper's engraving, as an inline image when the
 terminal draws one (kitty, iTerm2, sixel; the PNG nixos-config builds, handed over in `ECOMONO_OMP_BANNER`), else a
-block-glyph cut; gone at the first prompt), serves a side panel (`/panel`, `alt+t` for todos, `alt+g` for git: the todo tab marks
+block-glyph cut; gone at the first prompt), serves a side panel (`/panel`, `alt+t` for todos, `alt+w` for git: the todo tab marks
 one done or opens it in `$EDITOR`, the files tab stages and unstages, the log tab draws the
 commit graph and switches branches; the editor opens in a Zellij pane, or a `foot` window
 outside Zellij), and captures your prompts
@@ -498,7 +498,7 @@ Notes:
   prompt template as its expanded body. The session id a model passes to the memory tools
   is not joined to the omp session id, as in OpenCode.
 
-Upgrade protocol. The tested version is **omp 18.15.0**, set once as `OMP_TESTED` in
+Upgrade protocol. The tested version is **omp 18.16.0**, set once as `OMP_TESTED` in
 `omp/extensions/ecomono/index.ts`; the smoke reads it and exits non-zero on any other omp
 unless `ECOMONO_OMP_UNTESTED=1` is set. The net for an upgrade made outside this protocol:
 on any other omp, the first prompt logs a warning, once per process and shown where there
