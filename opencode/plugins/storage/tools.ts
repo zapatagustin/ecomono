@@ -14,6 +14,7 @@ import * as Sess from "./sessions"
 import * as Prompts from "./prompts"
 import * as Conflicts from "./conflicts"
 import { dbPath, getDb } from "./db"
+import { CTX_BODY_CHARS, CTX_HEAD_CHARS, CTX_TAIL_CHARS } from "./sessions"
 
 export interface MemTool {
   name: string
@@ -30,10 +31,18 @@ const proj = (p?: string) => p || Obs.currentProject().project
 const guard = (p?: string) => (p === "*" ? undefined : proj(p))
 // On a false guarded result, tell "other project" apart from "no such id" or
 // "nothing to update": reason only when a guard applied and the row sits elsewhere.
-const mismatch = (id: number, ok: boolean, g: string | undefined, arg = "expected_project") => {
+// argName is the NAME of the tool argument that carries the guard ("expected_project"
+// or mem_review's "project"), quoted back in the hint.
+const mismatch = (id: number, ok: boolean, g: string | undefined, argName = "expected_project") => {
   if (ok || g === undefined) return {}
   const row = getDb().query("SELECT id, project_id FROM observations WHERE id = ?").get(id) as { project_id: string } | null
-  return row && row.project_id !== g ? { reason: "project mismatch", row_project: row.project_id, hint: `pass ${arg}: "*" to edit across projects` } : {}
+  return row && row.project_id !== g ? { reason: "project mismatch", row_project: row.project_id, hint: `pass ${argName}: "*" to act across projects` } : {}
+}
+// Attach private_stripped when stripping removed anything from `texts` (the text the
+// handler persisted). A null/undefined result passes through untouched.
+const withPrivateSignal = <T extends object | null | undefined>(out: T, ...texts: (string | null | undefined)[]) => {
+  const private_stripped = Obs.privateSignal(...texts)
+  return out && private_stripped ? { ...out, private_stripped } : out
 }
 
 // --- session inactivity nudge (engram #178) ---------------------------------
@@ -107,7 +116,7 @@ function instrument(name: string, handler: (args: any) => unknown): (args: any) 
 const rawRegistry: MemTool[] = [
   {
     name: "mem_save",
-    description: "Save an important observation to persistent memory. Call PROACTIVELY after decisions, bug fixes, discoveries, conventions. May return judgment_required + candidates — then call mem_judge per candidate.",
+    description: "Save an important observation to persistent memory once per request, when it is done (not after every fix; save a decision whose rationale is expensive to re-derive at once, and before a long-running step or an imminent compaction). May return judgment_required + candidates — then call mem_judge per candidate.",
     args: {
       title: z.string().describe("Short, searchable title (verb + what)"),
       content: z.string().optional().describe("Structured body: What / Why / Where / Learned"),
@@ -118,8 +127,7 @@ const rawRegistry: MemTool[] = [
     },
     handler: (a) => {
       const r = Conflicts.saveWithJudgment({ title: a.title, content: a.content, type: a.type, project: proj(a.project), scope: a.scope, topic_key: a.topic_key })
-      const private_stripped = Obs.privateSignal(a.title, a.content)
-      return r && private_stripped ? { ...r, private_stripped } : r
+      return withPrivateSignal(r, a.title, a.content, a.topic_key)
     },
   },
   {
@@ -182,8 +190,8 @@ const rawRegistry: MemTool[] = [
       const clean = Object.fromEntries(Object.entries(fields).filter(([, v]) => v !== undefined))
       const g = guard(expected_project)
       const updated = Obs.update(id, clean, g)
-      const private_stripped = Obs.privateSignal(clean.title as string | undefined, clean.content as string | undefined)
-      return { updated, ...mismatch(id, updated, g), ...(updated && private_stripped ? { private_stripped } : {}) }
+      const out = { updated, ...mismatch(id, updated, g) }
+      return updated ? withPrivateSignal(out, clean.title as string | undefined, clean.content as string | undefined, clean.topic_key as string | undefined) : out
     },
   },
   {
@@ -207,7 +215,7 @@ const rawRegistry: MemTool[] = [
   },
   {
     name: "mem_context",
-    description: "Recent active observations for a project as a formatted context block: pinned first, each headed by its #id, bodies cut to 300 chars (the newest session summary stays whole). Use mem_get_observation for the full text.",
+    description: `Recent active observations for a project as a formatted context block: pinned first, each headed by its #id, bodies over ${CTX_BODY_CHARS} chars keep only their first ${CTX_HEAD_CHARS} and last ${CTX_TAIL_CHARS} (the newest session summary stays whole). Use mem_get_observation for the full text.`,
     args: { project: z.string().optional(), limit: z.number().optional() },
     handler: (a) => Sess.context(proj(a.project), a.limit),
   },
@@ -231,7 +239,7 @@ const rawRegistry: MemTool[] = [
   },
   {
     name: "mem_review",
-    description: "List observations due for review, or mark one reviewed; for mark_reviewed, project defaults to the current project (success=false on mismatch or missing id; a project mismatch adds reason, row_project and hint; pass \"*\" to mark across projects). list takes project too: omitted -> current project, \"*\" -> all projects.",
+    description: "List observations due for review, or mark one reviewed; for mark_reviewed, project defaults to the current project (success=false on mismatch or missing id; a project mismatch adds reason, row_project and hint; pass \"*\" to mark across projects). list takes project too: omitted -> current project (full rows), \"*\" -> all projects (summary rows only: id, title, type, project, review_after; no content, use mem_get_observation).",
     args: {
       action: z.enum(["list", "mark_reviewed"]),
       id: z.number().optional(),
@@ -262,16 +270,17 @@ const rawRegistry: MemTool[] = [
     handler: (a) => {
       const project = proj(a.project)
       const r = Obs.save({ title: `Session summary ${project} ${new Date(clock()).toISOString().slice(0, 19).replace("T", " ")}`, type: "session_summary", content: `${a.content}\n\ncalls_vs_saves: ${callsVsSaves()}`, project })
-      const private_stripped = Obs.privateSignal(a.content)
-      return r && private_stripped ? { ...r, private_stripped } : r
+      return withPrivateSignal(r, a.content)
     },
   },
   {
     name: "mem_save_prompt",
     description: "Record a user prompt under a session id.",
     args: { session_id: z.string(), content: z.string() },
-    // The prompts table has an FK to sessions; MCP callers never start one.
-    handler: (a) => { Sess.ensureSession(a.session_id, proj()); Prompts.savePrompt(a.session_id, a.content); const private_stripped = Obs.privateSignal(a.content); return private_stripped ? { ok: true, private_stripped } : { ok: true } },
+    // The prompts table has an FK to sessions; MCP callers never start one. One
+    // transaction: savePrompt rejects a blank or fully private prompt, and that must
+    // not leave the session row ensureSession just made.
+    handler: (a) => { getDb().transaction(() => { Sess.ensureSession(a.session_id, proj()); Prompts.savePrompt(a.session_id, a.content) })(); return withPrivateSignal({ ok: true }, a.content) },
   },
   {
     name: "mem_doctor",
@@ -300,11 +309,10 @@ const rawRegistry: MemTool[] = [
     },
     handler: (a) => {
       const r = Conflicts.judge(a.judgment_id, a.relation, a.note)
-      const private_stripped = Obs.privateSignal(a.note)
       // Only a judgment that inserted a relation row stored the note: not found, already resolved, stale,
       // not_conflict and an ignored duplicate write none. judge() reports it as `wrote`.
       const { wrote, ...out } = r
-      return wrote && private_stripped ? { ...out, private_stripped } : out
+      return wrote ? withPrivateSignal(out, a.note) : out
     },
   },
   {

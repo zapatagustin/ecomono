@@ -19799,7 +19799,7 @@ function save(opts) {
   db.run("INSERT OR IGNORE INTO projects (id, name) VALUES (?, ?)", [project, project]);
   const hash = normalizedHash(title, content);
   const reviewMod = reviewAfterModifier(type);
-  const result = db.run("INSERT INTO observations (project_id, title, type, scope, content, topic_key, normalized_hash, review_after)" + " VALUES (?, ?, ?, ?, ?, ?, ?, CASE WHEN ? IS NULL THEN NULL ELSE datetime('now', ?) END)", [project, title, type, scope, content, opts.topic_key || null, hash, reviewMod, reviewMod]);
+  const result = db.run("INSERT INTO observations (project_id, title, type, scope, content, topic_key, normalized_hash, review_after)" + " VALUES (?, ?, ?, ?, ?, ?, ?, CASE WHEN ? IS NULL THEN NULL ELSE datetime('now', ?) END)", [project, title, type, scope, content, opts.topic_key && stripPrivate(opts.topic_key) || null, hash, reviewMod, reviewMod]);
   return { id: Number(result.lastInsertRowid), sync_id: "obs-" + result.lastInsertRowid };
 }
 function splitTerms(query) {
@@ -19848,6 +19848,8 @@ function update(id, fields, expectedProject) {
     fields = { ...fields, title: stripPrivate(String(fields.title)) };
   if (typeof fields.content === "string")
     fields = { ...fields, content: stripPrivate(fields.content) };
+  if (typeof fields.topic_key === "string")
+    fields = { ...fields, topic_key: stripPrivate(fields.topic_key) || null };
   if ("title" in fields && (!fields.title || !String(fields.title).trim())) {
     throw titleRequired(rawTitle);
   }
@@ -19935,7 +19937,7 @@ function review(action, id, limit, project) {
     if (project) {
       return db.query("SELECT * FROM observations WHERE project_id = ? AND state = 'active' AND review_after IS NOT NULL AND review_after <= datetime('now') ORDER BY review_after ASC LIMIT ?").all(project, lim);
     }
-    return db.query("SELECT * FROM observations WHERE state = 'active' AND review_after IS NOT NULL AND review_after <= datetime('now') ORDER BY review_after ASC LIMIT ?").all(lim);
+    return db.query("SELECT id, title, type, project_id AS project, review_after FROM observations WHERE state = 'active' AND review_after IS NOT NULL AND review_after <= datetime('now') ORDER BY review_after ASC LIMIT ?").all(lim);
   }
   if (action === "mark_reviewed" && id) {
     const row = db.query("SELECT type FROM observations WHERE id = ?").get(id);
@@ -20008,6 +20010,8 @@ function ensureSession(id, project) {
   }
 }
 var CTX_BODY_CHARS = 300;
+var CTX_HEAD_CHARS = 180;
+var CTX_TAIL_CHARS = 120;
 function context(project, limit) {
   const db = getDb();
   const lim = limit || 10;
@@ -20023,7 +20027,7 @@ function context(project, limit) {
   const newestSummary = summary ? summary.id : -1;
   const parts = rows.map((r) => {
     const cps = [...String(r.content)];
-    const body = r.id === newestSummary || cps.length <= CTX_BODY_CHARS ? r.content : `${cps.slice(0, CTX_BODY_CHARS).join("")}\u2026 [truncated, full text: mem_get_observation id=${r.id}]`;
+    const body = r.id === newestSummary || cps.length <= CTX_BODY_CHARS ? r.content : `${cps.slice(0, CTX_HEAD_CHARS).join("")} \u2026 ${cps.slice(-CTX_TAIL_CHARS).join("")} [truncated, full text: mem_get_observation id=${r.id}]`;
     return `## #${r.id} ${r.title} (${r.type}, ${r.created_at})
 ${body}`;
   });
@@ -20080,14 +20084,15 @@ function findCandidates(newId, project, title, content, topicKey, hash) {
 function saveWithJudgment(opts) {
   const title = stripPrivate(opts.title ?? "");
   const content = stripPrivate(opts.content || "");
+  const topicKey = opts.topic_key && stripPrivate(opts.topic_key) || undefined;
   const db = getDb();
   const project = opts.project || currentProject().project;
   return db.transaction(() => {
-    const base = save(opts);
+    const base = save({ ...opts, topic_key: topicKey });
     if (!base)
       return null;
     const hash = normalizedHash(title, content);
-    const raw = findCandidates(base.id, project, title, content, opts.topic_key, hash);
+    const raw = findCandidates(base.id, project, title, content, topicKey, hash);
     const candidates = raw.map((c) => {
       const judgment_id = `jud-${base.id}-${c.observation_id}`;
       db.run("INSERT OR REPLACE INTO judgments (id, new_id, candidate_id, project_id, suggested_relation, confidence) VALUES (?, ?, ?, ?, ?, ?)", [judgment_id, base.id, c.observation_id, project, c.suggested_relation, c.confidence]);
@@ -20122,7 +20127,7 @@ function judge(judgmentId, relation, note) {
   return { resolved: true, relation, wrote };
 }
 function recordRelation(fromId, toId, relation, note) {
-  return getDb().run("INSERT OR IGNORE INTO memory_relations (from_id, to_id, relation, note) VALUES (?, ?, ?, ?)", [fromId, toId, relation, note ? stripPrivate(note) : null]).changes > 0;
+  return getDb().run("INSERT OR IGNORE INTO memory_relations (from_id, to_id, relation, note) VALUES (?, ?, ?, ?)", [fromId, toId, relation, note && stripPrivate(note) || null]).changes > 0;
 }
 function compare(idA, idB) {
   const a = getObservation(idA);
@@ -20159,11 +20164,15 @@ function mergeProjects(from, into) {
 // tools.ts
 var proj = (p) => p || currentProject().project;
 var guard = (p) => p === "*" ? undefined : proj(p);
-var mismatch = (id, ok, g, arg = "expected_project") => {
+var mismatch = (id, ok, g, argName = "expected_project") => {
   if (ok || g === undefined)
     return {};
   const row = getDb().query("SELECT id, project_id FROM observations WHERE id = ?").get(id);
-  return row && row.project_id !== g ? { reason: "project mismatch", row_project: row.project_id, hint: `pass ${arg}: "*" to edit across projects` } : {};
+  return row && row.project_id !== g ? { reason: "project mismatch", row_project: row.project_id, hint: `pass ${argName}: "*" to act across projects` } : {};
+};
+var withPrivateSignal = (out, ...texts) => {
+  const private_stripped = privateSignal(...texts);
+  return out && private_stripped ? { ...out, private_stripped } : out;
 };
 var clock = () => Date.now();
 var totalCalls = 0;
@@ -20208,7 +20217,7 @@ function instrument(name, handler) {
 var rawRegistry = [
   {
     name: "mem_save",
-    description: "Save an important observation to persistent memory. Call PROACTIVELY after decisions, bug fixes, discoveries, conventions. May return judgment_required + candidates \u2014 then call mem_judge per candidate.",
+    description: "Save an important observation to persistent memory once per request, when it is done (not after every fix; save a decision whose rationale is expensive to re-derive at once, and before a long-running step or an imminent compaction). May return judgment_required + candidates \u2014 then call mem_judge per candidate.",
     args: {
       title: string2().describe("Short, searchable title (verb + what)"),
       content: string2().optional().describe("Structured body: What / Why / Where / Learned"),
@@ -20219,8 +20228,7 @@ var rawRegistry = [
     },
     handler: (a) => {
       const r = saveWithJudgment({ title: a.title, content: a.content, type: a.type, project: proj(a.project), scope: a.scope, topic_key: a.topic_key });
-      const private_stripped = privateSignal(a.title, a.content);
-      return r && private_stripped ? { ...r, private_stripped } : r;
+      return withPrivateSignal(r, a.title, a.content, a.topic_key);
     }
   },
   {
@@ -20272,8 +20280,8 @@ var rawRegistry = [
       const clean = Object.fromEntries(Object.entries(fields).filter(([, v]) => v !== undefined));
       const g = guard(expected_project);
       const updated = update(id, clean, g);
-      const private_stripped = privateSignal(clean.title, clean.content);
-      return { updated, ...mismatch(id, updated, g), ...updated && private_stripped ? { private_stripped } : {} };
+      const out = { updated, ...mismatch(id, updated, g) };
+      return updated ? withPrivateSignal(out, clean.title, clean.content, clean.topic_key) : out;
     }
   },
   {
@@ -20300,7 +20308,7 @@ var rawRegistry = [
   },
   {
     name: "mem_context",
-    description: "Recent active observations for a project as a formatted context block: pinned first, each headed by its #id, bodies cut to 300 chars (the newest session summary stays whole). Use mem_get_observation for the full text.",
+    description: `Recent active observations for a project as a formatted context block: pinned first, each headed by its #id, bodies over ${CTX_BODY_CHARS} chars keep only their first ${CTX_HEAD_CHARS} and last ${CTX_TAIL_CHARS} (the newest session summary stays whole). Use mem_get_observation for the full text.`,
     args: { project: string2().optional(), limit: number2().optional() },
     handler: (a) => context(proj(a.project), a.limit)
   },
@@ -20332,7 +20340,7 @@ var rawRegistry = [
   },
   {
     name: "mem_review",
-    description: 'List observations due for review, or mark one reviewed; for mark_reviewed, project defaults to the current project (success=false on mismatch or missing id; a project mismatch adds reason, row_project and hint; pass "*" to mark across projects). list takes project too: omitted -> current project, "*" -> all projects.',
+    description: 'List observations due for review, or mark one reviewed; for mark_reviewed, project defaults to the current project (success=false on mismatch or missing id; a project mismatch adds reason, row_project and hint; pass "*" to mark across projects). list takes project too: omitted -> current project (full rows), "*" -> all projects (summary rows only: id, title, type, project, review_after; no content, use mem_get_observation).',
     args: {
       action: _enum(["list", "mark_reviewed"]),
       id: number2().optional(),
@@ -20362,8 +20370,7 @@ var rawRegistry = [
       const r = save({ title: `Session summary ${project} ${new Date(clock()).toISOString().slice(0, 19).replace("T", " ")}`, type: "session_summary", content: `${a.content}
 
 calls_vs_saves: ${callsVsSaves()}`, project });
-      const private_stripped = privateSignal(a.content);
-      return r && private_stripped ? { ...r, private_stripped } : r;
+      return withPrivateSignal(r, a.content);
     }
   },
   {
@@ -20371,10 +20378,11 @@ calls_vs_saves: ${callsVsSaves()}`, project });
     description: "Record a user prompt under a session id.",
     args: { session_id: string2(), content: string2() },
     handler: (a) => {
-      ensureSession(a.session_id, proj());
-      savePrompt(a.session_id, a.content);
-      const private_stripped = privateSignal(a.content);
-      return private_stripped ? { ok: true, private_stripped } : { ok: true };
+      getDb().transaction(() => {
+        ensureSession(a.session_id, proj());
+        savePrompt(a.session_id, a.content);
+      })();
+      return withPrivateSignal({ ok: true }, a.content);
     }
   },
   {
@@ -20401,9 +20409,8 @@ calls_vs_saves: ${callsVsSaves()}`, project });
     },
     handler: (a) => {
       const r = judge(a.judgment_id, a.relation, a.note);
-      const private_stripped = privateSignal(a.note);
       const { wrote, ...out } = r;
-      return wrote && private_stripped ? { ...out, private_stripped } : out;
+      return wrote ? withPrivateSignal(out, a.note) : out;
     }
   },
   {
@@ -20457,7 +20464,7 @@ Format for \`mem_save\`:
 When the user asks to recall something \u2014 "remember", "recall", "what did we do", or references to past work:
 1. First call \`mem_context\` \u2014 recent observations for this project (fast)
 2. If not found, call \`mem_search\` with relevant keywords (FTS5 full-text search)
-3. \`mem_context\` headers carry the row id (\`## #id Title\`) and cut bodies to 300 chars: call \`mem_get_observation\` with that #id for full untruncated content
+3. \`mem_context\` headers carry the row id (\`## #id Title\`) and keep only the first ${CTX_HEAD_CHARS} and last ${CTX_TAIL_CHARS} chars of a body over ${CTX_BODY_CHARS}: call \`mem_get_observation\` with that #id for full untruncated content
 
 \`mem_search\`'s return is a \`{ results, match_mode }\` envelope \u2014 \`match_mode\` is \`"all"\`, \`"any"\`, or \`"any (fallback)"\` when a multi-term search auto-widened.
 

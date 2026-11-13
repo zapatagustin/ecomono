@@ -4,6 +4,8 @@
  * into the system prompt; the MCP server hands it to Claude Code as the server
  * `instructions` on initialize.
  */
+import { CTX_BODY_CHARS, CTX_HEAD_CHARS, CTX_TAIL_CHARS } from "./sessions"
+
 export const MEMORY_INSTRUCTIONS = `## ecomono-memory — Persistent Memory Protocol
 
 You have access to ecomono-memory, a persistent memory system that survives across sessions and compactions.
@@ -38,7 +40,7 @@ Format for \`mem_save\`:
 When the user asks to recall something — "remember", "recall", "what did we do", or references to past work:
 1. First call \`mem_context\` — recent observations for this project (fast)
 2. If not found, call \`mem_search\` with relevant keywords (FTS5 full-text search)
-3. \`mem_context\` headers carry the row id (\`## #id Title\`) and cut bodies to 300 chars: call \`mem_get_observation\` with that #id for full untruncated content
+3. \`mem_context\` headers carry the row id (\`## #id Title\`) and keep only the first ${CTX_HEAD_CHARS} and last ${CTX_TAIL_CHARS} chars of a body over ${CTX_BODY_CHARS}: call \`mem_get_observation\` with that #id for full untruncated content
 
 \`mem_search\`'s return is a \`{ results, match_mode }\` envelope — \`match_mode\` is \`"all"\`, \`"any"\`, or \`"any (fallback)"\` when a multi-term search auto-widened.
 

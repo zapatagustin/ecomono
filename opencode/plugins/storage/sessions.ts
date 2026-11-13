@@ -1,4 +1,5 @@
 import { getDb } from "./db"
+import { stripPrivate } from "./observations"
 
 export function sessionStart(id: string, project: string) {
   const db = getDb()
@@ -8,7 +9,7 @@ export function sessionStart(id: string, project: string) {
 
 export function sessionEnd(id: string, summary?: string) {
   const db = getDb()
-  db.run("UPDATE sessions SET ended_at = datetime('now'), summary = ? WHERE id = ?", [summary || null, id])
+  db.run("UPDATE sessions SET ended_at = datetime('now'), summary = ? WHERE id = ?", [(summary && stripPrivate(summary)) || null, id])
 }
 
 export function ensureSession(id: string, project?: string) {
@@ -25,7 +26,13 @@ export function getSession(id: string): any {
   return db.query("SELECT * FROM sessions WHERE id = ?").get(id)
 }
 
-const CTX_BODY_CHARS = 300
+// A body over CTX_BODY_CHARS codepoints is cut to its first CTX_HEAD_CHARS and last
+// CTX_TAIL_CHARS: the end of a What/Why/Where/Learned body carries "Learned". The
+// protocol text and the mem_context description state these numbers (derived from
+// these constants in protocol.ts and tools.ts).
+export const CTX_BODY_CHARS = 300
+export const CTX_HEAD_CHARS = 180
+export const CTX_TAIL_CHARS = 120
 
 export function context(project: string, limit?: number): { context: string } {
   const db = getDb()
@@ -34,7 +41,7 @@ export function context(project: string, limit?: number): { context: string } {
   const rows = db.query(
     "SELECT id, title, content, type, created_at FROM observations WHERE project_id = ? AND state = 'active' ORDER BY pinned DESC, created_at DESC, id DESC LIMIT ?"
   ).all(project, lim) as any[]
-  // The newest summary is fetched outside the LIMIT: n or more pinned rows must
+  // The newest summary is fetched outside the LIMIT: lim or more pinned rows must
   // not push the handoff out. It takes the last slot, so the block stays <= lim.
   const summary = db.query(
     "SELECT id, title, content, type, created_at FROM observations WHERE project_id = ? AND state = 'active' AND type = 'session_summary' ORDER BY created_at DESC, id DESC LIMIT 1"
@@ -54,7 +61,7 @@ export function context(project: string, limit?: number): { context: string } {
     const cps = [...String(r.content)]
     const body = r.id === newestSummary || cps.length <= CTX_BODY_CHARS
       ? r.content
-      : `${cps.slice(0, CTX_BODY_CHARS).join("")}… [truncated, full text: mem_get_observation id=${r.id}]`
+      : `${cps.slice(0, CTX_HEAD_CHARS).join("")} … ${cps.slice(-CTX_TAIL_CHARS).join("")} [truncated, full text: mem_get_observation id=${r.id}]`
     return `## #${r.id} ${r.title} (${r.type}, ${r.created_at})\n${body}`
   })
   return { context: parts.join("\n\n") }

@@ -106,15 +106,17 @@ export function saveWithJudgment(opts: Parameters<typeof Obs.save>[0]): SaveResu
   // Same stripping save() applies, so the hash below matches the stored row's.
   const title = Obs.stripPrivate(opts.title ?? "")
   const content = Obs.stripPrivate(opts.content || "")
+  // The stripped key, once: Obs.save stores it, so matching on the raw one would never find its own topic.
+  const topicKey = (opts.topic_key && Obs.stripPrivate(opts.topic_key)) || undefined
   const db = getDb()
   const project = opts.project || Obs.currentProject().project
   // One transaction: a busy-lock throw during detection rolls the row back, so a
   // retry cannot duplicate it.
   return db.transaction((): SaveResult | null => {
-    const base = Obs.save(opts)
+    const base = Obs.save({ ...opts, topic_key: topicKey })
     if (!base) return null
     const hash = Obs.normalizedHash(title, content)
-    const raw = findCandidates(base.id, project, title, content, opts.topic_key, hash)
+    const raw = findCandidates(base.id, project, title, content, topicKey, hash)
 
     const candidates: Candidate[] = raw.map((c) => {
       const judgment_id = `jud-${base.id}-${c.observation_id}`
@@ -159,7 +161,7 @@ export function judge(judgmentId: string, relation: Relation, note?: string): { 
 
 function recordRelation(fromId: number, toId: number, relation: Relation, note?: string): boolean {
   // changes is 0 when INSERT OR IGNORE skipped the row
-  return getDb().run("INSERT OR IGNORE INTO memory_relations (from_id, to_id, relation, note) VALUES (?, ?, ?, ?)", [fromId, toId, relation, note ? Obs.stripPrivate(note) : null]).changes > 0
+  return getDb().run("INSERT OR IGNORE INTO memory_relations (from_id, to_id, relation, note) VALUES (?, ?, ?, ?)", [fromId, toId, relation, (note && Obs.stripPrivate(note)) || null]).changes > 0
 }
 
 export function relationsOf(id: number): any[] {

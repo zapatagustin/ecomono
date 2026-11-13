@@ -132,7 +132,7 @@ export function save(opts: {
   const result = db.run(
     "INSERT INTO observations (project_id, title, type, scope, content, topic_key, normalized_hash, review_after)" +
     " VALUES (?, ?, ?, ?, ?, ?, ?, CASE WHEN ? IS NULL THEN NULL ELSE datetime('now', ?) END)",
-    [project, title, type, scope, content, opts.topic_key || null, hash, reviewMod, reviewMod]
+    [project, title, type, scope, content, (opts.topic_key && stripPrivate(opts.topic_key)) || null, hash, reviewMod, reviewMod]
   )
   return { id: Number(result.lastInsertRowid), sync_id: "obs-" + result.lastInsertRowid }
 }
@@ -227,6 +227,7 @@ export function update(id: number, fields: Partial<Observation>, expectedProject
   const rawTitle = fields.title
   if (fields.title != null) fields = { ...fields, title: stripPrivate(String(fields.title)) }
   if (typeof fields.content === "string") fields = { ...fields, content: stripPrivate(fields.content) }
+  if (typeof fields.topic_key === "string") fields = { ...fields, topic_key: stripPrivate(fields.topic_key) || (null as any) } // NULL, as save() stores it
   if ("title" in fields && (!fields.title || !String(fields.title).trim())) {
     throw titleRequired(rawTitle)
   }
@@ -338,7 +339,9 @@ export function review(action: string, id?: number, limit?: number, project?: st
     if (project) {
       return db.query("SELECT * FROM observations WHERE project_id = ? AND state = 'active' AND review_after IS NOT NULL AND review_after <= datetime('now') ORDER BY review_after ASC LIMIT ?").all(project, lim)
     }
-    return db.query("SELECT * FROM observations WHERE state = 'active' AND review_after IS NOT NULL AND review_after <= datetime('now') ORDER BY review_after ASC LIMIT ?").all(lim)
+    // Cross-project: summary fields only. Full rows would hand every project's content
+    // (personal-scope included) to a caller that named none.
+    return db.query("SELECT id, title, type, project_id AS project, review_after FROM observations WHERE state = 'active' AND review_after IS NOT NULL AND review_after <= datetime('now') ORDER BY review_after ASC LIMIT ?").all(lim)
   }
   if (action === "mark_reviewed" && id) {
     // Reset from today using the same per-type TTL, not just clear to NULL —
