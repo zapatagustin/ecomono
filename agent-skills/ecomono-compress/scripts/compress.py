@@ -79,46 +79,49 @@ REMOVE_WHOLE = re.compile(
 
 # Hedging phrases (entire clause removed)
 HEDGING_PATTERNS = [
-    re.compile(r"\bit('s| is)? (worth|important|critical|essential) (to|that)\b", re.IGNORECASE),
+    re.compile(r"\bit(['’]s| is)? (worth|important|critical|essential) (to|that)\b", re.IGNORECASE),
     re.compile(r"\byou (might |could |should )?consider\b", re.IGNORECASE),
     re.compile(r"\bit would be (good|great|nice|better|best) to\b", re.IGNORECASE),
     re.compile(r"\byou could (also |try |consider )?\b", re.IGNORECASE),
-    re.compile(r"\b(?:i('d| would)? )?recommend\b", re.IGNORECASE),
+    re.compile(r"\b(?:i(['’]d| would)? )?recommend\b", re.IGNORECASE),
 ]
 
 # Pleasantries and polite openers
 PLEASANTRIES = re.compile(
     r"\b("
     r"sure|of course|happy to|glad(ly)?|my pleasure|no problem|please"
-    r"|with pleasure|absolutely|by all means|feel free|you're welcome"
+    r"|with pleasure|absolutely|by all means|feel free|you['’]re welcome"
     r")\b",
     re.IGNORECASE,
 )
 
-# "That you" openers are stripped only before a bare action verb; before an
-# auxiliary, modal, copula or negation the sentence is informational and the
-# opener is its subject ("Remember that you can use bun."), so it stays whole.
+# "That you" openers are stripped only before a bare action verb; before a word
+# that makes the clause a statement the sentence is informational and the opener
+# is its subject ("Remember that you can use bun."), so it stays whole.
+# _NON_IMPERATIVE holds those words: auxiliaries, modals, copulas, negations
+# (contracted or not) and the adverbs that sit before a verb ("never", "also").
 # ecomono: the word list is a ceiling — a verb-led test by blocklist misses
 # unlisted non-verbs. Upgrade path: an allowlist of imperative verbs, or a POS tagger.
-_AUX = (
+_NON_IMPERATIVE = (
     r"are|is|am|were|was|be|been|being|can|could|will|would|shall|should"
     r"|must|may|might|have|has|had|do|does|did|don['’]t|doesn['’]t|didn['’]t|need|needn['’]t"
     r"|never|always|also|only|just|still|already|really|not|cannot|can['’]t|won['’]t"
     r"|shouldn['’]t|mustn['’]t|aren['’]t|isn['’]t|wasn['’]t|weren['’]t|haven['’]t|hasn['’]t|hadn['’]t"
 )
-_NOT_BARE_VERB = rf"(?!['’]|\s+(?:{_AUX})\b)"
+_NOT_BARE_VERB = rf"(?!['’]|\s+(?:{_NON_IMPERATIVE})\b)"
+_THAT_YOU_OPENER = r"(?:please )?(?:make sure|be sure|remember|ensure) that you"
 # Masked in rule_compress so later rules (YOU_CAN, pleasantries) cannot strip
 # the subject or "sure" from a sentence the opener rule declined.
 KEEP_SUBJECT_OPENER = re.compile(
-    rf"\b(?:please )?(?:make sure|be sure|remember|ensure) that you(?:['’]\w+|\s+(?:{_AUX})\b)",
+    rf"\b{_THAT_YOU_OPENER}(?:['’]\w+|\s+(?:{_NON_IMPERATIVE})\b)",
     re.IGNORECASE,
 )
 
 # "You should", "make sure to", "remember to", etc.
 PERMISSIVE_OPENERS = re.compile(
-    r"\b(?:(?:please )?(?:make sure|be sure|remember|ensure) that you" + _NOT_BARE_VERB + r"|"
-    r"you should|you('ll| will) want to|make sure to|be sure to|"
-    r"remember to|don't forget to|keep in mind to|ensure that you" + _NOT_BARE_VERB + r"|"
+    r"\b(?:" + _THAT_YOU_OPENER + _NOT_BARE_VERB + r"|"
+    r"you should|you(['’]ll| will) want to|make sure to|be sure to|"
+    r"remember to|don['’]t forget to|keep in mind to|"
     r"please (make sure|remember|ensure))\b",
     re.IGNORECASE,
 )
@@ -801,18 +804,50 @@ SECRET_CONTENT = (
     ("GitLab token", re.compile(r"\bglpat-[A-Za-z0-9_\-]{20,}")),
     ("Stripe key", re.compile(r"\b[rs]k_live_[0-9A-Za-z]{16,}\b")),
     ("provider API key", re.compile(r"\bsk-(?:ant-|proj-)?[A-Za-z0-9_\-]{20,}\b")),
+    # ecomono: ceiling — quadratic on one shape: a long run of `eyJ…-` chunks with no
+    # dots (~17k chunks of 16 chars is multiple seconds). Accepted: bounding the
+    # segments stops detecting real tokens with large claims, and the input is the
+    # user's own file. Upgrade path: a linear check that splits the candidate on `.`
+    # instead of one regex.
     ("JSON web token", re.compile(r"\beyJ[A-Za-z0-9_\-]{10,}\.eyJ[A-Za-z0-9_\-]{10,}\.[A-Za-z0-9_\-]{10,}\b")),
-    ("connection string credential", re.compile(r"\b[a-z][a-z0-9+.\-]*://[^/\s:@]+:[^/\s@]{6,}@")),
+    ("connection string credential", re.compile(r"\b[a-z][a-z0-9+.\-]{0,30}://[^/\s:@]+:[^/\s@]{6,}@")),
     ("bearer token", re.compile(r"(?i)\bbearer\s+[A-Za-z0-9._\-]{20,}\b")),
     (
         "assigned credential",
         re.compile(
-            # No leading \b: `_authToken=` / `_apiKey=` have no boundary before the
-            # keyword (`_` and a lowercase letter are both word chars). The
-            # trailing lookahead keeps "tokenizer: ..." prose out.
-            r"(?i)(?:api[_\-]?key|secret|token|password|passwd|credential)s?(?![A-Za-z])\s*[:=]\s*"
-            r"['\"]?(?P<value>[A-Za-z0-9/+_\-]{20,})"
+            # No leading \b or identifier prefix: `_authToken=` / `AWS_SECRET_...` /
+            # `client_secret` have no boundary before the keyword, and an unbounded
+            # `[A-Za-z0-9_]*` prefix would rescan every identifier run from each start
+            # (quadratic). Search finds the keyword anywhere, so none is needed. The
+            # tail is capped at 40 for the same reason: `token` repeated 60k times
+            # would otherwise rescan to the end from every occurrence.
+            # ecomono: only a value that is ONE unbroken run of >=20 non-space chars
+            # counts, so `password: hunter2` and `token: see the vault` stay unmatched
+            # (prose and short example values would otherwise block ordinary notes).
+            # The keyword may be followed by a plural `s` and then only `_`/`-`
+            # continuation or the end (`tokenizer` is another word); one closing
+            # quote may precede the separator and one opening quote follow it
+            # (JSON/YAML quoted keys). Documentation-shaped values (URL, path,
+            # `${VAR}`, `<placeholder>`, env lookups, lowercase placeholder words)
+            # are exempted in `_doc_shaped`, in Python, not in this regex, and only
+            # on the credential value that `_credential_value` cuts out of the run
+            # (closing quote / first delimiter), never on text glued after it.
+            # The run is capped at 512 so a hostile `token:"a",` repeat rescans a
+            # bounded window per match (secret_in_content resumes after the cut of
+            # a short value, and one character into an exempt one).
+            # Ceiling: an unbroken lowercase slug with no `/` and no placeholder
+            # word (`token:authentication-middleware-rewrite`) is indistinguishable
+            # from a secret and IS reported; a real secret that starts with `<`,
+            # `${`, `$(`, `{{` or a URL scheme is NOT reported (accepted costs).
+            # Upgrade path: an entropy check on the value.
+            r"(?i)(?:api[_\-]?key|private[_\-]?key|secret|token|password|passwd|credential)s?"
+            r"(?:[_\-][A-Za-z0-9_\-]{0,40})?"
+            r"['\"]?\s*[:=]\s*(?P<quote>['\"])?(?P<value>\S{20,512})"
         ),
+    ),
+    (
+        "basic auth credential",
+        re.compile(r"(?i)\bauthorization\s*:\s*basic\s+[A-Za-z0-9+/_\-]{16,}"),
     ),
 )
 
@@ -822,16 +857,65 @@ SECRET_CONTENT = (
 PLACEHOLDER_SHAPED = re.compile(r"^[A-Z0-9_\-]+$")
 
 
+_URL_SCHEME = re.compile(r"^[A-Za-z][A-Za-z0-9+.\-]*://")
+_PLACEHOLDER_WORDS = ("your", "xxxx", "example", "placeholder", "changeme", "redacted")
+_VALUE_END = re.compile(r"[\"',&;})]")
+_ENV_LOOKUP = re.compile(r"(?:process\.)?env\.[A-Z_][A-Z0-9_]*")
+_PATH_LIKE = re.compile(r"[a-z0-9._~/\-]+")
+_PATH_EXT = re.compile(r"\.[a-z0-9]{1,5}$")
+
+def _credential_value(run: str, quote: str | None) -> str:
+    """Cut the captured run down to the value itself.
+
+    A quoted value ends at its matching closing quote (the whole run when there is
+    none); an unquoted one at the first `" ' , & ; } )`. Trailing `.,;:!?` is prose.
+    """
+    if quote:
+        end = run.find(quote)
+        # A quote preceded by an odd number of backslashes is escaped: skip it.
+        while end > 0 and (end - len(run[:end].rstrip("\\"))) % 2:
+            end = run.find(quote, end + 1)
+        if end >= 0:
+            run = run[:end]
+    else:
+        m = _VALUE_END.search(run)
+        if m:
+            run = run[:m.start()]
+    return run.rstrip(".,;:!?")
+
+def _doc_shaped(value: str) -> bool:
+    """True for a credential value that documents a credential rather than being one."""
+    return bool(
+        _URL_SCHEME.match(value)
+        or value.startswith(("${", "$(", "{{", "<"))
+        or _ENV_LOOKUP.fullmatch(value)
+        or (
+            "/" in value
+            and _PATH_LIKE.fullmatch(value)
+            and (value.count("/") >= 2 or _PATH_EXT.search(value))
+        )
+        or (any(word in value for word in _PLACEHOLDER_WORDS) and not any(c.isdigit() for c in value))
+    )
+
 def secret_in_content(text: str) -> str | None:
     """Name the first credential shape found in the body, or None."""
     for label, pattern in SECRET_CONTENT:
-        for match in pattern.finditer(text):
-            value = match.groupdict().get("value")
-            if value and PLACEHOLDER_SHAPED.match(value):
+        pos = 0
+        while (match := pattern.search(text, pos)):
+            if "value" not in pattern.groupindex:
+                return label
+            value = _credential_value(match.group("value"), match.group("quote"))
+            if len(value) >= 20:
+                if not (PLACEHOLDER_SHAPED.match(value) or value.isdigit() or _doc_shaped(value)):
+                    return label
+                # Exempt value: rescan the rest of its run (a credential may sit inside
+                # it). The capture is capped at 512, so the rescans stay bounded.
+                pos = match.start("value") + 1
                 continue
-            return label
+            # Short value: resume after the cut value, not after the whole run. A real
+            # credential may follow it in the same unbroken run.
+            pos = match.start("value") + max(len(value), 1)
     return None
-
 
 def _sensitive_match(path: Path) -> str | None:
     """Return the path component that tripped the sensitivity check, or None.
@@ -909,6 +993,15 @@ def _should_compress(filepath: Path) -> bool:
     return should_compress(filepath)
 
 
+def _is_generated(filepath: Path) -> bool:
+    """Delegate to detect.is_generated; import works under -m or standalone."""
+    try:
+        from .detect import is_generated
+    except ImportError:
+        from detect import is_generated
+    return is_generated(filepath)
+
+
 def compress_file(filepath: Path, use_api: bool = False, model: str = DEFAULT_MODEL, write_to: Path | None = None) -> dict:
     """Run compression. Returns {'status': ..., 'path': ..., 'backup': ..., 'tokens_saved': ...}
 
@@ -932,6 +1025,9 @@ def compress_file(filepath: Path, use_api: bool = False, model: str = DEFAULT_MO
     # the rules would rewrite real source (validate->check, "the "->"") while
     # the validator, seeing no fenced blocks, would pass it and write the
     # corrupted file. Refuse anything detect.py doesn't classify as prose.
+    # Say why: a generated file is prose, so "code/config" would mislead.
+    if _is_generated(filepath):
+        return {"status": "error", "reason": f"Skipped: generated marker in the first lines of {filepath.name}. Refusing to compress."}
     if not _should_compress(filepath):
         return {"status": "error", "reason": f"Not a natural-language file (code/config): {filepath.name}. Refusing to compress."}
     # API leg only: the name heuristic is substring-wide ("tokenizer-utils/"), so
