@@ -95,10 +95,30 @@ PLEASANTRIES = re.compile(
     re.IGNORECASE,
 )
 
+# "That you" openers are stripped only before a bare action verb; before an
+# auxiliary, modal, copula or negation the sentence is informational and the
+# opener is its subject ("Remember that you can use bun."), so it stays whole.
+# ecomono: the word list is a ceiling — a verb-led test by blocklist misses
+# unlisted non-verbs. Upgrade path: an allowlist of imperative verbs, or a POS tagger.
+_AUX = (
+    r"are|is|am|were|was|be|been|being|can|could|will|would|shall|should"
+    r"|must|may|might|have|has|had|do|does|did|don't|doesn't|didn't|need|needn't"
+    r"|never|always|also|only|just|still|already|really|not|cannot|can't|won't"
+    r"|shouldn't|mustn't|aren't|isn't|wasn't|weren't|haven't|hasn't|hadn't"
+)
+_NOT_BARE_VERB = rf"(?!'|\s+(?:{_AUX})\b)"
+# Masked in rule_compress so later rules (YOU_CAN, pleasantries) cannot strip
+# the subject or "sure" from a sentence the opener rule declined.
+KEEP_SUBJECT_OPENER = re.compile(
+    rf"\b(?:please )?(?:make sure|be sure|remember|ensure) that you(?:'\w+|\s+(?:{_AUX})\b)",
+    re.IGNORECASE,
+)
+
 # "You should", "make sure to", "remember to", etc.
 PERMISSIVE_OPENERS = re.compile(
-    r"\b(?:you should|you('ll| will) want to|make sure to|be sure to|"
-    r"remember to|don't forget to|keep in mind to|ensure that you|"
+    r"\b(?:(?:please )?(?:make sure|be sure|remember|ensure) that you" + _NOT_BARE_VERB + r"|"
+    r"you should|you('ll| will) want to|make sure to|be sure to|"
+    r"remember to|don't forget to|keep in mind to|ensure that you" + _NOT_BARE_VERB + r"|"
     r"please (make sure|remember|ensure))\b",
     re.IGNORECASE,
 )
@@ -426,6 +446,27 @@ def _mask_code_blocks(text: str, stash: list) -> str:
     return "\n".join(out + lines[prev:])
 
 
+# Block HTML comments, possibly multi-line. Masked so the prose rules never
+# rewrite their text, and compared by validate.validate_html_comments.
+HTML_COMMENT_REGEX = re.compile(r"<!--.*?-->", re.DOTALL)
+
+
+def html_comments(text: str) -> list:
+    """HTML comments outside code blocks and inline code, in document order.
+
+    Shared with validate.py. protect() masks code blocks, then inline code, then
+    comments; this walks the same order, so a `<!--` inside a code span or fence
+    is no comment to either side. Inline code inside a comment is blanked in the
+    returned text (it is masked, so it is never rewritten).
+    """
+    lines = text.split("\n")
+    fenced = fenced_spans(lines)
+    for start, end in sorted(fenced + indented_spans(lines, fenced)):
+        lines[start:end] = [""] * (end - start)
+    flat = INLINE_CODE_REGEX.sub("", "\n".join(lines))
+    return HTML_COMMENT_REGEX.findall(flat)
+
+
 def _mask_regex(text: str, pattern: re.Pattern, stash: list) -> str:
     def repl(m):
         stash.append(m.group(0))
@@ -440,6 +481,7 @@ def protect(text: str):
     text = _mask_code_blocks(text, stash)  # blocks first (may hold backticks/URLs)
     text = _mask_regex(text, HEADING_LINE_REGEX, stash)
     text = _mask_regex(text, INLINE_CODE_REGEX, stash)
+    text = _mask_regex(text, HTML_COMMENT_REGEX, stash)  # after inline code: `<!--` in a span is no comment
     text = _mask_regex(text, URL_REGEX, stash)
     return text, stash
 
@@ -459,6 +501,7 @@ def rule_compress(text: str) -> str:
     # ---- Phase: phrase-level removals (before word-level to avoid partial matches) ----
 
     # 1. Remove permissive openers first: "you should", "make sure to", etc.
+    text = _mask_regex(text, KEEP_SUBJECT_OPENER, stash)
     text = PERMISSIVE_OPENERS.sub("", text)
 
     # 2. Remove intensifiers before verbs FIRST, so "I strongly prefer" -> "I prefer"
@@ -591,8 +634,12 @@ Rules:
 - Use fragments where clear
 - Short synonyms: "use" not "utilize", "build" not "implement"
 - Keep ALL technical terms, symbols, and proper nouns exact
-- Do NOT reorganize or add new sections
-- Return ONLY the compressed markdown — no explanation, no outer fence
+- Do NOT reorganize or add new sections. Never restructure: same blocks, same order, same list nesting
+- Do NOT add any new code fences. Indented code is code: leave it exactly as is
+- Never turn XML/HTML tags or comments into markdown; keep them verbatim
+- Keep the instruction verb of each instruction sentence ("run X" stays "run X"; never drop it)
+- Write no preface and no frontmatter or `---` line of your own, but keep every existing thematic break
+- Return ONLY the compressed markdown — no explanation, no outer fence. Output ends where the input ends: no trailer, no closing remark
 
 Input:
 {text}
@@ -720,6 +767,7 @@ SENSITIVE_BASENAME = re.compile(
     r"|secrets?(\..+)?|passwords?(\..+)?"
     r"|id_(rsa|dsa|ecdsa|ed25519)(\.pub)?"
     r"|authorized_keys|known_hosts"
+    r"|\.(npmrc|pypirc|pgpass|s3cfg|boto|git-credentials)"
     r"|.*\.(pem|key|p12|pfx|crt|cer|jks|keystore|asc|gpg)"
     r")$"
 )
@@ -749,6 +797,8 @@ SECRET_CONTENT = (
     ("GitHub token", re.compile(r"\b(?:gh[pousr]_[A-Za-z0-9]{36,}|github_pat_[A-Za-z0-9_]{22,})\b")),
     ("Slack token", re.compile(r"\bxox[baprs]-[A-Za-z0-9-]{10,}\b")),
     ("Google API key", re.compile(r"\bAIza[0-9A-Za-z_\-]{35}\b")),
+    ("npm token", re.compile(r"\bnpm_[A-Za-z0-9]{30,}\b")),
+    ("GitLab token", re.compile(r"\bglpat-[A-Za-z0-9_\-]{20,}")),
     ("Stripe key", re.compile(r"\b[rs]k_live_[0-9A-Za-z]{16,}\b")),
     ("provider API key", re.compile(r"\bsk-(?:ant-|proj-)?[A-Za-z0-9_\-]{20,}\b")),
     ("JSON web token", re.compile(r"\beyJ[A-Za-z0-9_\-]{10,}\.eyJ[A-Za-z0-9_\-]{10,}\.[A-Za-z0-9_\-]{10,}\b")),
@@ -757,7 +807,10 @@ SECRET_CONTENT = (
     (
         "assigned credential",
         re.compile(
-            r"(?i)\b(?:api[_\-]?key|secret|token|password|passwd|credential)s?\b\s*[:=]\s*"
+            # No leading \b: `_authToken=` / `_apiKey=` have no boundary before the
+            # keyword (`_` and a lowercase letter are both word chars). The
+            # trailing lookahead keeps "tokenizer: ..." prose out.
+            r"(?i)(?:api[_\-]?key|secret|token|password|passwd|credential)s?(?![A-Za-z])\s*[:=]\s*"
             r"['\"]?(?P<value>[A-Za-z0-9/+_\-]{20,})"
         ),
     ),
@@ -881,6 +934,10 @@ def compress_file(filepath: Path, use_api: bool = False, model: str = DEFAULT_MO
     # corrupted file. Refuse anything detect.py doesn't classify as prose.
     if not _should_compress(filepath):
         return {"status": "error", "reason": f"Not a natural-language file (code/config): {filepath.name}. Refusing to compress."}
+    # API leg only: the name heuristic is substring-wide ("tokenizer-utils/"), so
+    # refusing the local rule pass too would leave ordinary notes uncompressible.
+    # Real credential dotfiles never get here — detect.CREDENTIAL_DOTFILES refuses
+    # them on both legs above.
     if use_api:
         sensitive_hit = _sensitive_match(filepath)
         if sensitive_hit:

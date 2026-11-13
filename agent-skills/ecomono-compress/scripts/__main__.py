@@ -90,6 +90,8 @@ def main():
             if v.is_valid:
                 _promote(staged, fp)  # only now does the live file change
                 print(f"   ✅ Valid (attempt {attempt + 1})")
+                if v.warnings:
+                    print(f"   ⚠️  Warnings: {v.warnings}")
                 break
 
             print(f"   ❌ Errors: {v.errors}")

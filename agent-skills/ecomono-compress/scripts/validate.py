@@ -6,9 +6,9 @@ from pathlib import Path
 # Code-block detection is imported, not mirrored: a masker and a validator that
 # each keep their own copy drift, and a shared blind spot validates corruption.
 try:
-    from .compress import FRONTMATTER_REGEX, INLINE_CODE_REGEX, fenced_spans, indented_spans
+    from .compress import FRONTMATTER_REGEX, INLINE_CODE_REGEX, fenced_spans, html_comments, indented_spans
 except ImportError:  # run as a plain script, not as part of the package
-    from compress import FRONTMATTER_REGEX, INLINE_CODE_REGEX, fenced_spans, indented_spans
+    from compress import FRONTMATTER_REGEX, INLINE_CODE_REGEX, fenced_spans, html_comments, indented_spans
 
 URL_REGEX = re.compile(r"https?://[^\s)]+")
 # ecomono: ceiling — ATX headings only, tolerating the CommonMark 0-3 space
@@ -135,12 +135,17 @@ def extract_indented_blocks(text, with_positions=False):
     return _blocks(lines, indented_spans(lines, fenced_spans(lines)), with_positions)
 
 
+# Sentence punctuation after a URL or path belongs to the prose, not the token:
+# "see https://a.com/x." and "see https://a.com/x" name the same thing.
+TRAILING_PUNCT = ".,;:!?"
+
+
 def extract_urls(text):
-    return set(URL_REGEX.findall(text))
+    return {u.rstrip(TRAILING_PUNCT) for u in URL_REGEX.findall(text)}
 
 
 def extract_paths(text):
-    return set(PATH_REGEX.findall(text))
+    return {p.rstrip(TRAILING_PUNCT) for p in PATH_REGEX.findall(text)}
 
 
 def count_bullets(text):
@@ -208,6 +213,47 @@ def validate_frontmatter(orig, comp, result):
     # loader acts on it, so any change at all is corruption.
     if _frontmatter(orig) != _frontmatter(comp):
         result.add_error("Frontmatter changed")
+
+
+THEMATIC_BREAK_REGEX = re.compile(r"^ {0,3}([-*_])(?:[ \t]*\1){2,}[ \t]*$")
+
+
+def _body_lines(text):
+    """Lines after the leading frontmatter block, with code regions blanked."""
+    m = FRONTMATTER_REGEX.match(text)
+    body = text[m.end():] if m else text
+    lines = body.split("\n")
+    fenced = fenced_spans(lines)
+    for start, end in sorted(fenced + indented_spans(lines, fenced)):
+        lines[start:end] = [""] * (end - start)
+    return lines
+
+
+def validate_reply_shape(orig, comp, result):
+    """A semantic reply must not gain a preface, a trailer or a second frontmatter.
+
+    Thematic breaks outside code are counted (a trailing `---`, or a second
+    frontmatter block, adds them), and when the original opens with a heading the
+    reply must open with the same line.
+
+    ecomono: ceiling — an original that opens with prose gets no first-line check,
+    since the rule pass legitimately rewrites that line and a preface cannot be told
+    from it. Upgrade path: have call_semantic_api tag its reply and check there.
+    """
+    o_lines, c_lines = _body_lines(orig), _body_lines(comp)
+    n_o = sum(1 for l in o_lines if THEMATIC_BREAK_REGEX.match(l))
+    n_c = sum(1 for l in c_lines if THEMATIC_BREAK_REGEX.match(l))
+    if n_o != n_c:
+        result.add_error(f"Thematic break count changed: {n_o} -> {n_c}")
+    first_o = next((l.strip() for l in o_lines if l.strip()), "")
+    first_c = next((l.strip() for l in c_lines if l.strip()), "")
+    if HEADING_REGEX.match(first_o) and first_o != first_c:
+        result.add_error(f"First line changed: {first_o!r} -> {first_c!r}")
+
+
+def validate_html_comments(orig, comp, result):
+    if html_comments(orig) != html_comments(comp):
+        result.add_error("HTML comment changed")
 
 
 def validate_code_blocks(orig, comp, result):
@@ -317,6 +363,8 @@ def validate(original_path: Path, compressed_path: Path) -> ValidationResult:
 
     validate_frontmatter(orig, comp, result)
     validate_headings(orig, comp, result)
+    validate_reply_shape(orig, comp, result)
+    validate_html_comments(orig, comp, result)
     validate_code_blocks(orig, comp, result)
     validate_urls(orig, comp, result)
     validate_paths(orig, comp, result)
