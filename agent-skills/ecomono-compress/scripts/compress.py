@@ -102,15 +102,15 @@ PLEASANTRIES = re.compile(
 # unlisted non-verbs. Upgrade path: an allowlist of imperative verbs, or a POS tagger.
 _AUX = (
     r"are|is|am|were|was|be|been|being|can|could|will|would|shall|should"
-    r"|must|may|might|have|has|had|do|does|did|don't|doesn't|didn't|need|needn't"
-    r"|never|always|also|only|just|still|already|really|not|cannot|can't|won't"
-    r"|shouldn't|mustn't|aren't|isn't|wasn't|weren't|haven't|hasn't|hadn't"
+    r"|must|may|might|have|has|had|do|does|did|don['’]t|doesn['’]t|didn['’]t|need|needn['’]t"
+    r"|never|always|also|only|just|still|already|really|not|cannot|can['’]t|won['’]t"
+    r"|shouldn['’]t|mustn['’]t|aren['’]t|isn['’]t|wasn['’]t|weren['’]t|haven['’]t|hasn['’]t|hadn['’]t"
 )
-_NOT_BARE_VERB = rf"(?!'|\s+(?:{_AUX})\b)"
+_NOT_BARE_VERB = rf"(?!['’]|\s+(?:{_AUX})\b)"
 # Masked in rule_compress so later rules (YOU_CAN, pleasantries) cannot strip
 # the subject or "sure" from a sentence the opener rule declined.
 KEEP_SUBJECT_OPENER = re.compile(
-    rf"\b(?:please )?(?:make sure|be sure|remember|ensure) that you(?:'\w+|\s+(?:{_AUX})\b)",
+    rf"\b(?:please )?(?:make sure|be sure|remember|ensure) that you(?:['’]\w+|\s+(?:{_AUX})\b)",
     re.IGNORECASE,
 )
 

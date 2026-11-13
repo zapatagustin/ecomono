@@ -1348,6 +1348,10 @@ check("compress", "remember that you can keeps subject", C.rule_compress("Rememb
 check("compress", "ensure that you are keeps subject", C.rule_compress("Ensure that you are logged in.\n"), "Ensure that you are logged in.")
 check("compress", "make sure that you don't keeps negation", C.rule_compress("Make sure that you don't commit secrets.\n"), "Make sure that you don't commit secrets.")
 check("compress", "please make sure that you've keeps subject", C.rule_compress("Please make sure that you've run X.\n"), "Please make sure that you've run X.")
+# curly apostrophe (U+2019) takes the same opener-guard path as the straight one
+check("compress", "remember that you\u2019ll keeps subject", C.rule_compress("Remember that you\u2019ll need bun.\n"), "Remember that you\u2019ll need bun.")
+check("compress", "make sure that you\u2019re keeps subject", C.rule_compress("Make sure that you\u2019re logged in.\n"), "Make sure that you\u2019re logged in.")
+check("compress", "make sure that you\u2019ve keeps subject", C.rule_compress("Make sure that you\u2019ve got it.\n"), "Make sure that you\u2019ve got it.")
 
 # 3. Block HTML comments are masked by the rule pass and validated.
 HC = "# T\n\n<!-- You should really utilize the thing\nin order to build it -->\n\nYou should utilize the thing.\n"
