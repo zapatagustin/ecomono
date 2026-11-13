@@ -7,6 +7,37 @@ export function normalizedHash(title: string, content: string): string {
   return createHash("sha256").update(norm).digest("hex")
 }
 
+// Drop <private>...</private> spans before anything is persisted. Depth-counted so
+// a nested block cannot leak its tail; an unterminated <private> never returns to
+// depth 0, so it strips to the end of the text (fail closed). A stray </private>
+// is dropped too. Idempotent.
+export function stripPrivate(text: string): string {
+  return scanPrivate(text).out
+}
+
+function scanPrivate(text: string): { out: string; unterminated: boolean } {
+  let depth = 0, out = "", last = 0
+  for (const m of text.matchAll(/<(\/?)private>/gi)) {
+    if (depth === 0) out += text.slice(last, m.index)
+    depth = m[1] ? Math.max(0, depth - 1) : depth + 1
+    last = m.index! + m[0].length
+  }
+  return { out: depth === 0 ? out + text.slice(last) : out, unterminated: depth > 0 }
+}
+
+// Signal for the caller when stripPrivate removed anything: a memory that merely
+// mentions the tag is otherwise cut with a plain success. undefined = nothing stripped.
+export function privateSignal(...texts: (string | null | undefined)[]): string | undefined {
+  let stripped = false
+  for (const t of texts) {
+    if (!t) continue
+    const r = scanPrivate(t)
+    if (r.unterminated) return "private text stripped: an unterminated <private> block removed everything after it; close it with </private> to keep the rest"
+    if (r.out !== t) stripped = true
+  }
+  return stripped ? "private text stripped: <private>...</private> content was not stored" : undefined
+}
+
 interface Observation {
   id?: number
   project_id: string
@@ -39,6 +70,12 @@ function reviewAfterModifier(type: string): string | null {
   return REVIEW_TTL[type] ?? null
 }
 
+// A title that was non-blank before stripping and blank after says stripping did it.
+function titleRequired(raw: string | null | undefined): Error {
+  const why = raw && raw.trim() ? privateSignal(raw) : undefined
+  return new Error(why ? `observation title is required (${why})` : "observation title is required")
+}
+
 export function save(opts: {
   title: string
   type?: string
@@ -49,16 +86,16 @@ export function save(opts: {
 }): { id: number; sync_id: string } | null {
   const db = getDb()
   const project = opts.project || detectProject()
-  const title = opts.title
+  const title = stripPrivate(opts.title ?? "")
   // Admission boundary: an unlabeled entry is unsearchable and unreviewable, so
   // reject before the row (and its FTS/judgment side effects) ever exist.
   // Content stays unchecked on purpose — a title-only stub is an established,
   // tested save shape (see tools.ts's nudge-reset test), unlike upstream engram
   // where content was always mandatory.
-  if (!title || !title.trim()) throw new Error("observation title is required")
+  if (!title || !title.trim()) throw titleRequired(opts.title)
   const type = opts.type || "manual"
   const scope = opts.scope || "project"
-  const content = opts.content || ""
+  const content = stripPrivate(opts.content || "")
 
   db.run("INSERT OR IGNORE INTO projects (id, name) VALUES (?, ?)", [project, project])
   const hash = normalizedHash(title, content)
@@ -158,8 +195,11 @@ export function update(id: number, fields: Partial<Observation>, expectedProject
   // Same admission boundary as save(): an explicit blank/whitespace-only title
   // is rejected before any UPDATE runs. `"title" in fields` (not truthiness)
   // so an update that doesn't touch title at all is unaffected.
+  const rawTitle = fields.title
+  if (fields.title != null) fields = { ...fields, title: stripPrivate(String(fields.title)) }
+  if (typeof fields.content === "string") fields = { ...fields, content: stripPrivate(fields.content) }
   if ("title" in fields && (!fields.title || !String(fields.title).trim())) {
-    throw new Error("observation title is required")
+    throw titleRequired(rawTitle)
   }
   const db = getDb()
   const sets: string[] = []
@@ -219,9 +259,9 @@ export function timeline(project?: string, limit?: number): { id: number; title:
   const db = getDb()
   const lim = limit || 20
   if (project) {
-    return db.query("SELECT id, title, type, created_at FROM observations WHERE project_id = ? ORDER BY created_at DESC LIMIT ?").all(project, lim) as any[]
+    return db.query("SELECT id, title, type, created_at FROM observations WHERE project_id = ? AND state = 'active' ORDER BY created_at DESC LIMIT ?").all(project, lim) as any[]
   }
-  return db.query("SELECT id, title, type, created_at FROM observations ORDER BY created_at DESC LIMIT ?").all(lim) as any[]
+  return db.query("SELECT id, title, type, created_at FROM observations WHERE state = 'active' ORDER BY created_at DESC LIMIT ?").all(lim) as any[]
 }
 
 export function suggestTopicKey(title: string): string {
@@ -241,48 +281,48 @@ export function suggestTopicKey(title: string): string {
 export function stats(project?: string): { observations: number; sessions: number; needs_review: number } {
   const db = getDb()
   const obs = project
-    ? (db.query("SELECT COUNT(*) as c FROM observations WHERE project_id = ?").get(project) as any).c
-    : (db.query("SELECT COUNT(*) as c FROM observations").get() as any).c
+    ? (db.query("SELECT COUNT(*) as c FROM observations WHERE project_id = ? AND state = 'active'").get(project) as any).c
+    : (db.query("SELECT COUNT(*) as c FROM observations WHERE state = 'active'").get() as any).c
   const sess = project
     ? (db.query("SELECT COUNT(*) as c FROM sessions WHERE project_id = ?").get(project) as any).c
     : (db.query("SELECT COUNT(*) as c FROM sessions").get() as any).c
   const needsReview = project
-    ? (db.query("SELECT COUNT(*) as c FROM observations WHERE project_id = ? AND review_after IS NOT NULL AND review_after <= datetime('now')").get(project) as any).c
-    : (db.query("SELECT COUNT(*) as c FROM observations WHERE review_after IS NOT NULL AND review_after <= datetime('now')").get() as any).c
+    ? (db.query("SELECT COUNT(*) as c FROM observations WHERE project_id = ? AND state = 'active' AND review_after IS NOT NULL AND review_after <= datetime('now')").get(project) as any).c
+    : (db.query("SELECT COUNT(*) as c FROM observations WHERE state = 'active' AND review_after IS NOT NULL AND review_after <= datetime('now')").get() as any).c
   return { observations: obs, sessions: sess, needs_review: needsReview }
 }
 
-export function pin(id: number): boolean {
-  const db = getDb()
-  db.run("UPDATE observations SET pinned = 1 WHERE id = ?", [id])
-  return true
+// expectedProject undefined = no guard. Returns whether a row changed.
+function setPinned(v: number, id: number, expectedProject?: string): boolean {
+  const g = expectedProject === undefined ? "" : " AND project_id = ?"
+  return Number(getDb().run(`UPDATE observations SET pinned = ? WHERE id = ?${g}`, [v, id, ...(g ? [expectedProject] : [])]).changes) > 0
 }
 
-export function unpin(id: number): boolean {
-  const db = getDb()
-  db.run("UPDATE observations SET pinned = 0 WHERE id = ?", [id])
-  return true
-}
+export function pin(id: number, expectedProject?: string): boolean { return setPinned(1, id, expectedProject) }
+
+export function unpin(id: number, expectedProject?: string): boolean { return setPinned(0, id, expectedProject) }
 
 export function review(action: string, id?: number, limit?: number, project?: string): any {
   const db = getDb()
   if (action === "list") {
     const lim = limit || 10
     if (project) {
-      return db.query("SELECT * FROM observations WHERE project_id = ? AND review_after IS NOT NULL AND review_after <= datetime('now') ORDER BY review_after ASC LIMIT ?").all(project, lim)
+      return db.query("SELECT * FROM observations WHERE project_id = ? AND state = 'active' AND review_after IS NOT NULL AND review_after <= datetime('now') ORDER BY review_after ASC LIMIT ?").all(project, lim)
     }
-    return db.query("SELECT * FROM observations WHERE review_after IS NOT NULL AND review_after <= datetime('now') ORDER BY review_after ASC LIMIT ?").all(lim)
+    return db.query("SELECT * FROM observations WHERE state = 'active' AND review_after IS NOT NULL AND review_after <= datetime('now') ORDER BY review_after ASC LIMIT ?").all(lim)
   }
   if (action === "mark_reviewed" && id) {
     // Reset from today using the same per-type TTL, not just clear to NULL —
     // otherwise a reviewed decision would never come up for review again.
+    // project undefined = no guard; success = whether a row changed.
     const row = db.query("SELECT type FROM observations WHERE id = ?").get(id) as any
     const mod = row ? reviewAfterModifier(row.type) : null
-    db.run(
-      "UPDATE observations SET review_after = CASE WHEN ? IS NULL THEN NULL ELSE datetime('now', ?) END WHERE id = ?",
-      [mod, mod, id]
+    const g = project === undefined ? "" : " AND project_id = ?"
+    const r = db.run(
+      `UPDATE observations SET review_after = CASE WHEN ? IS NULL THEN NULL ELSE datetime('now', ?) END WHERE id = ?${g}`,
+      [mod, mod, id, ...(g ? [project] : [])]
     )
-    return { success: true }
+    return { success: Number(r.changes) > 0 }
   }
   return []
 }

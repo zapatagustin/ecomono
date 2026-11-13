@@ -30,10 +30,10 @@ const proj = (p?: string) => p || Obs.currentProject().project
 const guard = (p?: string) => (p === "*" ? undefined : proj(p))
 // On a false guarded result, tell "other project" apart from "no such id" or
 // "nothing to update": reason only when a guard applied and the row sits elsewhere.
-const mismatch = (id: number, ok: boolean, g: string | undefined) => {
+const mismatch = (id: number, ok: boolean, g: string | undefined, arg = "expected_project") => {
   if (ok || g === undefined) return {}
   const row = getDb().query("SELECT id, project_id FROM observations WHERE id = ?").get(id) as { project_id: string } | null
-  return row && row.project_id !== g ? { reason: "project mismatch", row_project: row.project_id, hint: 'pass expected_project: "*" to edit across projects' } : {}
+  return row && row.project_id !== g ? { reason: "project mismatch", row_project: row.project_id, hint: `pass ${arg}: "*" to edit across projects` } : {}
 }
 
 // --- session inactivity nudge (engram #178) ---------------------------------
@@ -116,7 +116,11 @@ const rawRegistry: MemTool[] = [
       scope: z.enum(["project", "personal"]).optional(),
       topic_key: z.string().optional().describe("Stable key marking an evolving topic. Does not replace the old version on its own: if judgment_required comes back, resolve every candidate via mem_judge using that candidate's own suggested_relation. The supersedes one retires the old version; skip it and both stay active"),
     },
-    handler: (a) => Conflicts.saveWithJudgment({ title: a.title, content: a.content, type: a.type, project: proj(a.project), scope: a.scope, topic_key: a.topic_key }),
+    handler: (a) => {
+      const r = Conflicts.saveWithJudgment({ title: a.title, content: a.content, type: a.type, project: proj(a.project), scope: a.scope, topic_key: a.topic_key })
+      const private_stripped = Obs.privateSignal(a.title, a.content)
+      return r && private_stripped ? { ...r, private_stripped } : r
+    },
   },
   {
     name: "mem_search",
@@ -178,7 +182,8 @@ const rawRegistry: MemTool[] = [
       const clean = Object.fromEntries(Object.entries(fields).filter(([, v]) => v !== undefined))
       const g = guard(expected_project)
       const updated = Obs.update(id, clean, g)
-      return { updated, ...mismatch(id, updated, g) }
+      const private_stripped = Obs.privateSignal(clean.title as string | undefined, clean.content as string | undefined)
+      return { updated, ...mismatch(id, updated, g), ...(updated && private_stripped ? { private_stripped } : {}) }
     },
   },
   {
@@ -202,7 +207,7 @@ const rawRegistry: MemTool[] = [
   },
   {
     name: "mem_context",
-    description: "Recent observations for a project as a formatted context block.",
+    description: "Recent active observations for a project as a formatted context block: pinned first, each headed by its #id, bodies cut to 300 chars (the newest session summary stays whole). Use mem_get_observation for the full text.",
     args: { project: z.string().optional(), limit: z.number().optional() },
     handler: (a) => Sess.context(proj(a.project), a.limit),
   },
@@ -214,28 +219,33 @@ const rawRegistry: MemTool[] = [
   },
   {
     name: "mem_pin",
-    description: "Pin an observation so it stays surfaced.",
-    args: { id: z.number() },
-    handler: (a) => ({ pinned: Obs.pin(a.id) }),
+    description: "Pin an observation so mem_context lists it first; expected_project defaults to the current project (pinned=false on mismatch or missing id; pass \"*\" to pin across projects).",
+    args: { id: z.number(), expected_project: z.string().optional() },
+    handler: (a) => { const g = guard(a.expected_project); const pinned = Obs.pin(a.id, g); return { pinned, ...mismatch(a.id, pinned, g) } },
   },
   {
     name: "mem_unpin",
-    description: "Unpin an observation.",
-    args: { id: z.number() },
-    handler: (a) => ({ unpinned: Obs.unpin(a.id) }),
+    description: "Unpin an observation; expected_project defaults to the current project (unpinned=false on mismatch or missing id; pass \"*\" to unpin across projects).",
+    args: { id: z.number(), expected_project: z.string().optional() },
+    handler: (a) => { const g = guard(a.expected_project); const unpinned = Obs.unpin(a.id, g); return { unpinned, ...mismatch(a.id, unpinned, g) } },
   },
   {
     name: "mem_review",
-    description: "List observations due for review, or mark one reviewed.",
+    description: "List observations due for review, or mark one reviewed; for mark_reviewed, project defaults to the current project (success=false on mismatch or missing id; a project mismatch adds reason, row_project and hint; pass \"*\" to mark across projects). list takes project too: omitted -> current project, \"*\" -> all projects.",
     args: {
       action: z.enum(["list", "mark_reviewed"]),
       id: z.number().optional(),
       limit: z.number().optional(),
       project: z.string().optional(),
     },
-    // Only "list" ever reads project — proj() spawns two synchronous git
-    // subprocesses, wasted work for mark_reviewed which never uses it.
-    handler: (a) => Obs.review(a.action, a.id, a.limit, a.action === "list" ? proj(a.project) : a.project),
+    // project omitted -> current project, "*" -> no guard (mark_reviewed) or
+    // all projects (list).
+    handler: (a) => {
+      if (a.action === "list") return Obs.review("list", a.id, a.limit, guard(a.project))
+      const g = guard(a.project)
+      const r = Obs.review(a.action, a.id, a.limit, g)
+      return r && r.success === false ? { ...r, ...mismatch(a.id, false, g, "project") } : r
+    },
   },
   {
     name: "mem_current_project",
@@ -251,14 +261,17 @@ const rawRegistry: MemTool[] = [
     // Obs.save, not saveWithJudgment: a session close must never start a judgment loop.
     handler: (a) => {
       const project = proj(a.project)
-      return Obs.save({ title: `Session summary ${project} ${new Date(clock()).toISOString().slice(0, 19).replace("T", " ")}`, type: "session_summary", content: `${a.content}\n\ncalls_vs_saves: ${callsVsSaves()}`, project })
+      const r = Obs.save({ title: `Session summary ${project} ${new Date(clock()).toISOString().slice(0, 19).replace("T", " ")}`, type: "session_summary", content: `${a.content}\n\ncalls_vs_saves: ${callsVsSaves()}`, project })
+      const private_stripped = Obs.privateSignal(a.content)
+      return r && private_stripped ? { ...r, private_stripped } : r
     },
   },
   {
     name: "mem_save_prompt",
     description: "Record a user prompt under a session id.",
     args: { session_id: z.string(), content: z.string() },
-    handler: (a) => { Prompts.savePrompt(a.session_id, a.content); return { ok: true } },
+    // The prompts table has an FK to sessions; MCP callers never start one.
+    handler: (a) => { Sess.ensureSession(a.session_id, proj()); Prompts.savePrompt(a.session_id, a.content); const private_stripped = Obs.privateSignal(a.content); return private_stripped ? { ok: true, private_stripped } : { ok: true } },
   },
   {
     name: "mem_doctor",
@@ -285,7 +298,14 @@ const rawRegistry: MemTool[] = [
       relation: z.enum(["supersedes", "conflicts_with", "related", "compatible", "scoped", "not_conflict"]),
       note: z.string().optional(),
     },
-    handler: (a) => Conflicts.judge(a.judgment_id, a.relation, a.note),
+    handler: (a) => {
+      const r = Conflicts.judge(a.judgment_id, a.relation, a.note)
+      const private_stripped = Obs.privateSignal(a.note)
+      // Only a judgment that inserted a relation row stored the note: not found, already resolved, stale,
+      // not_conflict and an ignored duplicate write none. judge() reports it as `wrote`.
+      const { wrote, ...out } = r
+      return wrote && private_stripped ? { ...out, private_stripped } : out
+    },
   },
   {
     name: "mem_compare",

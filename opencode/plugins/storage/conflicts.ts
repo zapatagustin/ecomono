@@ -103,30 +103,37 @@ function findCandidates(newId: number, project: string, title: string, content: 
 }
 
 export function saveWithJudgment(opts: Parameters<typeof Obs.save>[0]): SaveResult | null {
-  const base = Obs.save(opts)
-  if (!base) return null
+  // Same stripping save() applies, so the hash below matches the stored row's.
+  const title = Obs.stripPrivate(opts.title ?? "")
+  const content = Obs.stripPrivate(opts.content || "")
   const db = getDb()
   const project = opts.project || Obs.currentProject().project
-  const hash = Obs.normalizedHash(opts.title, opts.content || "")
-  const raw = findCandidates(base.id, project, opts.title, opts.content || "", opts.topic_key, hash)
+  // One transaction: a busy-lock throw during detection rolls the row back, so a
+  // retry cannot duplicate it.
+  return db.transaction((): SaveResult | null => {
+    const base = Obs.save(opts)
+    if (!base) return null
+    const hash = Obs.normalizedHash(title, content)
+    const raw = findCandidates(base.id, project, title, content, opts.topic_key, hash)
 
-  const candidates: Candidate[] = raw.map((c) => {
-    const judgment_id = `jud-${base.id}-${c.observation_id}`
-    db.run(
-      "INSERT OR REPLACE INTO judgments (id, new_id, candidate_id, project_id, suggested_relation, confidence) VALUES (?, ?, ?, ?, ?, ?)",
-      [judgment_id, base.id, c.observation_id, project, c.suggested_relation, c.confidence]
-    )
-    return { ...c, judgment_id }
-  })
-  return { ...base, judgment_required: candidates.length > 0, candidates }
+    const candidates: Candidate[] = raw.map((c) => {
+      const judgment_id = `jud-${base.id}-${c.observation_id}`
+      db.run(
+        "INSERT OR REPLACE INTO judgments (id, new_id, candidate_id, project_id, suggested_relation, confidence) VALUES (?, ?, ?, ?, ?, ?)",
+        [judgment_id, base.id, c.observation_id, project, c.suggested_relation, c.confidence]
+      )
+      return { ...c, judgment_id }
+    })
+    return { ...base, judgment_required: candidates.length > 0, candidates }
+  })()
 }
 
-export function judge(judgmentId: string, relation: Relation, note?: string): { resolved: boolean; relation?: Relation; error?: string; stale?: boolean } {
+export function judge(judgmentId: string, relation: Relation, note?: string): { resolved: boolean; relation?: Relation; error?: string; stale?: boolean; wrote?: boolean } {
   if (!RELATIONS.includes(relation)) return { resolved: false, error: `unknown relation '${relation}'` }
   const db = getDb()
   const j = db.query("SELECT * FROM judgments WHERE id=?").get(judgmentId) as any
   if (!j) return { resolved: false, error: "judgment not found" }
-  if (j.resolved) return { resolved: true, relation }
+  if (j.resolved) return { resolved: true, relation, wrote: false }
 
   // Either side may have been hard-deleted since the judgment was parked: resolve without
   // writing a relation (engram #1472). Only `supersedes` also needs the candidate still
@@ -135,22 +142,24 @@ export function judge(judgmentId: string, relation: Relation, note?: string): { 
   const both = db.query(`SELECT (SELECT COUNT(*) FROM observations WHERE id=?) + (SELECT COUNT(*) FROM observations WHERE id=?${candState}) n`).get(j.new_id, j.candidate_id) as any
   if (both.n < 2) {
     db.run("UPDATE judgments SET resolved=1 WHERE id=?", [judgmentId])
-    return { resolved: true, stale: true }
+    return { resolved: true, stale: true, wrote: false }
   }
 
+  let wrote = false
   if (relation === "supersedes") {
     // the new observation replaces the candidate
     db.run("UPDATE observations SET state='superseded', superseded_by=? WHERE id=?", [j.new_id, j.candidate_id])
-    recordRelation(j.new_id, j.candidate_id, "supersedes", note)
+    wrote = recordRelation(j.new_id, j.candidate_id, "supersedes", note)
   } else if (relation !== "not_conflict") {
-    recordRelation(j.new_id, j.candidate_id, relation, note)
+    wrote = recordRelation(j.new_id, j.candidate_id, relation, note)
   }
   db.run("UPDATE judgments SET resolved=1 WHERE id=?", [judgmentId])
-  return { resolved: true, relation }
+  return { resolved: true, relation, wrote }
 }
 
-function recordRelation(fromId: number, toId: number, relation: Relation, note?: string) {
-  getDb().run("INSERT OR IGNORE INTO memory_relations (from_id, to_id, relation, note) VALUES (?, ?, ?, ?)", [fromId, toId, relation, note || null])
+function recordRelation(fromId: number, toId: number, relation: Relation, note?: string): boolean {
+  // changes is 0 when INSERT OR IGNORE skipped the row
+  return getDb().run("INSERT OR IGNORE INTO memory_relations (from_id, to_id, relation, note) VALUES (?, ?, ?, ?)", [fromId, toId, relation, note ? Obs.stripPrivate(note) : null]).changes > 0
 }
 
 export function relationsOf(id: number): any[] {
@@ -177,6 +186,10 @@ export function compare(idA: number, idB: number): any {
 }
 
 export function mergeProjects(from: string, into: string): { moved_observations: number; moved_sessions: number } {
+  // A blank target would move every row into project "" and a self-merge is a no-op:
+  // reject both before touching rows.
+  if (!into || !into.trim()) throw new Error("into project is required")
+  if (from === into) throw new Error("from and into are the same project")
   const db = getDb()
   db.run("INSERT OR IGNORE INTO projects (id, name) VALUES (?, ?)", [into, into])
   const obs = db.run("UPDATE observations SET project_id=? WHERE project_id=?", [into, from])

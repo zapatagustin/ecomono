@@ -89,7 +89,7 @@ export default {
             // treats "" as missing too, and its fallback is process.cwd() — the
             // service's $HOME, not the repo.
             if (takesProject && !args.project) args.project = project
-            if (t.name === "mem_update" || t.name === "mem_delete") args.expected_project ||= project
+            if (t.name === "mem_update" || t.name === "mem_delete" || t.name === "mem_pin" || t.name === "mem_unpin") args.expected_project ||= project
             if (t.name === "mem_current_project") args.cwd ||= dir
             try {
               const result = await t.handler(args)
@@ -118,7 +118,9 @@ export default {
           const session = await ctx.session.get({ sessionID: ev.sessionID })
           if (session?.parentID) return
           Sess.ensureSession(ev.sessionID, project)
-          const text = (ev.prompt?.text ?? "").trim()
+          const signal = Obs.privateSignal(ev.prompt?.text)
+          if (signal) console.error("[ecomono-memory] prompt capture:", signal)
+          const text = Obs.stripPrivate(ev.prompt?.text ?? "").trim()
           if (text) Prompts.savePrompt(ev.sessionID, text)
         } catch (e) {
           console.error("[ecomono-memory] prompt capture failed:", (e as Error).message)

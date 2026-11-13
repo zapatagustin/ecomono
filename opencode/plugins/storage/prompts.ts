@@ -1,6 +1,8 @@
 import { getDb } from "./db"
+import { stripPrivate } from "./observations"
 
-export function savePrompt(sessionId: string, content: string) {
+export function savePrompt(sessionId: string, rawContent: string) {
+  const content = stripPrivate(rawContent ?? "")
   // Admission boundary: content is a prompt row's only payload (unlike an
   // observation, which still has a title), so blank/whitespace-only content
   // is never meaningful. The automatic capture (memory.ts's

@@ -500,7 +500,7 @@ if have jq; then
   stub="$tmp/e2e-stub"; mkdir -p "$stub"
   cat > "$stub/bun" <<'STUB'
 #!/usr/bin/env bash
-if [ "${1:-}" = "--version" ]; then echo 1.4.2; fi
+if [ "${1:-}" = "--version" ]; then echo 1.4.4; fi
 exit 0
 STUB
   chmod +x "$stub/bun"

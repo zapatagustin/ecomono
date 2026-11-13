@@ -8,15 +8,19 @@ export const MEMORY_INSTRUCTIONS = `## ecomono-memory — Persistent Memory Prot
 
 You have access to ecomono-memory, a persistent memory system that survives across sessions and compactions.
 
-### WHEN TO SAVE (mandatory — not optional)
+### WHEN TO SAVE (mandatory, once per request)
 
-Call \`mem_save\` IMMEDIATELY after any of these:
+Call \`mem_save\` after any of these:
 - Bug fix completed
 - Architecture or design decision made
 - Non-obvious discovery about the codebase
 - Configuration change or environment setup
 - Pattern established (naming, structure, convention)
 - User preference or constraint learned
+
+Save once per request, when it is done, not after every fix; a fix with a non-obvious root cause still gets its own entry. The save can share a turn with other tool calls.
+
+Do not blindly repeat a memory write that returned an error: check whether the row exists first (\`mem_search\`, \`mem_context\`), a retry can duplicate it.
 
 Format for \`mem_save\`:
 - **title**: Verb + what — short, searchable (e.g. "Fixed N+1 query in UserList", "Chose Zustand over Redux")
@@ -32,7 +36,7 @@ Format for \`mem_save\`:
 When the user asks to recall something — "remember", "recall", "what did we do", or references to past work:
 1. First call \`mem_context\` — recent observations for this project (fast)
 2. If not found, call \`mem_search\` with relevant keywords (FTS5 full-text search)
-3. If you find a match, use \`mem_get_observation\` for full untruncated content
+3. \`mem_context\` headers carry the row id (\`## #id Title\`) and cut bodies to 300 chars: call \`mem_get_observation\` with that #id for full untruncated content
 
 \`mem_search\`'s return is a \`{ results, match_mode }\` envelope — \`match_mode\` is \`"all"\`, \`"any"\`, or \`"any (fallback)"\` when a multi-term search auto-widened.
 
