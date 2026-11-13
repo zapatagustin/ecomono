@@ -19732,13 +19732,32 @@ ${content}`.toLowerCase().replace(/\s+/g, " ").trim();
 function stripPrivate(text) {
   return scanPrivate(text).out;
 }
+var PRIVATE_TAG = /<(?:(\/)private|private(?=[\s>\/]|$))/gi;
+var OPEN_TAIL = /(?:[^<>"']|"[^"]{0,256}"|'[^']{0,256}'){0,256}>/y;
+var CLOSE_TAIL = /\s{0,256}>/y;
+var SELF_CLOSING = /^\s*\/>$/;
 function scanPrivate(text) {
-  let depth = 0, out = "", last = 0;
-  for (const m of text.matchAll(/<\s*(\/?)\s*private(?![\w-])[^>]*>/gi)) {
+  let depth = 0, out = "", last = 0, pos = 0;
+  for (;; ) {
+    PRIVATE_TAG.lastIndex = pos;
+    const m = PRIVATE_TAG.exec(text);
+    if (!m)
+      break;
+    const nameEnd = m.index + m[0].length;
+    const re = m[1] ? CLOSE_TAIL : OPEN_TAIL;
+    re.lastIndex = nameEnd;
+    const tail = re.exec(text);
+    if (m[1] && !tail) {
+      pos = nameEnd;
+      continue;
+    }
     if (depth === 0)
       out += text.slice(last, m.index);
-    depth = m[1] ? Math.max(0, depth - 1) : depth + 1;
-    last = m.index + m[0].length;
+    if (m[1])
+      depth = Math.max(0, depth - 1);
+    else if (!tail || !SELF_CLOSING.test(tail[0]))
+      depth++;
+    last = pos = tail ? nameEnd + tail[0].length : nameEnd;
   }
   return { out: depth === 0 ? out + text.slice(last) : out, unterminated: depth > 0 };
 }
@@ -20422,7 +20441,7 @@ Save once per request, when it is done, not after every fix; a fix with a non-ob
 
 Checkpoint exception: save at once a decision whose rationale would be expensive to re-derive, and save before a long-running step or when a compaction is imminent, so a crash or compaction does not lose the request's decisions.
 
-A failed \`mem_save\` wrote nothing and may be retried. For any other write tool, check whether the row exists first (\`mem_search\`, \`mem_context\`) before repeating it: a retry can duplicate it.
+A \`mem_save\` that returned an error wrote nothing and may be retried. After a timeout or a lost reply, and for any other write tool, check whether the row exists first (\`mem_search\`, \`mem_context\`) before repeating it: a retry can duplicate it.
 
 Format for \`mem_save\`:
 - **title**: Verb + what \u2014 short, searchable (e.g. "Fixed N+1 query in UserList", "Chose Zustand over Redux")

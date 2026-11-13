@@ -22,7 +22,7 @@ Save once per request, when it is done, not after every fix; a fix with a non-ob
 
 Checkpoint exception: save at once a decision whose rationale would be expensive to re-derive, and save before a long-running step or when a compaction is imminent, so a crash or compaction does not lose the request's decisions.
 
-A failed \`mem_save\` wrote nothing and may be retried. For any other write tool, check whether the row exists first (\`mem_search\`, \`mem_context\`) before repeating it: a retry can duplicate it.
+A \`mem_save\` that returned an error wrote nothing and may be retried. After a timeout or a lost reply, and for any other write tool, check whether the row exists first (\`mem_search\`, \`mem_context\`) before repeating it: a retry can duplicate it.
 
 Format for \`mem_save\`:
 - **title**: Verb + what — short, searchable (e.g. "Fixed N+1 query in UserList", "Chose Zustand over Redux")

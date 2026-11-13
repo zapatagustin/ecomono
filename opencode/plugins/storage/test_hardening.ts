@@ -71,13 +71,77 @@ const row = Obs.getObservation(priv.id)!
 assert(!/sk-123|secret|LEAK|never closed|private/i.test(row.title + row.content), `private stripped: ${row.title} | ${row.content}`)
 assert(row.content.includes("tail") && row.content.startsWith("a "), "surrounding text kept")
 // tag variants (whitespace, attributes) fail closed too; a longer tag name is not the tag
-for (const [o, c] of [["<private >", "</private >"], ["< private>", "</ private>"], ["<private\n>", "</private\n>"], ["<private class=x>", "</private>"]]) {
+for (const [o, c] of [["<private >", "</private >"], ["<private\n>", "</private\n>"], ["<private class=x>", "</private>"]]) {
   const v = call("mem_save", { title: `variant ${JSON.stringify(o)}`, content: `a ${o}SECRET${c} b`, project: "pv" })
   assert(Obs.getObservation(v.id)!.content === "a  b" && /stripped/.test(v.private_stripped), `variant ${JSON.stringify(o)} stripped and signalled`)
 }
 for (const t of ["privateer", "private-key"]) {
   const k = call("mem_save", { title: `kept ${t}`, content: `<${t}>secret</${t}>`, project: "pv" })
   assert(Obs.getObservation(k.id)!.content === `<${t}>secret</${t}>` && k.private_stripped === undefined, `<${t}> untouched`)
+}
+// matcher is linear: adversarial input must not block the synchronous server
+for (const [name, adv] of [["ws run", "<" + " ".repeat(200_000)], ["opener run", "<private ".repeat(50_000)]] as const) {
+  const t0 = performance.now(); Obs.stripPrivate(adv); const ms = performance.now() - t0
+  console.log(`stripPrivate ${name}: ${ms.toFixed(1)} ms`)
+  assert(ms < 250, `stripPrivate ${name} linear (${ms} ms)`)
+}
+// the tag name follows `<` immediately: comparisons and prose are not tags
+for (const t of ["if (a < private && b > c) x", "x < private"]) {
+  const w = call("mem_save", { title: `prose ${t}`, content: t, project: "pv" })
+  assert(Obs.getObservation(w.id)!.content === t && w.private_stripped === undefined, `${t} stored whole`)
+}
+// deliberate: whitespace between `<` and the name no longer makes a tag
+const sp = call("mem_save", { title: "spaced tag", content: "< private>secret</private>", project: "pv" })
+// the stray </private> is still dropped, so only the closer goes
+assert(Obs.getObservation(sp.id)!.content === "< private>secret" && sp.private_stripped !== undefined, "< private> is not an opener (deliberate)")
+const sc = call("mem_save", { title: "self closing", content: "before <private/> after <private /> end", project: "pv" })
+assert(Obs.getObservation(sc.id)!.content === "before  after  end", `self-closing opens no block: ${Obs.getObservation(sc.id)!.content}`)
+// quoted attribute values are one unit: a `>` inside does not end the tag
+const q = call("mem_save", { title: "quoted gt", content: `<private a="x>y">SECRET</private> tail <private b='p></private>q'>S2</private>`, project: "pv" })
+assert(Obs.getObservation(q.id)!.content.trim() === "tail" && /stripped/.test(q.private_stripped), `quoted > : ${Obs.getObservation(q.id)!.content}`)
+// fail-closed matcher spec, pinned row by row through stripPrivate/privateSignal directly
+// (mem_save wiring is checked below for the headline rows). Each row: input, trimmed
+// stored text, signal. A removed self-closing tag reports "stripped" (the text changed).
+{
+  const y = "y".repeat(300), a = "a".repeat(300)
+  const rows: [string, string, "none" | "stripped" | "unterminated"][] = [
+    ["<private note=don't>secret</private>ok", "ok", "stripped"],
+    [`<private a="x>SECRET</private>t`, "t", "stripped"],
+    [`<private x="${y}">secret</private>z`, "z", "stripped"],
+    [`<private ${a}>secret</private>z`, "z", "stripped"],
+    ["keep <private don't log this", "keep", "unterminated"],
+    ["<private url=http://x/>secret</private>t", "t", "stripped"],
+    ["before <private/> mid <private /> after", "before  mid  after", "stripped"],
+    [`<private a="x>y">SECRET</private> tail`, "tail", "stripped"],
+    ["<private >S</private >t", "t", "stripped"],
+    ["<PRIVATE class=x>S</Private>t", "t", "stripped"],
+    ["<private\n>S</private>t", "t", "stripped"],
+    ["<private>a<private>b</private>c</private>d", "d", "stripped"],
+    ["Map<private, string> y", "Map<private, string> y", "none"],
+    ["<privateer>x</privateer>", "<privateer>x</privateer>", "none"],
+    ["<private-key>x</private-key>", "<private-key>x</private-key>", "none"],
+    ["if (a < private && b > c) x", "if (a < private && b > c) x", "none"],
+    ["x <private.y> z", "x <private.y> z", "none"],
+    ["<private,", "<private,", "none"],
+    ["<private:x>", "<private:x>", "none"],
+    // deliberate fail-closed cost: a bare `<private` in prose followed by a later `>` opens a block
+    ["a <private && b > c", "a", "unterminated"],
+    // a malformed closer does not close: everything from the opener on goes
+    ["<private>S</private foo>t", "", "unterminated"],
+  ]
+  for (const [i, o, s] of rows) {
+    const sig = Obs.privateSignal(i)
+    const got = sig === undefined ? "none" : /unterminated/.test(sig) ? "unterminated" : "stripped"
+    assert(Obs.stripPrivate(i).trim() === o.trim() && got === s, `matcher row ${JSON.stringify(i.slice(0, 40))}: ${JSON.stringify(Obs.stripPrivate(i))} ${got}`)
+  }
+  const fc = call("mem_save", { title: "fail closed", content: "<private note=don't>secret</private>ok", project: "pv" })
+  assert(Obs.getObservation(fc.id)!.content === "ok" && /stripped/.test(fc.private_stripped), "mem_save: unbalanced apostrophe opener fails closed")
+  const n = 300_000
+  for (const [name, adv] of [["ws", "<" + " ".repeat(n)], ["openers", "<private ".repeat(n / 9)], ["dq openers", "<private \"".repeat(n / 10)], ["sq openers", "<private '".repeat(n / 10)], ["quotes", "\"".repeat(n)], ["long quote", "<private x=\"" + "y".repeat(n)], ["closers", "</private ".repeat(n / 10)], ["long tail", "<private " + "a".repeat(n)]] as const) {
+    const t0 = performance.now(); Obs.stripPrivate(adv); const ms = performance.now() - t0
+    console.log(`stripPrivate 300k ${name}: ${ms.toFixed(1)} ms`)
+    assert(ms < 250, `stripPrivate 300k ${name} linear (${ms} ms)`)
+  }
 }
 const n1 = Obs.save({ title: "Judge a", content: "alpha", project: "p" })!
 const n2 = Obs.save({ title: "Judge b", content: "beta", project: "p" })!
@@ -142,7 +206,7 @@ assert(Obs.search({ query: "tail", project: "p" }).length === 1, "rows still in 
 // --- 8. protocol text ---
 assert(!MEMORY_INSTRUCTIONS.includes("IMMEDIATELY after any of these"), "no per-event save rule")
 assert(/once.*request/i.test(MEMORY_INSTRUCTIONS), "save-once-per-request rule")
-assert(/failed `mem_save` wrote nothing/.test(MEMORY_INSTRUCTIONS) && /checkpoint/i.test(MEMORY_INSTRUCTIONS), "retry rule and checkpoint rule")
+assert(/`mem_save` that returned an error wrote nothing/.test(MEMORY_INSTRUCTIONS) && /checkpoint/i.test(MEMORY_INSTRUCTIONS), "retry rule and checkpoint rule")
 assert(MEMORY_INSTRUCTIONS.includes("#id"), "protocol mentions ids from mem_context")
 
 // --- review fixes: handoff survives pinned flood; mem_review guard hint; protocol header ---

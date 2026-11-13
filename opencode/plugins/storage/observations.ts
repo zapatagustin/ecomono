@@ -10,18 +10,46 @@ export function normalizedHash(title: string, content: string): string {
 // Drop <private>...</private> spans before anything is persisted. Depth-counted so
 // a nested block cannot leak its tail; an unterminated <private> never returns to
 // depth 0, so it strips to the end of the text (fail closed). A stray </private>
-// is dropped too. The tag tolerates whitespace and attributes (`< private x=1>`)
-// but not a longer name (`<privateer>`, `<private-key>`). Idempotent.
+// is dropped too. Case-insensitive. Fail closed, linear:
+// - Opener candidate: `<private` immediately followed by whitespace, `>`, `/` or the
+//   end of the text. Anything else (`<privateer>`, `<private-key>`, `<private,`,
+//   `<private.x>`, `< private`) is not a tag and stays.
+// - Well-formed tail (<=256 items, quoted values of either quote <=256 consumed as
+//   units so a `>` inside does not end the tag, ending in `>`): the whole tag is
+//   consumed and opens a block, except the self-closing form `<private`, optional
+//   whitespace, `/>`, which is removed and opens no block (`<private url=http://x/>`
+//   is an ordinary opener).
+// - Malformed tail (unbalanced quote, past the bound, or no `>`): the token
+//   `<private` alone is the opener and everything after it, tail included, is block
+//   content up to the matching closer (or the end of the text).
+// - Closer: `</private`, optional whitespace (<=256), `>`. Anything else does not
+//   close, so the block stays open. Per-opener work is bounded, so the scan is
+//   linear. Idempotent.
 export function stripPrivate(text: string): string {
   return scanPrivate(text).out
 }
 
+const PRIVATE_TAG = /<(?:(\/)private|private(?=[\s>\/]|$))/gi
+const OPEN_TAIL = /(?:[^<>"']|"[^"]{0,256}"|'[^']{0,256}'){0,256}>/y
+const CLOSE_TAIL = /\s{0,256}>/y
+const SELF_CLOSING = /^\s*\/>$/
+
 function scanPrivate(text: string): { out: string; unterminated: boolean } {
-  let depth = 0, out = "", last = 0
-  for (const m of text.matchAll(/<\s*(\/?)\s*private(?![\w-])[^>]*>/gi)) {
+  let depth = 0, out = "", last = 0, pos = 0
+  for (;;) {
+    PRIVATE_TAG.lastIndex = pos
+    const m = PRIVATE_TAG.exec(text)
+    if (!m) break
+    const nameEnd = m.index + m[0].length
+    const re = m[1] ? CLOSE_TAIL : OPEN_TAIL
+    re.lastIndex = nameEnd
+    const tail = re.exec(text)
+    if (m[1] && !tail) { pos = nameEnd; continue }
     if (depth === 0) out += text.slice(last, m.index)
-    depth = m[1] ? Math.max(0, depth - 1) : depth + 1
-    last = m.index! + m[0].length
+    if (m[1]) depth = Math.max(0, depth - 1)
+    else if (!tail || !SELF_CLOSING.test(tail[0])) depth++
+    // a malformed opener consumes only the name; its tail is rescanned as content
+    last = pos = tail ? nameEnd + tail[0].length : nameEnd
   }
   return { out: depth === 0 ? out + text.slice(last) : out, unterminated: depth > 0 }
 }
