@@ -239,6 +239,15 @@ while [ "$(ls "${d}" | wc -l)" -lt ${n} ] && [ $i -lt 100 ]; do sleep 0.05; i=$(
   const drift = calls.warn.filter((l) => l.includes("unexpected omp shape"))
   assert.equal(drift.length, 1)
   assert.ok(drift[0].includes("task tool_call"), drift[0])
+  // An odd `steps` is reported once, with the effect text, for a lone string and for a non-string element.
+  for (const steps of ["s", ["a", { b: "c" }]]) {
+    const odd = setup({ hooksDir })
+    await odd.fire("tool_call", task({ tasks: [{ task: "x", steps }] }), odd.ctx)
+    await odd.fire("tool_call", task({ tasks: [{ task: "x", steps }] }), odd.ctx)
+    const w = odd.calls.warn.filter((l) => l.includes("task steps"))
+    assert.equal(w.length, 1, JSON.stringify(steps) + ": " + odd.calls.warn.join("\n"))
+    assert.ok(w[0].includes("the gates read its string leaves"), w[0])
+  }
   const quiet = setup({ hooksDir })
   await quiet.fire("tool_call", task({ agent: "explore", task: "x" }), quiet.ctx)
   await quiet.fire("tool_call", task({ tasks: [{ agent: "explore", task: "x" }] }), quiet.ctx)
@@ -575,9 +584,27 @@ while [ "$(ls "${d}" | wc -l)" -lt ${n} ] && [ $i -lt 100 ]; do sleep 0.05; i=$(
   assert.deepEqual(seen(), [{ tool_input: { subagent_type: "a3", prompt: "C\nT" } }])
   for (const f of readdirSync(d)) rmSync(join(d, f))
 
-  // omp 18.19 `steps` replaces `task`: the context, then each string step, one per line; non-strings are dropped.
-  assert.equal(await fire("tool_call", task({ agent: "a4", context: "C", steps: ["S1", 3, "S2"] }), ctx), undefined)
-  assert.deepEqual(seen(), [{ tool_input: { subagent_type: "a4", prompt: "C\nS1\nS2" } }])
+  // omp 18.19 `steps` replaces `task`: the context, then each step, one per line; a non-string element goes in as
+  // its string leaves (object keys included), one per line, so the judge gate sees them too.
+  assert.equal(await fire("tool_call", task({ agent: "a4", context: "C", steps: ["S1", { text: "S2" }, "S3"] }), ctx), undefined)
+  assert.deepEqual(seen(), [{ tool_input: { subagent_type: "a4", prompt: "C\nS1\ntext\nS2\nS3" } }])
+  for (const f of readdirSync(d)) rmSync(join(d, f))
+
+  // No depth bound: a leaf 40 arrays deep reaches the judge as its plain text, a real newline and no `\n` escape.
+  let deep40: unknown = "see\nmore"
+  for (let i = 0; i < 40; i++) deep40 = [deep40]
+  assert.equal(await fire("tool_call", task({ agent: "a4", steps: [deep40] }), ctx), undefined)
+  assert.deepEqual(seen(), [{ tool_input: { subagent_type: "a4", prompt: "see\nmore" } }])
+  for (const f of readdirSync(d)) rmSync(join(d, f))
+
+  // A nested object: leaves at every depth, keys included, a number as its string form.
+  assert.equal(await fire("tool_call", task({ agent: "a4", steps: [{ k: { j: ["deep", 7] } }] }), ctx), undefined)
+  assert.deepEqual(seen(), [{ tool_input: { subagent_type: "a4", prompt: "k\nj\ndeep\n7" } }])
+  for (const f of readdirSync(d)) rmSync(join(d, f))
+
+  // `task` and `steps` together: both reach the judge.
+  assert.equal(await fire("tool_call", task({ agent: "a5", task: "T", steps: ["S1"] }), ctx), undefined)
+  assert.deepEqual(seen(), [{ tool_input: { subagent_type: "a5", prompt: "T\nS1" } }])
   for (const f of readdirSync(d)) rmSync(join(d, f))
 
   // Nothing to gate: no script runs.

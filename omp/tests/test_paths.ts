@@ -474,6 +474,18 @@ const sample = (glob: string) => glob.replace(/\*\*\//g, "/x/").replace(/\*\*/g,
 {
   const { fire, ctx } = setup()
   const task = (input: unknown) => call("task", input)
+  // `{a:{a:...{a: leaf}}}` nested `n` objects deep.
+  const deepSteps = (n: number, leaf: string): unknown => {
+    let v: unknown = leaf
+    for (let i = 0; i < n; i++) v = { a: v }
+    return v
+  }
+  // `[[...[leaf]...]]` nested `n` arrays deep.
+  const deepArrays = (n: number, leaf: unknown): unknown => {
+    let v: unknown = leaf
+    for (let i = 0; i < n; i++) v = [v]
+    return v
+  }
   const denied: unknown[] = [
     { tasks: [{ agent: "task", task: "Summarize @.env" }] },
     { tasks: [{ agent: "task", task: "look at @~/.ssh/id_ed25519 please" }] },
@@ -489,7 +501,30 @@ const sample = (glob: string) => glob.replace(/\*\*\//g, "/x/").replace(/\*\*/g,
     // omp 18.19 `steps: string[]` (task.steps) stands in for `task`; every step is a prompt the child reads.
     { tasks: [{ agent: "task", steps: ["plan", "then read @.env"] }] },
     { agent: "task", steps: ["see @~/.ssh/id_ed25519"] }, // non-batch
-    { tasks: [{ steps: ["ok", 7, "Summarize.\\n@.env\\nThanks."] }] }, // non-strings skipped; a repaired step is decoded
+    { tasks: [{ steps: ["ok", 7, "Summarize.\\n@.env\\nThanks."] }] }, // a repaired step is decoded
+    // Any other shape of `steps` is read fail-closed, so a mention cannot hide in a shape omp would reject.
+    { tasks: [{ steps: "read @.env" }] }, // a single string
+    { tasks: [{ steps: ["ok", { text: "read @.env" }] }] }, // an object element: its JSON text is scanned
+    { tasks: [{ steps: { text: "read @.env" } }] }, // an object: its JSON text
+    // Only the string leaves are scanned, so JSON punctuation around a mention hides nothing.
+    { tasks: [{ steps: [["@.env", "x"]] }] },
+    { tasks: [{ steps: [{ a: "@.env", b: 1 }] }] },
+    { tasks: [{ steps: [{ a: "a", b: "@.env", c: "d" }] }] },
+    { tasks: [{ steps: [{ a: "read @.env\n" }] }] },
+    { tasks: [{ steps: [{ "@.env": 1 }] }] }, // an object key is a leaf
+    { tasks: [{ steps: [{ a: { b: ["read @.env\n"] } }] }] },
+    { tasks: [{ steps: [deepSteps(40, "read @.env")] }] }, // no depth bound: every leaf is read as typed
+    // A leaf whose whitespace is a real control character is still a mention at any depth: no JSON text is scanned.
+    { tasks: [{ steps: [deepSteps(40, "read @.env\n")] }] },
+    { tasks: [{ steps: [deepArrays(40, "read @.env\n")] }] },
+    { tasks: [{ steps: [deepSteps(40, "x\t@.env")] }] },
+    { tasks: [{ steps: [deepSteps(40, "x\r\n@.env\r\n")] }] },
+    { tasks: [{ steps: [deepSteps(40, "see\n@.env\nmore")] }] },
+    { tasks: [{ steps: [deepSteps(39, { "@.env": 1 })] }] }, // an object key at depth 39 is a leaf
+    { tasks: [{ steps: [deepSteps(5000, "read @.env\n")] }] }, // very deep: no recursion, no throw
+    // Both fields are read: the mention is in only one of them.
+    { tasks: [{ task: "read @.env", steps: ["fine"] }] },
+    { tasks: [{ task: "fine", steps: ["read @.env"] }] },
   ]
   for (const input of denied) {
     const r = await fire("tool_call", task(input), ctx)
@@ -508,10 +543,31 @@ const sample = (glob: string) => glob.replace(/\*\*\//g, "/x/").replace(/\*\*/g,
     { tasks: [{ task: "C:\\Users\\@.env\\n" }] }, // not a JSON string body: `\U` is no escape
     { tasks: [{ task: "Summarize.\\n@src/a.ts\\nThanks." }] }, // decoded, still an ordinary mention
     { tasks: [{ steps: ["see @src/a.ts", "mail user@.env"] }] },
-    { tasks: [{ steps: "@.env" }] }, // not an array: omp rejects it, nothing to scan
+    { tasks: [{ steps: undefined }] }, // absent
+    { tasks: [{ task: "x", steps: null }] },
+    { tasks: [{ steps: "see @src/a.ts" }] }, // a single string, allowed mention
+    { tasks: [{ steps: 7 }] },
+    { tasks: [{ steps: [{ text: "see @src/a.ts" }] }] },
+    { tasks: [{ steps: [{ a: "see @src/a.ts", b: 1 }] }] },
+    { tasks: [{ steps: [["see @src/a.ts", "x"]] }] },
+    { tasks: [{ steps: 42 }] },
+    { tasks: [{ steps: true }] },
+    { tasks: [{ steps: [deepSteps(5000, "see @src/a.ts")] }] }, // very deep: linear work, no throw
   ]) {
     assert.equal(await fire("tool_call", task(input), ctx), undefined, JSON.stringify(input))
   }
+  // A value that contains itself: the walk terminates (JSON.stringify would throw, so no input is printed).
+  const cycle = (leaf: string): unknown => {
+    const o: any = { a: leaf }
+    o.self = o
+    const arr: any[] = [leaf]
+    arr.push(arr)
+    return [o, arr]
+  }
+  const cyc = await fire("tool_call", task({ tasks: [{ steps: cycle("read @.env") }] }), ctx)
+  assert.equal(cyc?.block, true, "a cyclic steps with a mention is blocked")
+  assert.match(cyc.reason, /task mention "@/)
+  assert.equal(await fire("tool_call", task({ tasks: [{ steps: cycle("see @src/a.ts") }] }), ctx), undefined, "a cyclic steps without a mention is allowed")
 }
 
 // ---- task: taskFile -----------------------------------------------------------------------------------------

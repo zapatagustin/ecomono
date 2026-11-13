@@ -1007,7 +1007,7 @@ A change to one of the surfaces is caught by one of three nets, in this order of
   per kind and session: a `read` call with no `path`/`paths`, a `task` call with neither `tasks[]` nor `agent`,
   `ctx.agent` without a `kind` or a subagent without a `name`, a spawn without an array `patterns`, a
   non-error search result whose `details` has none of `files`, `fileMatches`, `fileReplacements` and `hits`, and a
-  `pi.pi.VERSION` that is not a string.
+  `pi.pi.VERSION` that is not a string, and a task `steps` that is not an array of strings (the gates read it all the same).
 - **The mirror table** below, re-diffed on every upgrade.
 
 Not covered by the smoke, and so resting on the fake-pi tests (events built by hand to the 18.16.0 shape) and the
@@ -1049,7 +1049,7 @@ Surfaces relied on:
   18.16.0, read on a prompt rather than at startup).
 - Tool inputs: `bash.{command,cwd}`, `read.path` (selectors, `;` lists, `file://`), `grep`/`glob`/`find`/`write`/
   `ast_grep.path`, `edit.{path,paths,input}`, `ast_edit.paths`, `github.op`,
-  `task.{context,agent,task,taskFile,sourceSession,tasks[]}`, plus `task.steps[]` from omp 18.19 (the gate reads it when `task.steps` is on; absent at 18.18); read
+  `task.{context,agent,task,taskFile,sourceSession,tasks[]}`; read
   `details.{suffixResolution,displayReadTargets,resolvedPath,isDirectory}`; search `details.{files,fileMatches,hits}`,
   `ast_edit` `details.{files,fileReplacements}` and `ast_grep` / `ast_edit` `details.parseErrors`; the `xd://resolve` / `xd://reject` write result
   `details.xdev.{tool,inner.sourceResultDetails}`.
@@ -1066,7 +1066,7 @@ bundled `/review` and `/annotate` custom commands), the theme schema (`tui/src/t
 citations, none with changed content), and they were re-pinned. The re-diff also showed that `alt+g`, the files/git
 panel key, is the omp default of `app.local.open` (`tui/src/app-keybindings.ts:163`, handled in a global input listener
 at `modes/controllers/input-controller.ts:450`), so the extension's shortcut never fired; the panel key is now `alt+w`,
-bound by no omp app keybinding: `alt+w` is absent from `tui/src/app-keybindings.ts` at v18.16.0, at v18.20.0 and at the clone's HEAD (2999ca56b1, v18.20.0-146).
+bound by no omp app keybinding: `alt+w` is absent from `tui/src/app-keybindings.ts` at v18.16.0 and at v18.20.0 (tags); a local clone at HEAD 2999ca56b1 (v18.20.0-146) showed the same on 2026-11-13, a point-in-time observation of an unreleased tree.
 
 Previous re-diff, omp rev 6c7cd82 to ebb4fcf (github can1357/oh-my-pi, both reporting 18.15.0, so the tested version stayed
 18.15.0). The extension surface (`extensibility/`), the keybindings, the theme schema and the config CLI are
@@ -1099,15 +1099,26 @@ cut; `out://` (a write-only reply channel) is new; the extension API only gained
 the pi-edit header grammar are unchanged (the Rust files changed by refactor only); the cited line ranges moved and
 were re-pinned.
 
-Before bumping omp past 18.18 (changes read from the upstream tree at 18.19 and 18.20; re-verify each on the target):
+Before bumping omp past 18.18 (18.18 is the line because 18.19.0 is the first release with the changes below; they
+were read from tags v18.19.0 and v18.20.0 and from a local clone at HEAD 2999ca56b1, and each is to be re-verified on
+the target):
 
-- `taskFile` / `task.file` is removed in 18.19.0: drop the `taskFile` deny in `index.ts` and its mentions here.
-- The task tool accepts `steps: string[]` in place of `task` when `task.steps` is on (18.19, off by default, on under
-  rpc and acp). The @-mention deny and the judge gate already read `steps`; keep that.
-- `keepSeanceItemKeys` becomes `keepGatedItemKeys`, with the per-item `model` gated by `task.perCallModel`.
-- `sdk.ts:4454` becomes `sdk.ts:4524` in `omp/tests/test_contract.ts`.
-- About 57 of the cited line ranges move or change; recompute them against the target rev rather than patching by hand.
-- `pi.getShortcutConflict` becomes available: the panel keys could be checked at load instead of by this document.
+- `taskFile` / `task.file` is removed in 18.19.0 (present under `packages/coding-agent/src/task/` at v18.18.0, absent
+  at v18.19.0 and at HEAD): drop the `taskFile` deny in `index.ts` and its mentions here.
+- The task tool accepts `steps` in place of `task` (`task.steps`, new in 18.19.0, off by default, on under rpc and
+  acp). omp's schema declares `steps: "string[]"` (`task/types.ts:184`) and `validateTaskInput` rejects anything but a
+  non-empty array of non-empty strings, and `task` together with `steps` (`task/index.ts:274-287`, v18.19.0;
+  unchanged at HEAD). The extension reads `steps` whenever it is present, whatever its type and whether or not
+  `task.steps` is on: the @-mention deny and the judge gate see a string, or every string leaf (object keys included) of a non-string, at
+  any depth (an iterative walk with an explicit stack: no depth bound, no JSON-text fallback whose escapes would hide a
+  mention, a cyclic value visited once), and `task` as well. An odd shape logs the `task steps` shape warning. Keep that.
+- `keepSeanceItemKeys` (v18.18.0, `task/types.ts:64`) becomes `keepGatedItemKeys` (v18.19.0), which keeps the per-item
+  `model` key that `task.perCallModel` gates, as well as the seance keys.
+- The `omp/tests/test_contract.ts` comment citing `sdk.ts:4454` (omp `packages/coding-agent/src/sdk.ts`, the
+  `normalizedRequested = requestedToolNames.filter(name => toolRegistry.has(name))` line) needs the new
+  line: 4499 at v18.19.0, 4519 at v18.20.0, 4524 at HEAD 2999ca56b1.
+- Cited line ranges move on an upgrade: re-pin every range in the mirror table and in the `ecomono:` comments against
+  the target rev, as the upgrade protocol in the README says, rather than patching by hand.
 
 ### Spike results
 

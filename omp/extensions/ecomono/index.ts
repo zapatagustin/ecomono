@@ -205,13 +205,56 @@ function repairedTask(text: string): string {
 }
 
 /**
- * The text an item hands its child as prompt: `task`, and from omp 18.19 each string of `steps` (task.steps, off by
- * default, on under rpc and acp), which stands in for `task` (omp: task/index.ts validateTaskInput). Read both, so a
- * mention or a heading cannot hide in the field a given omp version does not use.
+ * Every string leaf of `v`, one text each, in document order. A string is a leaf; an object's keys are leaves and its
+ * values are walked; an array's elements are walked; a number, boolean or bigint is its string form; null, undefined, a
+ * function and a symbol are nothing. There is no depth bound and no JSON-text fallback (JSON escapes would hide a
+ * mention again): the walk is iterative with an explicit stack, so depth cannot overflow the call stack, and an object
+ * or array met a second time is skipped, so a cyclic value terminates. Work is linear in the size of the value.
  */
-function taskTexts(item: any): string[] {
-  const steps = Array.isArray(item?.steps) ? item.steps : []
-  return [item?.task, ...steps].filter((s): s is string => typeof s === "string")
+function stringLeaves(v: unknown, out: string[]): void {
+  const seen = new Set<object>()
+  const stack: unknown[] = [v]
+  while (stack.length > 0) {
+    const x = stack.pop()
+    if (typeof x === "string") out.push(x)
+    else if (typeof x === "number" || typeof x === "boolean" || typeof x === "bigint") out.push(String(x))
+    else if (typeof x === "object" && x !== null && !seen.has(x)) {
+      seen.add(x)
+      try {
+        // Pushed in reverse, so the pop order is the document order: each key, then its value's leaves.
+        if (Array.isArray(x)) for (let i = x.length - 1; i >= 0; i--) stack.push(x[i])
+        else {
+          const entries = Object.entries(x)
+          for (let i = entries.length - 1; i >= 0; i--) stack.push(entries[i][1], entries[i][0])
+        }
+      } catch {
+        // a throwing getter or proxy: nothing to read from this node
+      }
+    }
+  }
+}
+
+/**
+ * The text an item hands its child as prompt: `task`, and from omp 18.19 `steps` (task.steps, off by default, on under
+ * rpc and acp), which stands in for `task` (omp: task/index.ts validateTaskInput). Read both, so a mention or a
+ * heading cannot hide in the field a given omp version does not use. omp accepts only a non-empty string[] for
+ * `steps` (validateTaskInput at v18.19.0 and at v18.20.0-146), but the gates must not depend on that: a lone string
+ * is read as one step, and a non-string element, or a `steps` of any other type, is read through its string
+ * leaves (stringLeaves), each one a text of its own, so a mention or a denied path inside it is still seen whatever
+ * JSON punctuation surrounds it. `odd` is told about every shape omp does not send.
+ */
+function taskTexts(item: any, odd?: (why: string) => void): string[] {
+  const steps: unknown = item?.steps
+  let list: unknown[] = []
+  if (Array.isArray(steps)) list = steps
+  else if (steps !== undefined && steps !== null) {
+    odd?.(`steps is ${typeof steps === "string" ? "a string" : `a ${typeof steps}`}, not an array of strings`)
+    list = [steps]
+  }
+  if (list.some((s) => typeof s !== "string")) odd?.("steps has an element that is not a string")
+  const texts: string[] = []
+  for (const s of list) stringLeaves(s, texts)
+  return [item?.task, ...texts].filter((s): s is string => typeof s === "string")
 }
 
 /**
@@ -306,8 +349,9 @@ function resolvePart(cwd: string, part: string): string | undefined {
  * compound `:1-50:raw` / `:raw:1-50` down to the path (pi-tui: tools/read.ts:147-184, splitPathAndSel), so the cut
  * is at the FIRST `:` of the last segment: a cut at the last `:` would leave `.env:1-5` or `.env:raw`, which no
  * glob matches. A direct read sets no details target for the post-check either, so this is the only place that
- * catches it. The same cut covers the colon-dash list omp 18.19 also peels (`a:20:40,85:100`, a colon written as the
- * range dash): it is no grammar mirror, so a newer selector shape cannot slip past it.
+ * catches it. Forward-compatibility note, not the tested behaviour (OMP_TESTED, 18.16.0, which the citation above
+ * covers): omp 18.19 also peels a colon-dash list (`a:20:40,85:100`, a colon written as the range dash). The same
+ * cut covers it: it is no grammar mirror, so a newer selector shape cannot slip past it.
  * An archive member `b.zip:.ssh/k` (omp: prompts/tools/read.md:12; tools/grep.ts:309 and tools/write.ts:668 parse
  * it too) has its `:` in a middle segment, where the cut above does not look, so the path is also tested with
  * every `:` as a `/`: `b.zip/.ssh/k` meets the `.ssh` glob, stacked selectors and `::` included.
@@ -446,11 +490,13 @@ export function ecomono(o: { repo: string; hooksDir?: string; timeoutMs?: number
     // would brick every session after an omp upgrade; the smoke (omp/tests/smoke.sh) is where the mismatch is meant
     // to be caught.
     const drifted = new Set<string>()
-    const drift = (kind: string, why: string): void => {
+    const drift = (kind: string, why: string, effect = "the check that reads it is skipped"): void => {
       if (drifted.has(kind)) return
       drifted.add(kind)
-      pi.logger.warn(`ecomono: unexpected omp shape, ${kind}: ${why}; the check that reads it is skipped (tested on omp ${OMP_TESTED})`)
+      pi.logger.warn(`ecomono: unexpected omp shape, ${kind}: ${why}; ${effect} (tested on omp ${OMP_TESTED})`)
     }
+    // A task `steps` that is not a string[] (the only shape omp accepts): taskTexts reads it all the same.
+    const oddSteps = (why: string): void => drift("task steps", why, "the gates read its string leaves")
     // ctx.agent.kind, the key of every main-session-only and subagent-only branch below. Anything but "main" or
     // "sub" makes all of them skip.
     const agentKind = (ctx: any): unknown => {
@@ -843,8 +889,8 @@ export function ecomono(o: { repo: string; hooksDir?: string; timeoutMs?: number
     // Before the judge gate, the path deny on the @-mentions of every item's `task`, whatever its agent: omp
     // reads each mentioned file into the child's first prompt with no tool_call (task/executor.ts:2507,2540;
     // session/agent-session.ts:8946-8955). `context` becomes the system prompt and is never scanned for
-    // mentions, so it is not checked. fileMentions scans each `task` (and, from omp 18.19, each string of `steps`,
-    // see taskTexts) as typed and as repairedTask decodes it.
+    // mentions, so it is not checked. fileMentions scans each `task` (and, from omp 18.19, every element of `steps`
+    // whatever its type, see taskTexts) as typed and as repairedTask decodes it.
     // An item has two file fields. `taskFile` (setting task.file, off by default) is an absolute path or local://
     // URL whose contents omp reads at dispatch and hands the child as its `task` (task/index.ts:412-447).
     // `sourceSession` (the bundled seance agent, advertised by default: task.disabledAgents is []) names the omp
@@ -880,7 +926,7 @@ export function ecomono(o: { repo: string; hooksDir?: string; timeoutMs?: number
           reason: `Blocked: sourceSession "${sourceSession.value}" is denied by "${sourceSession.glob}" in opencode/opencode.json (permission.read); omp reads a sourceSession path into a seance subagent.`,
         }
       }
-      const mentions = items.flatMap((item: any) => taskTexts(item).flatMap(fileMentions))
+      const mentions = items.flatMap((item: any) => taskTexts(item, oddSteps).flatMap(fileMentions))
       const mentioned = deny(ctx, mentions)
       if (mentioned) {
         return {
@@ -893,7 +939,7 @@ export function ecomono(o: { repo: string; hooksDir?: string; timeoutMs?: number
         items.flatMap((item: any) => {
           if (typeof item?.agent !== "string") return []
           // The fields as the child gets them: each one through omp's own double-encoding repair (repairedTask).
-          const prompt = [input.context, ...taskTexts(item)]
+          const prompt = [input.context, ...taskTexts(item, oddSteps)]
             .filter((s): s is string => typeof s === "string" && s !== "")
             .map(repairedTask)
             .join("\n")
