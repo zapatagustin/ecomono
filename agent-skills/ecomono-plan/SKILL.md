@@ -39,8 +39,7 @@ A task failing this test is not a task, it is a note to yourself.
 
 1. **Order by dependency**, not by importance. What unblocks the most goes first.
 2. **Cut speculative tasks.** A task for a requirement nobody stated does not
-   enter the plan. Say in one line what you dropped. A user's line limit is a ceiling,
-   not a target; never add an extra gate (a separate review or sign-off task) the user did not ask for. Each task's own verification stays.
+   enter the plan. Say in one line what you dropped.
 3. **Mark what runs isolated.** Reads, exploration, and test/build loops get
    delegated. Edits stay inline — they are cheap and the diff must be reviewable
    in the thread that owns the work.
@@ -52,6 +51,10 @@ A task failing this test is not a task, it is a note to yourself.
    implies that no task's verification exercises, most likely to bite first. Each
    one gets pinned by a test in the task that owns that code, or is dropped with
    a one-line reason.
+7. **Treat a size limit as a ceiling.** A limit the user set on the size of the
+   change (lines, files) is a ceiling, not a target. Never add an extra gate (a
+   separate review or sign-off task) the user did not ask for. Each task's own
+   verification stays.
 
 ## Output
 

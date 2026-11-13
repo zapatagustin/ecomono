@@ -29,7 +29,7 @@ advisory under `bypassPermissions` (the command runs). opencode has no `ask`, so
 there instead of prompting. omp confirms an `ask` in its TUI and, with nobody to answer (print
 or json mode, and every subagent, which Claude Code would prompt interactively), blocks it.
 
-ecomono: two gates read a receipt — `claude/hooks/review-receipt-gate.sh`, and one of `ecomono-sdd-archive`'s four,
+ecomono: two gates read a receipt — `claude/hooks/review-receipt-gate.sh`, and one of the four gates of `ecomono-sdd-archive`,
 which reads the memory copy because the archive agent has no `Bash`. Upstream validates at
 five delivery boundaries; this port validates at the two that deliver — `pre-push` and
 `pre-pr` — and declines `post-apply` (the receipt would have to predate the bytes it

@@ -21,8 +21,8 @@ brainstorm. Everything downstream of the agreed design gets isolated instead.
 ## Hard rules
 
 - No code until the design is agreed. Not a sketch, not "here's roughly".
-  Exception: a throwaway spike the user asked for. It re-enters through the gate
-  before any real code.
+  Exception: a throwaway spike the user asked for. It re-enters through the agreed
+  design (the rule above) before any real code.
 - ONE question per turn. Ask, then STOP and wait. Batched questions get batched
   non-answers.
 - No option menus unless there is a real fork with real tradeoffs. Pick the
@@ -34,15 +34,17 @@ brainstorm. Everything downstream of the agreed design gets isolated instead.
 
 1. **Restate the goal** in one line and let them correct it. Wrong restatement
    caught now costs nothing; the corrected line is what the plan inherits. Mark
-   whatever you filled in as your proposal, not their words. The request does not
-   fix platform or stack? State your pick in one line.
+   whatever you filled in as your assumption, not their words. The request does not
+   fix platform or stack? State your pick in one line, as an assumption for them to
+   correct, not as the proposal (step 4).
 2. **Find the real constraint.** What makes this hard — scale, an existing
    contract, a deadline, someone else's API? Read the code that already touches
    it before proposing anything.
 3. **Ask the one question** whose answer changes the design. Not the four
    questions whose answers are all "yes, sensible". Never re-ask what they already
    said, nor what the request or the code already answers. If the user never stated the why,
-   ask that first, open-ended, with no example answers.
+   ask that first, open-ended, with no example answers; it wins over any other
+   question and counts as the turn's one question.
 4. **Propose one approach** with its ceiling named. Alternatives only where the
    tradeoff is real.
 5. **Agree, then stop.** Hand off to `ecomono-plan` if the work is multi-step,

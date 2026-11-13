@@ -225,7 +225,7 @@ converge, which is information about the finding, not about the judge.
 
 ## Receipt
 
-Every terminal verdict writes the same receipt twice: a file a shell gate can read, and a
+Every terminal verdict writes the same receipt twice: a file a shell gate (`claude/hooks/review-receipt-gate.sh`) can read, and a
 memory observation a later session can search. Both are keyed by the subject hash, never by
 a change name — the receipt records that *these bytes* were reviewed, which is what a gate
 needs in order to check the claim instead of trusting it.
@@ -274,7 +274,7 @@ count, the judges or lenses run, the round count, the confirmed / suspect / cont
 counts, the triaged suspects and INFO items, fixes applied, accepted items, and the terminal
 verdict verbatim. `judgment_required` on the save → resolve each candidate with its own
 `suggested_relation` per [sdd-phase-common.md](../ecomono-sdd-shared/sdd-phase-common.md) §C.
-`ecomono-sdd-archive` is the second gate that reads a receipt: it searches this copy for `review/{hash}` and treats a missing one as unreviewed.
+`ecomono-sdd-archive` is the second gate that reads a receipt, after the shell gate `claude/hooks/review-receipt-gate.sh` above: it searches this copy for `review/{hash}` and treats a missing one as unreviewed.
 
 No memory store reachable → write the file anyway, say the memory copy is missing, and
 report the verdict as otherwise conversation-scoped. A verdict that lives only in this

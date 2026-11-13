@@ -293,7 +293,7 @@ the index, and inject matching `SKILL.md` **paths** — never generated summarie
 registry immediately rather than letting every later sub-agent rediscover the same
 paths.
 
-**Absence claims:** do not accept or reject a sub-agent's absence claim ("no match", "no
+**Absence claims** (applies to each returned result, in either interactive or automatic mode): do not accept or reject a sub-agent's absence claim ("no match", "no
 issues", "unchanged", "section missing") without one targeted check. Check that every line
 number it cites exists in the file before acting on it.
 
@@ -391,8 +391,8 @@ unrequested-output rule — weaker, and it over-attributes on stacked branches.
     `ecomono-r4-resilience`, `ecomono-r2-readability`, `ecomono-r3-reliability` in parallel.
     Evidence is the diff touching `**/auth/**`, `**/security/**` or `**/payments/**`, a
     credential or token path, an installer (self-updaters included), or a destructive
-    operation. A dev or test database that a seed or backup rebuilds is not a data-risk
-    signal.
+    operation. A dev or test database that a seed or backup rebuilds does not count as a
+    destructive operation.
   - Anything else → **tier 1**, one lens, named with its reason and chosen by what the
     diff's consequences touch: `ecomono-r1-risk` for hardcoded secrets, authz, auth
     cookies, injection sinks, dependencies or any privilege or trust boundary;

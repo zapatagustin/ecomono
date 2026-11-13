@@ -67,7 +67,8 @@ a clear start, a clear finish, its own verification, and a sane rollback.
 Give a high-risk unit — one carrying pre-pr tier-4 evidence: auth, security or payments
 code, a credential or token path, an installer, a destructive operation — its own slice,
 so it gets the tier-4 review, all four lenses, without dragging the rest into tier 4.
-A dev or test database that a seed or backup rebuilds is not a data-risk signal.
+A dev or test database that a seed or backup rebuilds does not count as a destructive
+operation (tier-4 evidence list in `sdd-orchestrator.md`, which owns this rule).
 
 Shrink by removing scope, never by reformatting. Collapsing whitespace or compacting code
 to duck under the line count games the gate — the reviewer still reads the same change.
