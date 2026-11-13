@@ -12,9 +12,10 @@ project artifacts. Skip only for purely mechanical commands.
 Stop at the first source that answers:
 
 1. The session cache, if you already read it this session.
-2. `mem_search(query: "skill-registry", project: "{project}")` →
-   `mem_get_observation(id)`.
-3. `.atl/skill-registry.md` at the project root.
+2. `.atl/skill-registry.md` at the project root. The hook refreshes it on every user prompt (rewriting only when its inputs changed).
+3. Only when the file is absent: `mem_search(query: "skill-registry", project: "{project}")` →
+   `mem_get_observation(id)`. Init saves that copy once, so it goes stale.
+   Never substitute a stale memory or session copy for the file.
 4. Nothing → launch without project SKILLS and say so, but never with an empty standards
    block: name the project's own rules instead and report `fallback-path`. A judge found
    this step and `ecomono-judgment`'s gates table prescribing opposite actions for one
@@ -71,9 +72,9 @@ had to invent its own bar.
 
 ## Compaction
 
-The registry lives in `ecomono-memory` and in `.atl/skill-registry.md`, so a
-delegator can recover its selection after a compaction by re-reading rather than
-re-deciding. Because sub-agents receive exact files, skill meaning never degrades
+The registry lives in `.atl/skill-registry.md` (refreshed every prompt, rewritten when its inputs changed) and, as a
+once-saved fallback, in `ecomono-memory`, so a delegator can recover its selection
+after a compaction by re-reading the file rather than re-deciding. Because sub-agents receive exact files, skill meaning never degrades
 into a generated paraphrase along the way.
 
 ## Users of this protocol

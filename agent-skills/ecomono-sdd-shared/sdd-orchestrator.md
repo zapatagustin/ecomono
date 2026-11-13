@@ -275,6 +275,8 @@ key artifact references, normalized. Already in the list → do not launch again
 Duplicate launches cause "file has been modified since last read" conflicts and pay
 twice for one answer.
 
+**Denied launch:** never relaunch the same prompt unchanged. Read the denial and fix the call.
+
 **Pre-flight, every call:** identify the phase key (or `default`), look up the alias,
 include `model`. No alias resolved → do not send the call.
 
@@ -290,6 +292,10 @@ the index, and inject matching `SKILL.md` **paths** — never generated summarie
 `paths-injected` means your cache was lost, probably to a compaction. Re-read the
 registry immediately rather than letting every later sub-agent rediscover the same
 paths.
+
+**Absence claims:** do not accept or reject a sub-agent's absence claim ("no match", "no
+issues", "unchanged", "section missing") without one targeted check. Check that every line
+number it cites exists in the file before acting on it.
 
 ### Strict TDD forwarding
 
@@ -385,7 +391,8 @@ unrequested-output rule — weaker, and it over-attributes on stacked branches.
     `ecomono-r4-resilience`, `ecomono-r2-readability`, `ecomono-r3-reliability` in parallel.
     Evidence is the diff touching `**/auth/**`, `**/security/**` or `**/payments/**`, a
     credential or token path, an installer (self-updaters included), or a destructive
-    operation.
+    operation. A dev or test database that a seed or backup rebuilds is not a data-risk
+    signal.
   - Anything else → **tier 1**, one lens, named with its reason and chosen by what the
     diff's consequences touch: `ecomono-r1-risk` for hardcoded secrets, authz, auth
     cookies, injection sinks, dependencies or any privilege or trust boundary;

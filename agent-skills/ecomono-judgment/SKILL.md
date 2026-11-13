@@ -85,28 +85,9 @@ budget and never a risk signal — a large mechanical rename does not become dan
 large, and a three-line change to a token path does not become safe by being small. The count
 changes what the round DISCLOSES, never who reviews it or how many lenses run.
 
-`ecomono: nothing enforces the coverage statement. It is a judgment the coordinator makes, and
-this repo has buried two checks that tried to answer a question about what a sentence means. What
-is mechanical here is the count, and a receipt carrying it is what makes a missing coverage
-statement visible to the next reader instead of indistinguishable from full coverage. Upgrade
-path: have each judge return the list of paths it actually read and compare that against the
-diff's own path list, which is a comparison of two lists rather than a claim about prose.`
+`ecomono:` nothing enforces the coverage statement, and the count reads "text lines" only: `--numstat` shows binary files as dashes, summed as zero. Ceilings and upgrade path: [references/receipt-gate.md](references/receipt-gate.md#coverage-ceilings).
 
-`ecomono: the count has one measured blind spot, stated rather than left to be discovered:
-`--numstat` reports binary files as a pair of dashes, which the sum treats as zero, so a candidate
-of nothing but binary files reports 0 changed lines. Verified. Lines are the wrong unit for those
-bytes and no threshold in this repo has a right one, so the number is honest about text and silent
-about the rest — read it as "text lines", never as "size of the candidate".`
-
-`ecomono: the frozen subject is the whole branch diff and may carry bytes unrelated to
-what the judges review, so a receipt over-claims coverage when the branch mixes concerns.
-Relatedness isn't computable from git state, so nothing here checks it — keeping the
-branch clean before freezing is the operator's job. The untracked check below is
-repo-wide for the same reason and will fire on unrelated debris; scoping it to the diff
-needs path comparison that prose cannot pin down without silently mis-firing. It also
-misses untracked content inside a submodule, which the superproject reports as a modified
-gitlink rather than `??` — invisible to the hash and to the check alike. Upgrade path for
-all of it: code that compares a declared in-scope path list against the diff.`
+`ecomono:` the frozen subject is the whole branch diff, so a mixed branch over-claims coverage; keep it clean before freezing. Ceilings and upgrade path: [references/receipt-gate.md](references/receipt-gate.md#freeze-ceilings).
 
 **Target is not a diff** — an architecture slice, a whole component, a design question —
 has no bytes to freeze. Say so explicitly: no hash, no receipt, `Baseline: none` in the
@@ -268,47 +249,17 @@ branch name and not a revision expression like `HEAD~2`. It is what lets the gat
 receipt after the base branch has absorbed part of the reviewed work: the merge-base advances,
 the diff narrows, the hash stops matching, and re-deriving from the recorded commit shows the
 bytes never moved. A branch name or a rev expression names a different commit tomorrow, so the
-gate refuses those spellings rather than resolving them.
-
-Getting it wrong is not fatal, and neither is omitting it. A value the gate will not accept fails
-its pattern exactly the way an absent line does, so the receipt still matches any delivery whose
-base has not moved. What a malformed or missing `base:` forfeits is the tolerance, nothing else —
-a judge reproduced both spellings and found them behaviourally identical, against an earlier
-version of this paragraph that called the malformed one ruinous.
+gate refuses those spellings rather than resolving them; a malformed or missing `base:` forfeits only that tolerance and is not fatal.
 
 The token is **bare**. `JUDGMENT: APPROVED` is the terminal state this skill reports in
 conversation; the receipt's first line is `APPROVED` with nothing before it. The gate
 compares for equality, so the prefixed spelling produces a receipt no delivery can ever
 match and no diagnostic saying why.
 
-It lives under the git directory and never in the work tree. The subject hash covers
-`git diff <merge-base>`, so a receipt written beside the reviewed code would alter the exact
-bytes it certifies and invalidate itself as it was written. `--git-common-dir`, not
-`--git-dir`, so a receipt stays visible from every worktree of the repo: the reviewed bytes
-are the same bytes whichever worktree you push from.
-
-`claude/hooks/review-receipt-gate.sh` reads this file on `git push` and `gh pr create`, and
-refuses the delivery when no receipt matches the bytes being pushed. It is armed per
-repository by an `ecomono/review-mode` marker beside the receipts directory, so writing the
-file here does nothing in a repo that never armed it — and everything in one that did. Get
-the path or the first line wrong and the gate finds nothing and refuses.
-
-On opencode the same script runs: `opencode/plugins/review-receipt-gate.ts` intercepts the
-`shell` tool and shells out to it rather than reimplementing it, so there is one hash formula
-and one detector on Claude Code, opencode and omp (whose extension runs the script too). The
-behavioural differences are in the `ask` of the two states where the gate cannot run — no
-base resolves, `git diff` failed. On Claude Code those ask in the prompting modes and are
-advisory under `bypassPermissions` (the command runs). opencode has no `ask`, so those refuse
-there instead of prompting. omp confirms an `ask` in its TUI and, with nobody to answer (print
-or json mode, and every subagent, which Claude Code would prompt interactively), blocks it.
-
-`ecomono: two gates read a receipt — that hook, and one of `ecomono-sdd-archive`'s four,
-which reads the memory copy because the archive agent has no `Bash`. Upstream validates at
-five delivery boundaries; this port validates at the two that deliver — `pre-push` and
-`pre-pr` — and declines `post-apply` (the receipt would have to predate the bytes it
-certifies), `pre-commit` (a commit delivers nowhere, and committing reviewed bytes does not
-move the hash) and `release` (does not exist here). See docs/DESIGN.md, "What the port took,
-and what it declined".`
+Wrong path or first line and the gate finds nothing and refuses. The file lives under
+`--git-common-dir` (not `--git-dir`, so every worktree sees it), never in the work tree: a receipt beside the reviewed code would alter
+the bytes it certifies. Why `base:` is tolerant, how the gate is armed, and the opencode and
+omp behaviour: [references/receipt-gate.md](references/receipt-gate.md).
 
 **The memory copy.** `mem_save` with:
 
@@ -323,7 +274,7 @@ count, the judges or lenses run, the round count, the confirmed / suspect / cont
 counts, the triaged suspects and INFO items, fixes applied, accepted items, and the terminal
 verdict verbatim. `judgment_required` on the save → resolve each candidate with its own
 `suggested_relation` per [sdd-phase-common.md](../ecomono-sdd-shared/sdd-phase-common.md) §C.
-`ecomono-sdd-archive` searches `review/{hash}` and treats a missing receipt as unreviewed.
+`ecomono-sdd-archive` is the second gate that reads a receipt: it searches this copy for `review/{hash}` and treats a missing one as unreviewed.
 
 No memory store reachable → write the file anyway, say the memory copy is missing, and
 report the verdict as otherwise conversation-scoped. A verdict that lives only in this

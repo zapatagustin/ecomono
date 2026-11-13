@@ -67,6 +67,7 @@ a clear start, a clear finish, its own verification, and a sane rollback.
 Give a high-risk unit — one carrying pre-pr tier-4 evidence: auth, security or payments
 code, a credential or token path, an installer, a destructive operation — its own slice,
 so it gets the tier-4 review, all four lenses, without dragging the rest into tier 4.
+A dev or test database that a seed or backup rebuilds is not a data-risk signal.
 
 Shrink by removing scope, never by reformatting. Collapsing whitespace or compacting code
 to duck under the line count games the gate — the reviewer still reads the same change.
@@ -83,6 +84,9 @@ Genuinely unsplittable — generated code, a migration, a vendor bump — say so
 and ask for an explicit size exception. Do not open a 2,000-line PR and hope.
 
 ## Project gates: detect, do not assume
+
+Open the PR against the base repo, not the fork's `origin`, and read `CONTRIBUTING.md`
+first.
 
 Some repos enforce issue linkage, required labels, or CI checks. Read `.github/` for a PR
 template, and check the real label list, before requiring any of it. Required CI checks

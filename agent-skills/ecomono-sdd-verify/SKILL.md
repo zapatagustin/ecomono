@@ -114,6 +114,11 @@ shared helper, parser, or utility that unrequested behavior depends on, report t
 finding. With no list received, record "no Risk list received" and still perform that
 check; `Risk: absent` is treated the same way.
 
+Verify by change kind. For prompt or contract text, compare every removed sentence against
+the baseline and report each lost qualifier. For a reported failure, run the user's exact
+failing command against both the baseline and the change. When the verifier itself caused a
+setup error, allow one corrected retry.
+
 ## Graceful degradation
 
 | Artifacts present | Verdict may reach | Never claim |
