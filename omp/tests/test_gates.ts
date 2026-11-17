@@ -70,7 +70,7 @@ while [ "$(ls "${d}" | wc -l)" -lt ${n} ] && [ $i -lt 100 ]; do sleep 0.05; i=$(
 [ "$(ls "${d}" | wc -l)" -ge ${n} ] || exit 1`
 
 {
-  // The gate timeout stays inside omp's 30 s per-handler budget (omp: extensibility/extensions/runner.ts:136
+  // The gate timeout stays inside omp's 30 s per-handler budget (omp: extensibility/extensions/runner.ts:149
   // EXTENSION_HANDLER_TIMEOUT_MS), past which omp fails the call CLOSED. A mirror of that constant: re-check it on an
   // omp upgrade (docs/DESIGN.md, Version coupling).
   assert.ok(GATE_TIMEOUT_MS < 30_000, `the gate timeout ${GATE_TIMEOUT_MS} ms must stay under omp's 30000 ms handler budget`)

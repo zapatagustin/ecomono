@@ -15,7 +15,16 @@ const statsFile = join(process.env.XDG_CACHE_HOME!, "ecomono-compress", "stats.j
 const statsLines = () => (existsSync(statsFile) ? readFileSync(statsFile, "utf8").split("\n").filter(Boolean) : [])
 
 const bigBody = Array.from({ length: 2000 }, (_, i) => `line ${i + 1}`).join("\n")
-const NOTICE = ["", "Wall time: 2.1 seconds", "[raw output: artifact://3]", "", "Command exited with code 1"].join("\n")
+const NOTICE = [
+  "",
+  "Wall time: 2.1 seconds",
+  "[raw output: artifact://3]",
+  // The two fork-shell notices (omp: tools/bash.ts FORK_STATE_LOST_NOTICE, FORK_JOBS_NOTICE).
+  "Ran in a copy of the busy session shell; changes here won't persist.",
+  "Background jobs started here run in a copy of the busy session shell; later calls' jobs, wait and %N won't see them.",
+  "",
+  "Command exited with code 1",
+].join("\n")
 
 const setup = (repo = REPO) => {
   const { pi, fire, calls } = makePi()

@@ -184,9 +184,10 @@ data above instead of restating it:
   each by its own name and by its symlink target. `edit` is also checked on the targets
   in its text input (hashline `[PATH#TAG]` and `MV` lines, apply_patch `*** Add/Update/Delete
   File:` and `*** Move to:` headers, the sloppy mode's `*** Edit File:`, patch-mode `rename`),
-  and `task` on the `@path` mentions in each item's `task` text and on its `taskFile` (omp's
-  `task.file`, off by default), both of which omp reads into the subagent's first prompt, and
-  on a `sourceSession` given as a path (the session file the bundled `seance` agent forks).
+  and `task` on the `@path` mentions in each item's `task` text, which omp reads into the
+  subagent's first prompt, and on a `sourceSession` given as a path (the session file the
+  bundled `seance` agent forked; omp 18.20.3 removed both, so that check is inert on the
+  tested omp).
   There is no valve. A `read` that omp resolved to a denied file
   (suffix matching, delimited lists, the `resolvedPath` it reports), or a directory `read`
   whose listing (two levels, hidden files included) names one, has its result withheld and
@@ -197,8 +198,8 @@ data above instead of restating it:
   counts and flags. As in OpenCode the last matching key wins. The deny is a read guard: no
   result channel (content, `details`, notices, the details omp persists in the session file)
   carries a denied file's bytes or its path text to the model. The withhold is itself a one-bit
-  answer, writes to a denied file the path gate cannot see go through, and so do reads inside a
-  seance subagent; all three are ceilings, below. A file named for one of the
+  answer, and writes to a denied file the path gate cannot see go through; both are ceilings,
+  below. A file named for one of the
   `.env` templates the bash gate lets through (`.env.example`, `.sample`, `.template`, `.dist`,
   `.defaults`, `.schema`, read from the gate's own list) is judged by the name left without the
   template, as the bash gate judges a command after scrubbing it: `prod.env.example` passes,
@@ -269,9 +270,6 @@ Accepted ceilings. Where omp has a native switch it is named:
   the spawn event carries no prompt.
 - `pr_push` naming a branch other than the current one is judged on HEAD, as
   `git push origin other` is in bash.
-- A seance subagent (the bundled `seance` agent, on by default) loads no extensions, so its
-  `read`, `grep` and `glob` skip the path deny, and its answer comes back to the parent as the
-  task result. Set `task.disabledAgents: ["seance"]`.
 - Backgrounded bash (async or auto-background) produces no `tool_result`, so it is not
   compressed.
 - An oversized read or search result the post-check withheld was already spilled to
@@ -285,10 +283,7 @@ Accepted ceilings. Where omp has a native switch it is named:
   resolves both natively.
 - `@path` mentions are checked in a `task` item's text only, as typed and as omp's
   double-encoding repair decodes it. Other text omp sends as a prompt, such as queued hidden
-  next-turn messages, has its mentions read with no tool call. So does a `taskFile`'s
-  contents, which omp reads at dispatch, after the gate: its mentions, and for a judge its
-  headings, are not checked. Keep `task.file` off (omp's default), or rely on
-  `tools.restrictedFolders`, which covers task files.
+  next-turn messages, has its mentions read with no tool call.
 - The 20 s gate timeout assumes omp's default `extensionHandlers.toolCallTimeoutMs` of
   30 s. Lowered below about 20 s, a slow gate fails the bash call closed.
 
@@ -498,7 +493,7 @@ Notes:
   prompt template as its expanded body. The session id a model passes to the memory tools
   is not joined to the omp session id, as in OpenCode.
 
-Upgrade protocol. The tested version is **omp 18.16.0**, set once as `OMP_TESTED` in
+Upgrade protocol. The tested version is **omp 18.22.0**, set once as `OMP_TESTED` in
 `omp/extensions/ecomono/index.ts`; the smoke reads it and exits non-zero on any other omp
 unless `ECOMONO_OMP_UNTESTED=1` is set. The net for an upgrade made outside this protocol:
 on any other omp, the first prompt logs a warning, once per process and shown where there

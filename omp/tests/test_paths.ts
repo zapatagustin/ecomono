@@ -194,7 +194,7 @@ const sample = (glob: string) => glob.replace(/\*\*\//g, "/x/").replace(/\*\*/g,
     ["read", { path: ".env:raw" }],
     ["read", { path: ".env:1-5:raw" }], // compound selector
     ["read", { path: ".env:raw:1-5" }], // compound selector, raw first
-    // pi-tui splitPathAndSel, both grammars: the classic `a:1-5,10-12,-3` list, and from omp 18.19 the colon-dash list
+    // pi-tui splitPathAndSel, both grammars: the classic `a:1-5,10-12,-3` list, and from omp 18.18.9 the colon-dash list
     // `a:20:40,85:100` (a colon written as the range dash). Our cut is the first `:` of the last segment, so every
     // spelling, readable by either omp or not, still ends at the denied file.
     ["read", { path: ".env:1:5" }],
@@ -570,37 +570,14 @@ const sample = (glob: string) => glob.replace(/\*\*\//g, "/x/").replace(/\*\*/g,
   assert.equal(await fire("tool_call", task({ tasks: [{ steps: cycle("see @src/a.ts") }] }), ctx), undefined, "a cyclic steps without a mention is allowed")
 }
 
-// ---- task: taskFile -----------------------------------------------------------------------------------------
+// ---- task: sourceSession ------------------------------------------------------------------------------------
 
 {
-  // omp 18.14.0's task.file (off by default) lets an item, or the flat call, name an absolute path or local:// URL
-  // whose contents omp reads into the child's first prompt (task/index.ts resolveTaskFile). The path is denied like
-  // a path tool's; the reason names the path the model typed, never one it did not.
   const { fire, calls, ctx } = setup()
   const task = (input: unknown) => call("task", input)
-  for (const input of [
-    { tasks: [{ taskFile: `${ctx.cwd}/.env` }] },
-    { tasks: [{ agent: "a", task: "fine" }, { agent: "b", taskFile: `${home}/.ssh/id_ed25519` }] },
-    { tasks: [{ taskFile: `${ctx.cwd}/secrets/brief.md` }] }, // inside a denied directory
-    { agent: "task", taskFile: `${home}/.omp/agent/agent.db` }, // flat
-    { taskFile: `${ctx.cwd}/.env`, tasks: [{ task: "x" }] }, // top-level next to tasks[]: checked too
-  ]) {
-    const r = await fire("tool_call", task(input), ctx)
-    assert.equal(r?.block, true, JSON.stringify(input))
-    assert.match(r.reason, /^Blocked: taskFile "/, JSON.stringify(input))
-    assert.match(r.reason, /opencode\/opencode\.json \(permission\.read\)/, JSON.stringify(input))
-  }
-  // No agent, so no judge script runs: the verdict is the taskFile check alone. local:// is an internal URL.
-  for (const input of [
-    { tasks: [{ taskFile: `${ctx.cwd}/src/brief.md` }] },
-    { tasks: [{ taskFile: "local://brief.md" }] },
-    { tasks: [{ taskFile: `${ctx.cwd}/.env.example` }] }, // a template the bash gate lets through
-    { tasks: [{ taskFile: 7 }] }, // not a string: omp rejects it
-  ]) {
-    assert.equal(await fire("tool_call", task(input), ctx), undefined, JSON.stringify(input))
-  }
   // A seance item's sourceSession is a path when it holds `/` or `\` or ends in `.jsonl` (omp: task/seance.ts
-  // resolveSeanceSource), resolved against cwd and read; any other value is a session id, never a path.
+  // resolveSeanceSource), resolved against cwd and read; any other value is a session id, never a path. omp 18.20.3
+  // removed the seance agent and sourceSession, so on the tested omp the check is inert.
   for (const input of [
     { tasks: [{ agent: "seance", task: "x", sourceSession: "./.env" }] },
     { agent: "seance", task: "x", sourceSession: ` ${home}/.ssh/run.jsonl ` }, // flat, padded: omp trims it
@@ -789,6 +766,11 @@ const sample = (glob: string) => glob.replace(/\*\*\//g, "/x/").replace(/\*\*/g,
     ["glob", { files: ["docs/prod.env"] }, "docs/prod.env"],
     ["find", { hits: [{ rel: "src/a.ts" }, { rel: "secrets/a.txt" }] }, "secrets/a.txt"],
     ["find", { hits: [{ rel: ".env" }] }, ".env"],
+    // grep names the binary files that also match (binaryMatches); find, when every judge request failed, lists
+    // keyword lines of the files it read (lexicalFallback). Both reach the text too.
+    ["grep", { files: ["src/a.ts"], fileMatches: [{ path: "src/a.ts", count: 1 }], binaryMatches: ["secrets/blob.bin"] }, "secrets/blob.bin"],
+    ["grep", { files: [], binaryMatches: [`${home}/.omp/agent/agent.db`] }, `${home}/.omp/agent/agent.db`],
+    ["find", { hits: [], lexicalFallback: [{ rel: "src/a.ts", line: 1, snippet: "x" }, { rel: ".env", line: 2, snippet: "LINE CONTENT" }] }, ".env"],
     // ast_edit: its result is the staged diff of every file it would touch (a dry run, applied: false).
     ["ast_edit", edited("src/a.ts", "config/.env"), "config/.env"],
     ["ast_edit", { files: [], fileReplacements: [{ path: "secrets/a.ts", count: 2 }], applied: false }, "secrets/a.ts"],
@@ -846,6 +828,8 @@ const sample = (glob: string) => glob.replace(/\*\*\//g, "/x/").replace(/\*\*/g,
     ["ast_grep", files("src/a.ts")],
     ["glob", { files: ["src/", "src/a.ts"] }],
     ["find", { hits: [{ rel: "src/a.ts" }] }],
+    ["grep", { ...files("src/a.ts"), binaryMatches: ["src/blob.bin"] }],
+    ["find", { hits: [], lexicalFallback: [{ rel: "src/a.ts", line: 1, snippet: "x" }] }],
     ["grep", files("src/.envrc.ts", "environment.ts", `${home}/.omp/agent/config.yml`)],
     ["grep", undefined],
     ["grep", null],
