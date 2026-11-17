@@ -32,6 +32,17 @@ The prefix matches the conventional-commit type, so the branch and the history a
 3. Run what the project actually checks — its linter, its tests, `shellcheck` on modified
    shell. Detect from the project; never assume a stack.
 4. **Measure the diff**: `additions + deletions` against the merge base.
+5. **Show the draft first.** The last step before opening, after the size and project-gate
+   checks below. One stop per branch, draft PRs included, even when the user asked for the
+   PR outright. Print the PR title and body, plus a brief when it has entries: "Needs your
+   decision" (parts left undone: options, recommendation, cost to revert) and "Taken
+   provisionally" (decisions taken on your recommendation, one line each). An approval, in
+   any wording, opens the PR as shown and confirms the provisional decisions only; red
+   parts stay undone until the user answers each one. A size-exception request is an entry
+   under "Needs your decision", not a separate question. A change request, a
+   reversal or a mixed reply → revise and show it again; that loop is still the one stop.
+   A refusal → do not open, leave the branch as it is. Nobody to answer → do not open; end
+   with the draft and the brief.
 
 ## PR body
 
@@ -50,6 +61,14 @@ Four sections, in this order. A reviewer reads top-down and stops once they have
 ## Notes
 {Deliberate tradeoffs, known ceilings, what was left out and why. Omit if none.}
 ```
+
+Budget: about 12 lines, headings included, unless the project's template sets its own
+shape; a size-exception note does not count. Write it the way the author would by hand:
+plain sentences, nothing the diff already says, no filler. A body that reads as generated
+does not get read, and an unread body explains nothing.
+
+The decision brief is for the author and stays in the conversation. Only a tradeoff the
+reviewer needs goes in Notes.
 
 **How to verify** is the section reviewers use most and the one most often missing. Without
 it you are asking them to reverse-engineer your intent from the diff.
@@ -82,7 +101,8 @@ In a chain, a child PR whose diff shows earlier slices has the wrong base. Retar
 rebase until the diff is only this slice, or the split bought nothing.
 
 Genuinely unsplittable — generated code, a migration, a vendor bump — say so in the body
-and ask for an explicit size exception. Do not open a 2,000-line PR and hope.
+and list the size exception under "Needs your decision" in the step 5 stop, not as a
+separate question. Do not open a 2,000-line PR and hope.
 
 ## Project gates: detect, do not assume
 
