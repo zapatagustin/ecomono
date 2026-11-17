@@ -29,9 +29,13 @@ slice.
   them say nothing about the code under review. Either way every sub-agent reports which
   it received, and a report of none is about the delegator, not about the sub-agent.
 - Wait for both. Never synthesize from a partial verdict.
-- **Ask before fixing** in round 1. The loop is bounded by steps 7-8: one approved batch
-  plus one retry for the same blocker; everything else goes to the "Needs your decision"
-  list.
+- **Ask before fixing** in round 1, bounded by the round cap below; everything else goes
+  to the "Needs your decision" list.
+- **Three rounds per judgment.** `rounds:` never passes three: round one, then the
+  re-judges that follow, whether step 7's approved batch and its one retry (never later
+  than round three) or step 8's shared `fix` batch. Step 8 tests the cap once, when the
+  list is returned. A round discarded for drift is not counted (step 4): the cap bounds
+  judged rounds, not launches.
 - After any fix agent runs, re-launch both judges **before** commit, push, done, or a
   session summary. A fix is a change, and an unreviewed change is what this skill exists
   to prevent.
@@ -198,11 +202,14 @@ converge, which is information about the finding, not about the judge.
    ends unanswered still leaves a record — no answer, and that receipt stands. Per item:
    - **fix** approves exactly one correction batch for that item, whatever its class — the
      Gates row on suspects covers unprompted fixes only — and is not offered after a
-     decline. Separate fix agent, re-freeze per step 7, re-judge scope limited to the item,
+     decline. It is not offered on any item when the list is returned with three rounds
+     already run (the cap). Every item answered `fix` on one list shares one batch and one
+     re-judge, scoped to those items. Separate fix agent, re-freeze per step 7,
      NO retry: still failing → back on the list, `stop` its only answer.
    - **accept**, for suspect and contradiction items only, records the item in the memory
      copy's body with its original severity and judge(s), a contradiction with both judges'
-     positions. A blocker's answers are fix or stop; an exhausted one's, stop.
+     positions. A blocker's answers are fix or stop; stop alone when it is exhausted or
+     `fix` is not offered.
    - **stop** ends the review. The existing ESCALATED is left in place; `rounds:` is
      refreshed only if the hash still verifies, and after a guard refusal nothing is
      rewritten.
