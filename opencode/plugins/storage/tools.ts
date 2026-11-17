@@ -279,8 +279,11 @@ const rawRegistry: MemTool[] = [
     args: { session_id: z.string(), content: z.string() },
     // The prompts table has an FK to sessions; MCP callers never start one. One
     // transaction: savePrompt rejects a blank or fully private prompt, and that must
-    // not leave the session row ensureSession just made.
-    handler: (a) => { getDb().transaction(() => { Sess.ensureSession(a.session_id, proj()); Prompts.savePrompt(a.session_id, a.content) })(); return withPrivateSignal({ ok: true }, a.content) },
+    // not leave the session row ensureSession just made. IMMEDIATE: ensureSession
+    // opens with a SELECT, and a deferred transaction that has read cannot wait for
+    // the write lock — SQLite skips the busy handler on that upgrade and the save
+    // fails with "database is locked" while another process is writing.
+    handler: (a) => { getDb().transaction(() => { Sess.ensureSession(a.session_id, proj()); Prompts.savePrompt(a.session_id, a.content) }).immediate(); return withPrivateSignal({ ok: true }, a.content) },
   },
   {
     name: "mem_doctor",

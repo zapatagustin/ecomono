@@ -20381,7 +20381,7 @@ calls_vs_saves: ${callsVsSaves()}`, project });
       getDb().transaction(() => {
         ensureSession(a.session_id, proj());
         savePrompt(a.session_id, a.content);
-      })();
+      }).immediate();
       return withPrivateSignal({ ok: true }, a.content);
     }
   },

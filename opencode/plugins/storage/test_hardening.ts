@@ -354,6 +354,27 @@ await section("5 mem_save_prompt session row", () => {
   }
 })
 
+// --- 5b. mem_save_prompt waits out a concurrent writer ---
+// A deferred transaction that opens with ensureSession's SELECT already holds a
+// read lock when its first INSERT asks for the write lock, and SQLite does not
+// call the busy handler on that upgrade: the save dies with "database is locked"
+// at once, whatever busy_timeout says. Hold the write lock from another process —
+// a second MCP server in the middle of a save — and the prompt must still land
+// once that writer commits.
+await section("5b mem_save_prompt under a concurrent writer", async () => {
+  const holder = Bun.spawn([
+    process.execPath, "-e",
+    `const {Database}=require("bun:sqlite");const d=new Database(${JSON.stringify(db.filename)});` +
+    `d.run("PRAGMA busy_timeout = 5000");d.run("BEGIN IMMEDIATE");console.error("locked");await Bun.sleep(400);d.run("COMMIT");d.close()`,
+  ], { stderr: "pipe" })
+  try {
+    const { value } = await holder.stderr.getReader().read()
+    assert(new TextDecoder().decode(value).includes("locked"), "holder took the write lock")
+    assert(call("mem_save_prompt", { session_id: "s5b-contended", content: "hi" }).ok === true, "prompt saved once the writer released")
+  } finally { await holder.exited }
+  assert((db.query("SELECT COUNT(*) c FROM prompts WHERE session_id = ?").get("s5b-contended") as any).c === 1, "contended prompt row landed")
+})
+
 // --- 7. mem_merge_projects guards ---
 await section("7 merge_projects guards", () => {
   const from = "s7-from"
