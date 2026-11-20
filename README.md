@@ -454,7 +454,7 @@ skill registry, counts the open todos in the status line (TUI only: it scans `do
 the working directory and `ECOMONO_ORG_DIR`, newest report and most recently changed file
 first), draws a startup banner in place of omp's welcome (the wallpaper's engraving, as an inline image when the
 terminal draws one (kitty, iTerm2, sixel; the PNG nixos-config builds, handed over in `ECOMONO_OMP_BANNER`), else a
-block-glyph cut; gone at the first prompt), serves a side panel (`/panel`, `alt+t` for todos, `alt+w` for git: the todo tab marks
+block-glyph cut; gone at the first prompt), serves a side panel (`/panel`, `alt+e` for todos, `alt+w` for git: the todo tab marks
 one done or opens it in `$EDITOR`, the files tab stages and unstages, the log tab draws the
 commit graph and switches branches; the editor opens in a Zellij pane, or a `foot` window
 outside Zellij), and captures your prompts

@@ -5,6 +5,7 @@
 
 const ORG = /^(\*+) (TODO|BLOCKED) (.*)$/
 const MD = /^(\s*[-*] )\[ \] (.*)$/
+const CONTROL = /[\x00-\x1f\x7f-\x9f]/g
 export const PATTERN = "^\\*+ (TODO|BLOCKED) |^[[:space:]]*[-*] \\[ \\] "
 
 export type Todo = { file: string; line: number; text: string; kind: "org" | "md"; src: string }
@@ -13,7 +14,9 @@ export type Todo = { file: string; line: number; text: string; kind: "org" | "md
  *  a CRLF file is not part of the line: `.` does not match it, so a `(.*)$` pattern misses every line of such a
  *  file (parse()'s location pattern takes it off with `\r?`). */
 function classify(raw: string): Pick<Todo, "kind" | "text"> | null {
-  const line = raw.endsWith("\r") ? raw.slice(0, -1) : raw
+  // A TAB becomes one space; the other C0, DEL and C1 bytes (an escape sequence in a todo line) are dropped, so the text that is drawn is the text the
+  // flip compares; the "\r" of a CRLF line goes with them.
+  const line = raw.replace(/\t/g, " ").replace(CONTROL, "")
   const org = ORG.exec(line)
   if (org) return { kind: "org", text: (org[2] === "BLOCKED" ? `BLOCKED: ${org[3]}` : org[3]).trim() }
   const md = MD.exec(line)
@@ -93,5 +96,7 @@ export function flipLine(cur: string, t: Pick<Todo, "kind" | "text">): string | 
   if (!now || now.kind !== t.kind || now.text !== t.text) return null
   const cr = cur.endsWith("\r") ? "\r" : ""
   const line = cr ? cur.slice(0, -1) : cur
-  return (t.kind === "org" ? line.replace(ORG, "$1 DONE $3") : line.replace(MD, "$1[x] $2")) + cr
+  const next = t.kind === "org" ? line.replace(ORG, "$1 DONE $3") : line.replace(MD, "$1[x] $2")
+  // A control byte inside the marker keeps the rewrite from matching: refuse instead of writing the line back as it was.
+  return next === line ? null : next + cr
 }

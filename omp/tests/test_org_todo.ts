@@ -9,6 +9,8 @@ import { homedir, tmpdir } from "node:os"
 import { join } from "node:path"
 import { PATTERN, flipLine, parse, rank } from "../../opencode/tui-plugins/org-todo/core.ts"
 import { REPO, ecomono } from "../extensions/ecomono/index.ts"
+import * as core from "../../opencode/tui-plugins/org-todo/core.ts"
+import { startOrgTodo, todoTab } from "../extensions/ecomono/org-todo.ts"
 
 // A main session_start checks $HOME/.claude/skills/ecomono-sdd-shared (the extension reads process.env.HOME per
 // call), so the file runs under a temp HOME that has it: the real home is never consulted and the machine cannot
@@ -382,6 +384,87 @@ for (const [label, over] of [
   assert.ok(ctx.recorded.notify.some(([text]: [string]) => text.includes("ecomono-sdd-shared")), "the skills check still ran")
   assert.deepEqual(calls.failures, [])
   assert.equal((await fire("tool_call", { toolName: "read", toolCallId: "c", input: { path: ".env" } }, ctx))?.block, true)
+}
+
+// ---- control bytes never reach the text a todo is drawn and compared with ------------------------------------------
+
+{
+  const [todo] = parse("/p/docs/a.md:1:- [ ] ab\x1b[31mred\x07\x9b", ["/p"])
+  assert.equal(todo!.text, "ab[31mred", "C0 and C1 control bytes are stripped from the text")
+  assert.equal(flipLine("- [ ] a\x1bb", { kind: "md", text: "ab" }), "- [x] a\x1bb", "the flip compares what was drawn")
+  assert.equal(parse("/p/docs/a.md:1:- [ ] a\tb", ["/p"])[0]!.text, "a b", "a tab becomes one space, it does not vanish")
+  assert.equal(flipLine("*\x01 TODO x", { kind: "org", text: "x" }), null, "a line the flip cannot rewrite is refused, not written back unchanged")
+}
+
+// ---- a scan slower than the poll interval still lands -------------------------------------------------------------
+
+{
+  const cwd = dir("project")
+  const pending: Array<(r: any) => void> = []
+  const { pi } = makePi({ exec: () => new Promise((resolve) => pending.push(resolve)) })
+  const ctx = makeCtx({ cwd })
+  const handle = startOrgTodo(pi, ctx, core) // scan 1
+  const second = handle.refresh() // scan 2
+  handle.refresh() // scan 3: a poll tick that started after scan 2
+  pending[1]!(grepOut(`${cwd}/docs/a.md:1:- [ ] one\n${cwd}/docs/a.md:2:- [ ] two`))
+  await within(second)
+  assert.equal(handle.todos().length, 2, "scan 2 is applied although scan 3 started after it")
+  pending[0]!(grepOut(`${cwd}/docs/a.md:1:- [ ] one`))
+  await tick()
+  assert.equal(handle.todos().length, 2, "scan 1 is older than the applied scan 2")
+  pending[2]!(grepOut(`${cwd}/docs/a.md:1:- [ ] one\n${cwd}/docs/a.md:2:- [ ] two\n${cwd}/docs/a.md:3:- [ ] three`))
+  await tick()
+  assert.equal(status(ctx), "todo 3")
+}
+
+// ---- a killed search is shown as timed out, not as the previous rows -----------------------------------------------
+
+{
+  const cwd = dir("project")
+  let result: any = grepOut(`${cwd}/docs/a.md:1:- [ ] one`)
+  const { pi } = makePi({ exec: () => result })
+  const ctx = makeCtx({ cwd })
+  const handle = startOrgTodo(pi, ctx, core)
+  await tick()
+  const tab = todoTab(core, handle, {} as any)
+  assert.deepEqual(tab.rows("").map((r) => r.text), ["a.md", "○ one"])
+  result = { stdout: "", stderr: "", code: -1, killed: true }
+  await tab.load!()
+  const rows = tab.rows("")
+  assert.ok(rows.every((r) => r.kind === "head") && rows.some((r) => r.text.includes("timeout")), JSON.stringify(rows))
+  result = grepOut(`${cwd}/docs/a.md:1:- [ ] one`)
+  await tab.load!()
+  assert.deepEqual(tab.rows("").map((r) => r.text), ["a.md", "○ one"], "the next good scan shows rows again")
+}
+
+// ---- a slow earlier scan cannot overwrite a newer one --------------------------------------------------------------
+
+{
+  const cwd = dir("project")
+  const pending: Array<(r: any) => void> = []
+  const { pi } = makePi({ exec: () => new Promise((resolve) => pending.push(resolve)) })
+  const ctx = makeCtx({ cwd })
+  const handle = startOrgTodo(pi, ctx, core) // scan 1
+  const second = handle.refresh() // scan 2
+  pending[1]!(grepOut(`${cwd}/docs/a.md:1:- [ ] one\n${cwd}/docs/a.md:2:- [ ] two`))
+  await second
+  pending[0]!(grepOut(`${cwd}/docs/a.md:1:- [ ] one`))
+  await tick()
+  assert.equal(handle.todos().length, 2, "scan 1 finished last but is not the latest")
+  assert.equal(status(ctx), "todo 2")
+}
+
+// ---- /panel with an unknown tab name says the valid names and opens nothing ----------------------------------------
+
+{
+  const { fire, calls, ctx } = setup({ mode: "tui", hasUI: true }, { exec: (command) => (command === "grep" ? grepOut("") : nodeOk) })
+  await start(ctx, fire)
+  await tick()
+  const panel = calls.commands.find(([name]) => name === "panel")![1]
+  await Promise.race([panel.handler("bogus", ctx), tick().then(() => tick())])
+  assert.equal(ctx.recorded.custom.length, 0, "nothing opened")
+  const said = ctx.recorded.notify.map(([t]: [string]) => t).find((t: string) => t.includes("bogus"))
+  assert.ok(said && ["todo", "files", "log"].every((n) => said.includes(n)), String(said))
 }
 
 if (hostHome === undefined) delete process.env.HOME

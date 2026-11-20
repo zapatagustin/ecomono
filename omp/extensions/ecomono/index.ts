@@ -20,7 +20,7 @@
  * - Blocks the ecomono-memory tools an agent's own `tools:` line does not list.
  * - From the main session, refreshes the skill registry and saves each user prompt into the shared
  *   ecomono-memory DB; in the main TUI session, counts the open TODOs in the status line and serves the side
- *   panel (/panel, alt+t, alt+w: todos, the git working tree and the commit graph; org-todo.ts, panel/).
+ *   panel (/panel, alt+e, alt+w: todos, the git working tree and the commit graph; org-todo.ts, panel/).
  *
  * omp loads the DEFAULT export only (the named exports are test seams).
  *
@@ -1194,7 +1194,7 @@ export function ecomono(o: { repo: string; hooksDir?: string; timeoutMs?: number
     // The todo scan, the panel and their parser load here, on first use, and not at the top of the file: a static
     // import that fails (a missing or broken panel file) would fail the whole extension, and every gate with it.
     // Its own safe(), so a failed load or start costs the panel only, and the skills check after it still runs.
-    // The panel (/panel, alt+t, alt+w) reuses the tabs built for the session's scan: no scan, no panel.
+    // The panel (/panel, alt+e, alt+w) reuses the tabs built for the session's scan: no scan, no panel.
     let panel: { open: (ctx: any, tab: string) => Promise<void> } | undefined
     const startPanel = safe(
       async (ctx: any) => {
@@ -1219,7 +1219,13 @@ export function ecomono(o: { repo: string; hooksDir?: string; timeoutMs?: number
           notify: (text: string) => notify(ctx, text),
         }
         const tabs = [todo.todoTab(core, handle, host), files.filesTab(host), log.logTab(host)]
-        panel = { open: (c, tab) => panelMod.openPanel(c, tabs, Math.max(0, tabs.findIndex((t: any) => t.name === tab))) }
+        panel = {
+          open: async (c, tab) => {
+            const at = tabs.findIndex((t: any) => t.name === tab)
+            if (at < 0) return notify(c, `ecomono: unknown tab "${tab}"; use ${tabs.map((t: any) => t.name).join(", ")}`)
+            await panelMod.openPanel(c, tabs, at)
+          },
+        }
       },
       (why) => pi.logger.warn(`ecomono: side panel not started: ${why}`),
     )
@@ -1247,9 +1253,10 @@ export function ecomono(o: { repo: string; hooksDir?: string; timeoutMs?: number
       handler: async (args: string, ctx: any) => void (await openPanel(ctx, args.trim() || "todo")),
     })
     pi.registerCommand("org-todo", { description: "Open the todo tab of the side panel", handler: async (_args: string, ctx: any) => void (await openPanel(ctx, "todo")) })
-    // omp/tests/test_panel_tabs.ts pins both keys; neither is bound by an omp 18.16.0 app keybinding (alt+g is app.local.open, which
-    // took the key before this extension could) and neither is reserved.
-    pi.registerShortcut("alt+t", { description: `${panelHelp}: todos`, handler: async (ctx: any) => void (await openPanel(ctx, "todo")) })
+    // omp/tests/test_panel_tabs.ts pins both keys; neither is bound by an omp 18.22.0 app keybinding (alt+g is app.local.open, which
+    // took the key before this extension could; alt+o is app.links.hint) and neither is reserved. The todo key is not alt+t:
+    // the terminal multiplexers bind it to pane navigation, so it never reaches omp.
+    pi.registerShortcut("alt+e", { description: `${panelHelp}: todos`, handler: async (ctx: any) => void (await openPanel(ctx, "todo")) })
     pi.registerShortcut("alt+w", { description: `${panelHelp}: git`, handler: async (ctx: any) => void (await openPanel(ctx, "files")) })
     pi.on(
       "session_start",

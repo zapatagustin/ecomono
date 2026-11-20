@@ -7,6 +7,7 @@
  * until the next load. Every git command runs at the repository root, where git's paths are relative to.
  */
 
+import { existsSync } from "node:fs"
 import { join } from "node:path"
 import { type GraphLine, branchTargets, parseGraph, repoRoot } from "./git.ts"
 import type { Action, Host, Row, Tab } from "./model.ts"
@@ -65,13 +66,21 @@ export function logTab(host: Host): Tab {
         // The commit's first changed file, at its first hunk: `git show` would need a diff buffer (panel/files.ts
         // says why there is none).
         const r = await git("show", "--no-ext-diff", "--format=", "--name-only", "-z", sha)
-        const file = r.stdout.split("\0").find((l) => l.trim() !== "")
-        if (!file) return { kind: "notice", text: `git: ${sha} changes no file` }
+        const names = r.stdout.split("\0").filter((l) => l.trim() !== "")
+        if (names.length === 0) return { kind: "notice", text: `git: ${sha} changes no file` }
+        // The first file the commit changed may be a deletion: open the first one the working tree still has.
+        const file = names.find((n) => existsSync(join(root, n)))
+        if (!file) return { kind: "notice", text: `git: ${sha} changes no file that exists now` }
         await host.openEditor(join(root, file), 1)
         return { kind: "close" }
       }
       if (key === "enter") {
-        const r = local[0] ? await git("switch", local[0]) : remote[0] ? await git("switch", "--track", remote[0]) : undefined
+        // The row's other local branches are the ones worth switching to; several of them are not guessed between.
+        const current = c.refs.find((r) => r.startsWith("HEAD -> "))?.slice("HEAD -> ".length)
+        const others = local.filter((b) => b !== current)
+        if (others.length > 1) return { kind: "notice", text: `git: ${sha} carries several local branches (${others.join(", ")}); this row cannot be switched from the panel` }
+        const target = others[0] ?? current
+        const r = target ? await git("switch", target) : remote[0] ? await git("switch", "--track", remote[0]) : undefined
         if (!r) return { kind: "notice", text: `git: ${sha} carries no branch` }
         if (r.code !== 0) return { kind: "notice", text: `git: ${firstLine(r.stderr) || `exit ${r.code}`}` }
         return { kind: "refresh" }
