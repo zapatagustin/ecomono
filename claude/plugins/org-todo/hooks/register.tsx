@@ -10,12 +10,15 @@ const POLL_MS = 3000
 
 const ORG = /^(\*+) (TODO|BLOCKED) (.*)$/
 const MD = /^(\s*[-*] )\[ \] (.*)$/
+const CONTROL = /[\x00-\x1f\x7f-\x9f]/g
 
 const todos = atom({ plugin: 'org-todo', key: 'todos' } as const, [] as Todo[])
 
 // The one rule for what a line means as a todo. parse() lists todos with it and
 // complete() re-checks the line with it, so the two cannot disagree.
-function classify(raw: string): Pick<Todo, 'text' | 'kind'> | null {
+function classify(rawLine: string): Pick<Todo, 'text' | 'kind'> | null {
+  // A TAB becomes one space; the other C0, DEL and C1 bytes are dropped: the text drawn is the text complete() compares.
+  const raw = rawLine.replace(/\t/g, ' ').replace(CONTROL, '')
   const org = ORG.exec(raw)
   const md = org ? null : MD.exec(raw)
   if (!org && !md) return null

@@ -927,7 +927,7 @@ Every key of `claude/settings.template.json` and `opencode/cli.json`, and the ho
 | `theme: gruvbox` | omp follows the terminal |
 | `opencode-subagent-statusline` | the native `subagents` segment, opt-in |
 | `cyndaquill.tsx` | skipped: omp has no home-logo slot |
-| `org-todo.tsx` | a `todo N` status entry sharing `org-todo/core.ts`, plus the `todo` tab of the side panel (`/panel`, `alt+t`), which marks a todo done as the Claude Code pane does; the `files` and `log` tabs (`alt+w`) have no OpenCode counterpart |
+| `org-todo.tsx` | a `todo N` status entry sharing `org-todo/core.ts`, plus the `todo` tab of the side panel (`/panel`, `alt+e`), which marks a todo done as the Claude Code pane does; the `files` and `log` tabs (`alt+w`) have no OpenCode counterpart |
 
 | `opencode/opencode.json` | omp |
 |---|---|
@@ -1087,7 +1087,7 @@ to 18.22.0. The cited extension API code (the handler budget, the `details` fall
   push (the persona-tail row of the deferred table).
 
 Every other cited range moved without a content change and was re-pinned, `sdk.ts:4454` in `test_contract.ts`
-(now 4663) included. `alt+t` and `alt+w` are bound by no omp app keybinding and are not reserved shortcuts at v18.22.0.
+(now 4663) included. `alt+e` and `alt+w` are bound by no omp app keybinding and are not reserved shortcuts at v18.22.0 (`alt+e` is in neither `app-keybindings.ts` nor `pi-tui`'s `keybindings.ts` defaults nor the runner's reserved set, `extensibility/extensions/runner.ts:1455`; `alt+o` is `app.links.hint`, so it was skipped; the todo key left `alt+t` because the terminal multiplexers bind it).
 
 Previous re-diff, omp rev ebb4fcf to 650f3a1 (github can1357/oh-my-pi, tag v18.16.0, which is the installed version, so the
 tested version moves from 18.15.0 to 18.16.0). No change to the extension API (`extensibility/` differs only in the

@@ -34,6 +34,8 @@ export interface OrgTodoCore {
 /** What the tab takes from a running scan: the last ranked list, and a rescan that updates the status line. */
 export interface OrgTodoHandle {
   todos(): Todo[]
+  /** The latest scan was killed by its timeout: todos() still holds the older list, which is not current. */
+  timedOut(): boolean
   refresh(): Promise<void>
 }
 
@@ -49,7 +51,8 @@ const POLL_MS = 3000
  * code is not checked: `grep -s` exits 2 whenever one of the directories is missing, matches or not.
  * A file that cannot be stat'ed (gone between the grep and the stat) ranks as mtime 0, last.
  * ecomono: ticks are not deduplicated, so a grep slower than POLL_MS overlaps the next one; the exec timeout bounds
- * the pile-up. Add an in-flight guard if a huge org directory ever makes that visible.
+ * the pile-up. Any result newer than the last one applied is applied, so a slow scan still lands; only an older
+ * one is dropped. Add an in-flight guard if a huge org directory ever makes that visible.
  */
 export function startOrgTodo(pi: ExtensionAPI, ctx: any, core: OrgTodoCore): OrgTodoHandle {
   const orgDir = process.env.ECOMONO_ORG_DIR || join(homedir(), "work/org")
@@ -76,23 +79,34 @@ export function startOrgTodo(pi: ExtensionAPI, ctx: any, core: OrgTodoCore): Org
       .sort()
       .at(-1)
   let shown: Todo[] = []
-  const tick = (): Promise<void> =>
-    pi.exec("grep", ["-rnHsE", "--include=*.org", "--include=*.md", core.PATTERN, ...dirs], {
+  let timedOut = false
+  // Scans are numbered: a result older than the last one applied (a slow grep that finished after a newer one) is
+  // dropped; any newer one is applied, even while a later scan is still running.
+  let latest = 0
+  let applied = 0
+  const tick = (): Promise<void> => {
+    const mine = ++latest
+    return pi.exec("grep", ["-rnHsE", "--include=*.org", "--include=*.md", core.PATTERN, ...dirs], {
       cwd: ctx.cwd,
       timeout: 10_000,
     })
       .then((result) => {
+        if (mine < applied) return
+        applied = mine
         if (result?.killed) {
+          timedOut = true
           warnOnce("timeout", "ecomono: org-todo grep timed out; keeping the previous count")
           return
         }
+        timedOut = false
         shown = core.rank(core.parse(String(result?.stdout ?? ""), dirs), mtime, newest)
         ctx.ui.setStatus(KEY, shown.length === 0 ? undefined : `todo ${shown.length}`)
       })
       .catch((e) => warnOnce("failure", `ecomono: org-todo tick failed: ${e instanceof Error ? e.message : String(e)}`))
+  }
   tick()
   ctx.setInterval(tick, POLL_MS)
-  return { todos: () => shown, refresh: tick }
+  return { todos: () => shown, timedOut: () => timedOut, refresh: tick }
 }
 
 /**
@@ -121,8 +135,10 @@ export function todoTab(core: OrgTodoCore, h: OrgTodoHandle, host: Host): Tab {
   const byId = (id: string): Todo | undefined => h.todos().find((t) => `${t.file}:${t.line}` === id)
   return {
     name: "todo",
-    title: () => `todo ${h.todos().length}`,
+    title: () => (h.timedOut() ? "todo ?" : `todo ${h.todos().length}`),
     rows: (filter) => {
+      // The old rows are not current once a scan was killed: say so instead of listing them.
+      if (h.timedOut()) return [{ kind: "head", text: "búsqueda agotada (timeout)" }]
       const q = filter.toLowerCase()
       const rows: Row[] = []
       let last: string | undefined

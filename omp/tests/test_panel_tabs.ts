@@ -1,10 +1,10 @@
 // The three tabs of the omp side panel against real files: a temp git repo for files and log, fixture todo files
 // for todo. The Host is a fake that runs git for real (spawnSync) and records editor opens and notices. Plain
-// assert script; the extension's registration of /panel, /org-todo, alt+t and alt+w is pinned at the end.
+// assert script; the extension's registration of /panel, /org-todo, alt+e and alt+w is pinned at the end.
 import { dir, makeCtx, makePi, tick, withEnv } from "./fake-pi.ts"
 import assert from "node:assert/strict"
 import { spawnSync } from "node:child_process"
-import { lstatSync, mkdirSync, readFileSync, realpathSync, symlinkSync, writeFileSync } from "node:fs"
+import { chmodSync, lstatSync, mkdirSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs"
 import { join } from "node:path"
 import * as core from "../../opencode/tui-plugins/org-todo/core.ts"
 import { REPO, ecomono } from "../extensions/ecomono/index.ts"
@@ -30,6 +30,9 @@ const makeHost = (cwd: string) => {
   }
   return host
 }
+/** A hang in the code under test fails the run instead of freezing it. */
+const within = <T>(p: Promise<T>, ms = 2000): Promise<T> =>
+  Promise.race([p, new Promise<never>((_, rej) => setTimeout(() => rej(new Error(`still pending after ${ms} ms`)), ms))])
 const git = (cwd: string, ...args: string[]): string => {
   const r = spawnSync("git", args, { cwd, encoding: "utf8", env: { ...process.env, GIT_AUTHOR_NAME: "t", GIT_AUTHOR_EMAIL: "t@t", GIT_COMMITTER_NAME: "t", GIT_COMMITTER_EMAIL: "t@t" } })
   assert.equal(r.status, 0, `git ${args.join(" ")}: ${r.stderr}`)
@@ -288,13 +291,229 @@ const texts = (tab: Tab, filter = "") => tab.rows(filter).map((r) => (r.kind ===
   })
 }
 
-// ---- /panel, /org-todo, alt+t and alt+w are registered at load; without a session they say why -------------
+// ---- files: a diff without hunks says what it is; an untracked file shows its first lines --------------------------
+
+{
+  const cwd = repo()
+  writeFileSync(join(cwd, "bin.dat"), Buffer.from([0, 1, 2, 0, 255, 0]))
+  git(cwd, "add", "bin.dat")
+  git(cwd, "commit", "-qm", "binary")
+  writeFileSync(join(cwd, "bin.dat"), Buffer.from([0, 9, 9, 0, 255, 0])) // unstaged, binary
+  chmodSync(join(cwd, "b.md"), 0o755) // unstaged, mode only
+  git(cwd, "mv", "a.ts", "renamed.ts") // staged, pure rename
+  writeFileSync(join(cwd, "n.txt"), Array.from({ length: 12 }, (_, i) => `l${i + 1}`).join("\n") + "\n") // untracked
+  const tab = filesTab(makeHost(cwd))
+  await tab.load()
+  const detail = async (needle: string): Promise<string[]> => {
+    const row = tab.rows("").find((r) => r.kind === "item" && r.text.includes(needle))!
+    assert.ok(row, texts(tab).join("\n"))
+    await tab.prefetch!(row.id!)
+    return tab.detail(row.id!)
+  }
+  assert.deepEqual(await detail("bin.dat"), ["binary file"], "a binary diff has no hunk: say so")
+  assert.deepEqual(await detail("b.md"), ["mode change 100644 → 100755"])
+  assert.deepEqual(await detail("renamed.ts"), ["renamed from a.ts"], "a pure rename is diffed with its old path too")
+  assert.deepEqual(await detail("n.txt"), ["l1", "l2", "l3", "l4", "l5", "l6", "l7", "l8"], "an untracked file has no diff: its first lines")
+}
+
+// ---- files: unstaging a staged rename unstages the old path too --------------------------------------------------
+
+{
+  const cwd = repo()
+  git(cwd, "mv", "a.ts", "renamed.ts")
+  const inner = makeHost(cwd)
+  const argvs: string[][] = []
+  const host = { ...inner, exec: (cmd: string, args: string[], opts?: any) => (argvs.push(args), inner.exec(cmd, args, opts)) }
+  const tab = filesTab(host)
+  await tab.load()
+  const row = tab.rows("").find((r) => r.kind === "item" && r.text.includes("renamed.ts"))!
+  assert.deepEqual(await tab.act("s", row.id!), { kind: "refresh" })
+  assert.equal(argvs.filter((a) => a.includes("restore")).length, 1, "one git call for both paths")
+  assert.equal(git(cwd, "status", "--porcelain"), " D a.ts\n?? renamed.ts\n", "the old path's deletion is no longer staged")
+}
+
+// ---- files: a directory with more than 20 untracked files is one row, and s adds the directory ---------------------
+
+{
+  const cwd = repo()
+  for (const [d, n] of [["build/out", 25], ["twenty", 20], ["few", 3]] as const) {
+    mkdirSync(join(cwd, d), { recursive: true })
+    for (let i = 0; i < n; i++) writeFileSync(join(cwd, d, `f${String(i).padStart(2, "0")}.js`), "x\n")
+  }
+  const tab = filesTab(makeHost(cwd))
+  await tab.load()
+  const rows = texts(tab)
+  assert.ok(rows.includes("? build/out/ 25 files"), rows.join("\n"))
+  assert.equal(rows.filter((r) => r.startsWith("? build/out/f")).length, 0, "no row per file of the big directory")
+  assert.equal(rows.filter((r) => r.startsWith("? twenty/f")).length, 20, "20 files stay listed one by one")
+  assert.equal(rows.filter((r) => r.startsWith("? few/f")).length, 3)
+  const dirRow = tab.rows("").find((r) => r.text.startsWith("? build/out/"))!
+  assert.deepEqual(await tab.act("s", dirRow.id!), { kind: "refresh" })
+  assert.equal(git(cwd, "status", "--porcelain", "--untracked-files=all", "--", "build").split("\n").filter((l) => l.startsWith("A  ")).length, 25, "the directory was added")
+}
+
+// ---- files: a collapsed row stages only the untracked files it stands for -----------------------------------------
+
+{
+  const cwd = repo()
+  mkdirSync(join(cwd, "build"))
+  writeFileSync(join(cwd, "build", "tracked.js"), "t\n")
+  writeFileSync(join(cwd, "build", "gone.js"), "g\n")
+  git(cwd, "add", "build")
+  git(cwd, "commit", "-qm", "build")
+  writeFileSync(join(cwd, "build", "tracked.js"), "t\nmore\n")
+  rmSync(join(cwd, "build", "gone.js"))
+  for (let i = 0; i < 25; i++) writeFileSync(join(cwd, "build", `f${String(i).padStart(2, "0")}.js`), "x\n")
+  mkdirSync(join(cwd, "nested"))
+  git(join(cwd, "nested"), "init", "-q")
+  const tab = filesTab(makeHost(cwd))
+  await tab.load()
+  const dirRow = tab.rows("").find((r) => r.text.startsWith("? build/"))!
+  await tab.prefetch!(dirRow.id!)
+  assert.deepEqual(tab.detail(dirRow.id!), ["25 untracked files"])
+  assert.deepEqual(await tab.act("s", dirRow.id!), { kind: "refresh" })
+  const status = git(cwd, "status", "--porcelain", "--untracked-files=all", "--", "build").split("\n")
+  assert.equal(status.filter((l) => l.startsWith("A  ")).length, 25, "the 25 untracked files were added")
+  assert.ok(status.includes(" M build/tracked.js") && status.includes(" D build/gone.js"), `tracked changes stay unstaged: ${status.join("|")}`)
+  // A path git reports with a trailing slash (a nested repository) is an ordinary row, not a collapsed one.
+  await tab.load()
+  const nested = tab.rows("").find((r) => r.text === "? nested/")!
+  assert.ok(nested, texts(tab).join("\n"))
+  await tab.prefetch!(nested.id!)
+  assert.deepEqual(tab.detail(nested.id!), ["directory or nested repository"])
+  // While a filter is active nothing is collapsed.
+  const dir2 = repo()
+  mkdirSync(join(dir2, "out"))
+  for (let i = 0; i < 25; i++) writeFileSync(join(dir2, "out", `f${String(i).padStart(2, "0")}.js`), "x\n")
+  const tab2 = filesTab(makeHost(dir2))
+  await tab2.load()
+  const filtered = texts(tab2, "f0")
+  assert.equal(filtered.filter((r) => r.startsWith("? out/f0")).length, 10, filtered.join("\n"))
+  assert.ok(!filtered.some((r) => r.startsWith("? out/ ")), "no folded row in a filtered view")
+}
+
+// ---- files: the detail of an untracked path that is not a regular file ---------------------------------------------
+
+{
+  const cwd = repo()
+  writeFileSync(join(cwd, "target.txt"), "secret\n")
+  symlinkSync("target.txt", join(cwd, "link"))
+  mkdirSync(join(cwd, "sub"))
+  symlinkSync("sub", join(cwd, "dirlink"))
+  assert.equal(spawnSync("mkfifo", [join(cwd, "pipe")]).status, 0)
+  const tab = filesTab(makeHost(cwd))
+  await tab.load()
+  for (const name of ["link", "dirlink", "pipe"]) {
+    // git does not list a FIFO, so the row id is built by hand: prefetch must not trust what git lists.
+    const rowId = `untracked\0${name}`
+    await within(tab.prefetch!(rowId))
+    const [line, ...rest] = tab.detail(rowId)
+    assert.equal(rest.length, 0)
+    assert.ok(line && !line.includes("secret"), `${name}: ${line}`)
+  }
+  assert.deepEqual(tab.detail("untracked\0link"), ["symbolic link"])
+  assert.deepEqual(tab.detail("untracked\0pipe"), ["named pipe"])
+}
+
+// ---- files: a diff without hunks still says what it is ---------------------------------------------------------------
+
+{
+  const cwd = repo()
+  writeFileSync(join(cwd, "empty-gone"), "")
+  git(cwd, "add", "empty-gone")
+  git(cwd, "commit", "-qm", "empty")
+  rmSync(join(cwd, "empty-gone")) // unstaged: a staged deletion beside the new empty file would be read as a rename
+  writeFileSync(join(cwd, "empty-new"), "")
+  git(cwd, "add", "empty-new")
+  const tab = filesTab(makeHost(cwd))
+  await tab.load()
+  const detail = async (text: string) => {
+    const row = tab.rows("").find((r) => r.text === text)!
+    assert.ok(row, texts(tab).join("\n"))
+    await tab.prefetch!(row.id!)
+    return tab.detail(row.id!)
+  }
+  assert.deepEqual(await detail("A empty-new"), ["new file · mode 100644"])
+  assert.deepEqual(await detail("D empty-gone"), ["deleted file · mode 100644"])
+}
+
+// ---- log: several local branches on one commit ---------------------------------------------------------------------
+
+{
+  const cwd = repo()
+  git(cwd, "branch", "alpha")
+  git(cwd, "branch", "beta")
+  const host = makeHost(cwd)
+  const tab = logTab(host)
+  await tab.load()
+  const row = tab.rows("").find((r) => r.text.includes("[master]"))!
+  const out = await tab.act("enter", row.id!)
+  assert.equal(out.kind, "notice")
+  assert.ok((out as any).text.includes("alpha") && (out as any).text.includes("beta"), (out as any).text)
+  assert.ok(!(out as any).text.includes("filter"), "the notice gives no advice that cannot work")
+  assert.ok((out as any).text.includes("cannot be switched"), (out as any).text)
+  assert.equal(git(cwd, "branch", "--show-current").trim(), "master", "an ambiguous row switches nothing")
+  git(cwd, "branch", "-D", "beta")
+  await tab.load()
+  assert.deepEqual(await tab.act("enter", tab.rows("").find((r) => r.text.includes("[alpha]"))!.id!), { kind: "refresh" })
+  assert.equal(git(cwd, "branch", "--show-current").trim(), "alpha", "the one branch that is not the current one")
+}
+
+// ---- log: opening a commit opens its first file that still exists --------------------------------------------------
+
+{
+  const cwd = repo()
+  git(cwd, "rm", "-q", "a.ts")
+  writeFileSync(join(cwd, "z.ts"), "z\n")
+  git(cwd, "add", "z.ts")
+  git(cwd, "commit", "-qm", "drop-a")
+  writeFileSync(join(cwd, "y.txt"), "y\n")
+  git(cwd, "add", "y.txt")
+  git(cwd, "commit", "-qm", "between")
+  git(cwd, "rm", "-q", "b.md")
+  git(cwd, "commit", "-qm", "drop-b")
+  writeFileSync(join(cwd, "v.txt"), "v\n")
+  git(cwd, "add", "v.txt")
+  git(cwd, "commit", "-qm", "top")
+  const host = makeHost(cwd)
+  const tab = logTab(host)
+  await tab.load()
+  const byName = (s: string) => tab.rows("").find((r) => r.text.endsWith(` ${s}`))!.id!
+  assert.deepEqual(await tab.act("enter", byName("drop-a")), { kind: "close" })
+  assert.equal(host.opened.at(-1)![0], join(cwd, "z.ts"), "a.ts is gone: the next file of the commit")
+  const none = await tab.act("enter", byName("drop-b"))
+  assert.equal(none.kind, "notice", "every file of the commit was deleted")
+  assert.equal(host.opened.length, 1)
+}
+
+// ---- the git commands carry --no-optional-locks (status) and --no-ext-diff (every diff and show) -----------------
+
+{
+  const cwd = repo()
+  writeFileSync(join(cwd, "a.ts"), "changed\n")
+  const inner = makeHost(cwd)
+  const argvs: string[][] = []
+  const host = { ...inner, exec: (cmd: string, args: string[], opts?: any) => (argvs.push(args), inner.exec(cmd, args, opts)) }
+  const files = filesTab(host)
+  await files.load()
+  await files.prefetch!(files.rows("").find((r) => r.kind === "item")!.id!)
+  const log = logTab(host)
+  await log.load()
+  await log.prefetch!(log.rows("").find((r) => r.kind === "item")!.id!)
+  const verbs = (verb: string) => argvs.filter((a) => a.includes(verb))
+  assert.ok(verbs("status").length > 0 && verbs("status").every((a) => a.includes("--no-optional-locks")), "status takes no optional lock")
+  const diffs = [...verbs("diff"), ...verbs("show")]
+  assert.ok(verbs("diff").length >= 3 && verbs("show").length >= 1)
+  assert.ok(diffs.every((a) => a.includes("--no-ext-diff")), "no external diff driver runs: " + JSON.stringify(diffs))
+}
+
+// ---- /panel, /org-todo, alt+e and alt+w are registered at load; without a session they say why -------------
 
 {
   const { pi, calls } = makePi()
   ecomono({ repo: REPO })(pi)
   assert.deepEqual(calls.commands.map(([name]) => name), ["panel", "org-todo"])
-  assert.deepEqual(calls.shortcuts.map(([key]) => key), ["alt+t", "alt+w"])
+  assert.deepEqual(calls.shortcuts.map(([key]) => key), ["alt+e", "alt+w"])
   const ctx = makeCtx({ mode: "tui", hasUI: true })
   await calls.commands[0]![1].handler("files", ctx)
   await calls.shortcuts[1]![1].handler(ctx)

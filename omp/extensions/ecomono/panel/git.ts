@@ -127,7 +127,7 @@ export function branchTargets(refs: string[]): { local: string[]; remote: string
   for (const raw of refs) {
     const ref = raw.startsWith("HEAD -> ") ? raw.slice("HEAD -> ".length) : raw
     if (ref.startsWith("tag: ") || ref.startsWith("refs/") || ref === "HEAD" || ref.endsWith("/HEAD")) continue
-    if (ref.includes("/") && /^[^/]+\//.test(ref) && isRemote(ref)) remote.push(ref)
+    if (isRemote(ref)) remote.push(ref)
     else local.push(ref)
   }
   return { local, remote }

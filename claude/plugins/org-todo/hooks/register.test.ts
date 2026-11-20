@@ -55,3 +55,14 @@ test('isSameTodo round-trips what parse() lists, BLOCKED headings and markdown b
   // A TODO heading is not the BLOCKED one listed, nor vice versa.
   expect(isSameTodo('* TODO Waiting on Henry', listed[0])).toBe(false)
 })
+
+test('parse strips control bytes so the drawn text is the compared text', async () => {
+  const [todo] = parse('/repo/docs/a.md:1:- [ ] ab\x1b[31mred\x07', ['/repo/docs'])
+  expect(todo.text).toBe('ab[31mred')
+  expect(isSameTodo('- [ ] a\x1bb', { kind: 'md', text: 'ab' })).toBe(true)
+})
+
+test('parse turns a tab into one space', async () => {
+  const [todo] = parse('/repo/docs/a.md:1:- [ ] a\tb', ['/repo/docs'])
+  expect(todo.text).toBe('a b')
+})
