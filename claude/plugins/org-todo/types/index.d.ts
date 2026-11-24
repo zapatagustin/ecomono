@@ -51,6 +51,8 @@ export type PanelProps = {
   enter: 'act' | 'full'
   /** Why the tab's last load failed, drawn in place of its rows. */
   failed?: string
+  /** A load of the tab runs: `rows` are what it had before. */
+  loading?: boolean
   /** The last act the hooks module finished, by the Client's sequence number. */
   done: number
 }

@@ -34,14 +34,18 @@ const LOG = [
 
 type Call = { argv: string[]; cwd?: string; timeoutMs?: number }
 
+/** What the engine rejects a run with when it is still running at its timeout (Claude Code 2.1.329). */
+const STILL_RUNNING = '$.process.run (org-todo): git: aborted: still running after 10000ms'
+
 /** A Host whose git answers by argv prefix (the arguments after `git`), recording every call. */
-function fakeHost(answers: Array<[string, string]>, fail: Record<string, string> = {}, truncated: string[] = []) {
+function fakeHost(answers: Array<[string, string]>, fail: Record<string, string> = {}, truncated: string[] = [], timedOut: string[] = []) {
   const calls: Call[] = []
   const host: Host = {
     cwd: '/repo/sub',
     run: async (argv, init) => {
       calls.push({ argv: [...argv], cwd: init?.cwd, timeoutMs: init?.timeoutMs })
       const args = argv.slice(1).join(' ')
+      if (timedOut.some(k => args.startsWith(k))) throw new Error(STILL_RUNNING)
       const failed = Object.keys(fail).find(k => args.startsWith(k))
       if (failed) return { exitCode: 1, stdout: '', stderr: `${fail[failed]}\nmore` }
       return { exitCode: 0, stdout: answers.find(([k]) => args.startsWith(k))?.[1] ?? '', stderr: '', isStdoutTruncated: truncated.some(k => args.startsWith(k)) }
@@ -336,12 +340,15 @@ test('a directory that is not a repository fails both git tabs with git\'s first
 const ORG_LINE = '/home/u/work/org/x.org:1:* TODO Ship it'
 const SHOWN = { id: 'org-todo', title: 'Todo', isShown: true, isFocused: false, isPlaced: true }
 
-/** The engine beneath the plugin: `answer` gives a git command's result, grep lists one todo. */
+type Run = { exitCode?: number; stdout?: string; stderr?: string; isStdoutTruncated?: boolean }
+
+/** The engine beneath the plugin: `answer` gives a git command's result, grep lists one todo. An answer held on
+ *  the test's clock (`clock.sleep`) lets the act that asked for it return. */
 function wire(
   on: On,
-  answer: (args: string) => { exitCode?: number; stdout?: string; stderr?: string; isStdoutTruncated?: boolean } = () => ({}),
+  answer: (args: string) => Run | Promise<Run> = () => ({}),
   panes: () => unknown[] = () => [SHOWN],
-  grep: () => { stdout: string; isStdoutTruncated?: boolean } = () => ({ stdout: ORG_LINE }),
+  grep: () => Run | Promise<Run> = () => ({ stdout: ORG_LINE }),
 ) {
   const runs: string[][] = []
   on('ui.panes', () => ({ value: panes() as never }))
@@ -349,10 +356,10 @@ function wire(
   on('ui.open', () => ({ value: { isPlaced: true } }))
   on('session.start', (_, e) => ({ cwd: e.cwd }))
   on('env.get', () => ({ value: '/home/u' }))
-  on('process.run', (_, e) => {
+  on('process.run', async (_, e) => {
     runs.push([...e.argv])
     const args = e.argv.slice(1).join(' ')
-    const r = e.argv[0] === 'grep' ? grep() : answer(args)
+    const r = e.argv[0] === 'grep' ? await grep() : await answer(args)
     return { value: { exitCode: 0, stdout: '', stderr: '', isStdoutTruncated: false, isStderrTruncated: false, ...r } }
   })
   return runs
@@ -484,5 +491,316 @@ test('a fallback button whose completion fails toasts the error instead of leavi
   const ui = await $.ui.mount({ ...PANE, surface: 'mobile' })
   await ui.press({ key: 'todo-0' })
   expect(toasts.filter(t => t.startsWith('panel: '))).toHaveLength(1)
+  await ui.unmount()
+})
+
+/** The fixture repository's git, by argv prefix, with a six-line diff for any file. */
+const DIFF6 = ['diff --git a/x b/x', '@@ -1,0 +1,6 @@', ...Array.from({ length: 6 }, (_, i) => `+l${i}`), ''].join('\n')
+const repo = (args: string): Run => ({ stdout: ([...gitAnswers, ['--literal-pathspecs diff', DIFF6]] as Array<[string, string]>).find(([k]) => args.startsWith(k))?.[1] ?? '' })
+const MOVES = ['add', 'restore', 'switch']
+
+test('a forged act (an unlisted path, ../x, an unknown group, an unlisted sha or todo) runs no git command and writes nothing', async ($, on) => {
+  on('clock.every', () => ({ value: undefined }))
+  const runs = wire(on, repo)
+  let writes = 0
+  on('fs.write', () => {
+    writes += 1
+    return { value: undefined }
+  })
+  await start($)
+  const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
+  const forged: Array<[number, string, string]> = [
+    [1, 's', 'unstaged:secret.txt'],
+    [1, 's', 'unstaged:../x'],
+    [1, 's', 'untracked:../x'],
+    [1, 's', 'bogus:both.ts'],
+    [1, 's', 'staged:dir with space/un staged.md'],
+    [2, 'enter', 'deadbee'],
+    [0, 'enter', '/etc/passwd:1'],
+  ]
+  let seq = 0
+  for (const [tab, key, id] of forged) {
+    runs.length = 0
+    await ui.post({ view: { tab, filter: '', id }, act: { key, id, seq: ++seq } })
+    expect([id, runs.filter(r => MOVES.some(m => r.includes(m)))]).toEqual([id, []])
+  }
+  expect(writes).toBe(0)
+  // A listed row still acts, under the filter the Client listed it with.
+  runs.length = 0
+  await ui.post({ view: { tab: 1, filter: 'staged.md', id: 'unstaged:dir with space/un staged.md' }, act: { key: 's', id: 'unstaged:dir with space/un staged.md', seq: ++seq } })
+  expect(runs.filter(r => MOVES.some(m => r.includes(m)))).toEqual([['git', '--literal-pathspecs', 'add', '--', 'dir with space/un staged.md']])
+  // A view whose id is past the cap is refused whole, as an over-long filter is: the pane (on todo) keeps the
+  // files view and draws no rows until a view with a short id brings todo back.
+  await ui.post({ view: { tab: 0, filter: '', id: 'x'.repeat(5000) } })
+  expect(await ui.find({ type: 'Text', text: ' Ship it', in: 'panel' })).toBeUndefined()
+  await ui.post({ view: { tab: 0, filter: '', id: 'x' } })
+  expect(await ui.find({ type: 'Text', text: ' Ship it', in: 'panel' })).toBeTruthy()
+  await ui.unmount()
+})
+
+test('s with an id of an unknown group runs no git command', async () => {
+  const { host, calls } = fakeHost(gitAnswers)
+  const tab = filesTab(host)
+  await tab.load()
+  calls.length = 0
+  expect(await tab.act('s', 'bogus:both.ts')).toEqual({ kind: 'refresh' })
+  expect(calls).toEqual([])
+})
+
+test('a git command the engine stops at its timeout says which one timed out', async () => {
+  const stopped = (k: string) => fakeHost(gitAnswers, {}, [], [k]).host
+  expect(await failure(filesTab(stopped('rev-parse')).load())).toBe('git rev-parse timed out (10 s)')
+  expect(await failure(filesTab(stopped('--no-optional-locks status')).load())).toBe('git status timed out (10 s)')
+  expect(await failure(filesTab(stopped('diff --no-ext-diff --cached --numstat')).load())).toBe('git diff timed out (10 s)')
+  expect(await failure(logTab(stopped('log --graph')).load())).toBe('git log timed out (10 s)')
+  const add = filesTab(stopped('--literal-pathspecs add'))
+  await add.load()
+  expect(await failure(add.act('s', add.rows('').find(r => r.text === '? untracked/new.ts')!.id!))).toBe('git add timed out (10 s)')
+  // Any other rejection is the engine's own.
+  const broken: Host = { ...fakeHost(gitAnswers).host, run: async () => Promise.reject(new Error('spawn git ENOENT')) }
+  expect(await failure(filesTab(broken).load())).toBe('spawn git ENOENT')
+})
+
+test('a failed numstat fails the files load with git\'s first line instead of drawing +0 -0', async () => {
+  for (const k of ['diff --no-ext-diff --numstat', 'diff --no-ext-diff --cached --numstat']) {
+    const tab = filesTab(fakeHost(gitAnswers, { [k]: 'fatal: bad index' }).host)
+    expect(await failure(tab.load())).toBe('git diff: fatal: bad index')
+    expect(tab.title()).toBe('files')
+  }
+})
+
+test('a poll tick still running when the next one is due is not stacked under it', async ($, on) => {
+  const clock = mock.clock(on)
+  let slow = false
+  let greps = 0
+  wire(on, undefined, () => [], async () => {
+    greps += 1
+    if (slow) await clock.sleep(5000)
+    return { stdout: ORG_LINE }
+  })
+  await start($)
+  slow = true
+  greps = 0
+  await clock.advance(3000)
+  expect(greps).toBe(1)
+  // Due again while the first is still waiting on its grep: skipped.
+  await clock.advance(3000)
+  expect(greps).toBe(1)
+  slow = false
+  await clock.advance(3000)
+  expect(greps).toBe(2)
+})
+
+test('a post does not wait on a slow git load: the pane says loading until it ends, then draws the rows', async ($, on) => {
+  const clock = mock.clock(on)
+  let slow = false
+  wire(
+    on,
+    async args => {
+      if (!args.startsWith('--no-optional-locks status')) return repo(args)
+      if (!slow) return {}
+      await clock.sleep(1000)
+      return { stdout: STATUS }
+    },
+    () => [],
+  )
+  await start($)
+  const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
+  await ui.resize({ columns: 60, rows: 30 })
+  slow = true
+  await ui.key({ key: 'tab' })
+  expect(await ui.find({ type: 'Text', text: 'loading…', in: 'panel' })).toBeTruthy()
+  expect(await ui.find({ type: 'Text', text: 'staged', in: 'panel' })).toBeUndefined()
+  await clock.advance(1000)
+  expect(await ui.find({ type: 'Text', text: 'loading…', in: 'panel' })).toBeUndefined()
+  expect(await ui.find({ type: 'Text', text: 'staged', in: 'panel' })).toBeTruthy()
+  expect(await ui.find({ type: 'Text', text: '1 / 7', in: 'panel' })).toBeTruthy()
+  await ui.unmount()
+})
+
+test('the files filter: typed, backspaced and closed, the rows and the counter follow it, and j then s act on the filtered rows', async ($, on) => {
+  on('clock.every', () => ({ value: undefined }))
+  const runs = wire(on, repo)
+  await start($)
+  const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
+  await ui.resize({ columns: 60, rows: 30 })
+  await ui.key({ key: 'tab' })
+  expect(await ui.find({ type: 'Text', text: '1 / 7', in: 'panel' })).toBeTruthy()
+  await ui.key({ key: '/' })
+  for (const key of ['c', 'o', 'x']) await ui.key({ key })
+  expect(await ui.find({ type: 'Text', text: 'cox█', in: 'panel' })).toBeTruthy()
+  expect(await ui.find({ type: 'Text', text: '0 / 0', in: 'panel' })).toBeTruthy()
+  await ui.key({ key: 'backspace' })
+  expect(await ui.find({ type: 'Text', text: 'co█', in: 'panel' })).toBeTruthy()
+  expect(await ui.find({ type: 'Text', text: '1 / 2', in: 'panel' })).toBeTruthy()
+  expect(await ui.findAll({ type: 'Text', text: ' conflict.ts', in: 'panel' })).toHaveLength(2)
+  expect(await ui.find({ type: 'Text', text: ' both.ts', in: 'panel' })).toBeUndefined()
+  // Return closes the filter and keeps it; j now moves instead of typing.
+  await ui.key({ key: 'return' })
+  expect(await ui.find({ type: 'Text', text: 'co', in: 'panel' })).toBeTruthy()
+  await ui.key({ key: 'j' })
+  expect(await ui.find({ type: 'Text', text: '2 / 2', in: 'panel' })).toBeTruthy()
+  runs.length = 0
+  await ui.key({ key: 's' })
+  expect(runs.filter(r => MOVES.some(m => r.includes(m)))).toEqual([['git', '--literal-pathspecs', 'add', '--', 'conflict.ts']])
+  await ui.unmount()
+})
+
+test('the full diff: enter opens it, j scrolls it, enter goes back to the list with the selection kept', async ($, on) => {
+  on('clock.every', () => ({ value: undefined }))
+  wire(on, repo)
+  await start($)
+  const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
+  await ui.resize({ columns: 60, rows: 30 })
+  await ui.key({ key: 'tab' })
+  await ui.key({ key: 'j' })
+  expect(await ui.find({ type: 'Text', text: '2 / 7', in: 'panel' })).toBeTruthy()
+  await ui.key({ key: 'return' })
+  expect(await ui.find({ type: 'Text', text: ' back to list', in: 'panel' })).toBeTruthy()
+  expect(await ui.find({ type: 'Text', text: '+l0', in: 'panel' })).toBeTruthy()
+  await ui.key({ key: 'j' })
+  expect(await ui.find({ type: 'Text', text: '+l0', in: 'panel' })).toBeUndefined()
+  expect(await ui.find({ type: 'Text', text: '+l1', in: 'panel' })).toBeTruthy()
+  await ui.key({ key: 'return' })
+  expect(await ui.find({ type: 'Text', text: ' back to list', in: 'panel' })).toBeUndefined()
+  expect(await ui.find({ type: 'Text', text: 'staged', in: 'panel' })).toBeTruthy()
+  expect(await ui.find({ type: 'Text', text: '2 / 7', in: 'panel' })).toBeTruthy()
+  await ui.unmount()
+})
+
+const GONE = 'unstaged:dir with space/un staged.md'
+
+test('an act whose row a poll reload removed first is refused with a notice, and runs no git add', async ($, on) => {
+  const clock = mock.clock(on)
+  const toasts = toastsOf(on)
+  let changed = false
+  const runs = wire(on, async args => {
+    if (!args.startsWith('--no-optional-locks status') || !changed) return repo(args)
+    await clock.sleep(1000)
+    return { stdout: '' }
+  })
+  await start($)
+  const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
+  await ui.key({ key: 'tab' })
+  changed = true
+  // The tick's reload of the files tab hangs on git; the act is posted meanwhile and queues behind it.
+  await clock.advance(3000)
+  runs.length = 0
+  await ui.post({ view: { tab: 1, filter: '', id: GONE }, act: { key: 's', id: GONE, seq: 1 } })
+  await clock.advance(1000)
+  expect(runs.filter(r => MOVES.some(m => r.includes(m)))).toEqual([])
+  expect(toasts).toContain('row changed, nothing done')
+  await ui.unmount()
+})
+
+test('a drain that fails toasts once and clears loading; the next drain works', async ($, on) => {
+  const clock = mock.clock(on)
+  const toasts = toastsOf(on)
+  let slow = false
+  let breakNext = false
+  wire(
+    on,
+    async args => {
+      if (!args.startsWith('--no-optional-locks status') || !slow) return repo(args)
+      await clock.sleep(1000)
+      return { stdout: STATUS }
+    },
+    () => [],
+  )
+  on('state.set', (_, e, next) => {
+    if (e.key === 'panel' && breakNext) {
+      breakNext = false
+      return { deny: 'state down' } as never
+    }
+    return next(e)
+  })
+  await start($)
+  const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
+  await ui.resize({ columns: 60, rows: 30 })
+  slow = true
+  await ui.key({ key: 'tab' })
+  expect(await ui.find({ type: 'Text', text: 'loading…', in: 'panel' })).toBeTruthy()
+  breakNext = true
+  await clock.advance(1000)
+  expect(toasts.filter(t => t.startsWith('panel: '))).toHaveLength(1)
+  expect(await ui.find({ type: 'Text', text: 'loading…', in: 'panel' })).toBeUndefined()
+  // The same failure again is not toasted again.
+  breakNext = true
+  await ui.key({ key: 'tab' })
+  expect(toasts.filter(t => t.startsWith('panel: '))).toHaveLength(1)
+  // A clean drain re-arms it: the same failure toasts a second time.
+  slow = false
+  await ui.key({ key: 'tab' })
+  await ui.key({ key: 'tab' })
+  breakNext = true
+  await ui.key({ key: 'tab' })
+  expect(toasts.filter(t => t.startsWith('panel: '))).toHaveLength(2)
+  await ui.key({ key: 'tab' })
+  await ui.key({ key: 'tab' })
+  await ui.key({ key: 'j' })
+  expect(await ui.find({ type: 'Text', text: 'staged', in: 'panel' })).toBeTruthy()
+  await ui.unmount()
+})
+
+test('a drain that fails at session start toasts and leaves no loading', async ($, on) => {
+  const clock = mock.clock(on)
+  const toasts = toastsOf(on)
+  wire(on, undefined, () => [])
+  let breakNext = true
+  on('state.set', (_, e, next) => {
+    if (e.key === 'panel' && breakNext) {
+      breakNext = false
+      return { deny: 'state down' } as never
+    }
+    return next(e)
+  })
+  await start($)
+  await clock.advance(1)
+  expect(toasts.filter(t => t.startsWith('panel: '))).toHaveLength(1)
+  const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
+  expect(await ui.find({ type: 'Text', text: 'loading…', in: 'panel' })).toBeUndefined()
+  await ui.unmount()
+})
+
+test('a drain whose clearing write also fails still toasts, and nothing rejects out of it', async ($, on) => {
+  const clock = mock.clock(on)
+  const toasts = toastsOf(on)
+  wire(on, undefined, () => [])
+  let deny = 2
+  on('state.set', (_, e, next) => {
+    if (e.key === 'panel' && deny > 0) {
+      deny--
+      return { deny: 'state down' } as never
+    }
+    return next(e)
+  })
+  await start($)
+  await clock.advance(1)
+  expect(deny).toBe(0)
+  expect(toasts.filter(t => t.startsWith('panel: '))).toHaveLength(1)
+})
+
+test('a drain that fails on a poll tick toasts and leaves no loading', async ($, on) => {
+  const clock = mock.clock(on)
+  const toasts = toastsOf(on)
+  let empty = false
+  wire(on, args => (empty && args.startsWith('--no-optional-locks status') ? { stdout: '' } : repo(args)), () => [SHOWN])
+  let breakNext = false
+  on('state.set', (_, e, next) => {
+    if (e.key === 'panel' && breakNext) {
+      breakNext = false
+      return { deny: 'state down' } as never
+    }
+    return next(e)
+  })
+  await start($)
+  const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
+  await ui.key({ key: 'tab' })
+  // The tick's reload draws other rows, so the drain writes the state, and that write fails.
+  empty = true
+  breakNext = true
+  await clock.advance(3000)
+  expect(toasts.filter(t => t.startsWith('panel: '))).toHaveLength(1)
+  expect(await ui.find({ type: 'Text', text: 'loading…', in: 'panel' })).toBeUndefined()
   await ui.unmount()
 })

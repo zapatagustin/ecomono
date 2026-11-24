@@ -12,14 +12,20 @@
 # ecomono: a copy kept honest by a diff, not a shared module. Upgrade path: once the plugin loader can import
 # a package outside the plugin folder (or the panel's parsers move into a package both hosts install), import
 # them in both places and delete this script and the copy.
+#
+# Not covered: code ported by hand into claude/plugins/org-todo/hooks/tabs.ts outside any copied region, as it
+# differs from omp's in shape (the Host, the theme keys): `repoRoot` (omp panel/git.ts), `color` and
+# `firstLine` (omp panel/files.ts and log.ts), `LANES` and `laneSpans` (omp panel/log.ts). A fix to one of
+# those in omp reaches the pane only by hand.
 
 set -uo pipefail
 cd "$(dirname "$0")"
 
 COPY=claude/plugins/org-todo/hooks/git.ts
 
-# region <source file> -- the lines of $COPY between its markers for that file.
-region() { awk -v f="$1" '$0 == "// >>> copied: " f { on = 0 } on { print } $0 == "// <<< copied: " f { on = 1 }' "$COPY"; }
+# region <source file> -- the lines of $COPY between its markers for that file; nothing unless both are there,
+# so a region whose closing marker is gone is missing, not one that runs to the end of the file.
+region() { awk -v f="$1" '$0 == "// >>> copied: " f { printf "%s", r; exit } on { r = r $0 "\n" } $0 == "// <<< copied: " f { on = 1 }' "$COPY"; }
 # source <file> <first line prefix> [last line prefix] -- the source's lines from the first anchor to the
 # last one (inclusive), or to the end of the file.
 source_part() {

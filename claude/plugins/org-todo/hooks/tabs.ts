@@ -56,10 +56,22 @@ const CUT = 'output cut at 4 MiB'
 const firstLine = (s: string): string => s.split('\n')[0]?.trim() ?? ''
 const dirname = (p: string): string => (p.includes('/') ? p.slice(0, p.lastIndexOf('/')) : '.')
 
+/** The engine's text for a run stopped at its timeout (`aborted: still running after <ms>ms`). Undocumented: read
+ *  from engine 2.1.329, so a reworded one would show the raw error until this is updated. */
+const STILL_RUNNING = 'still running after'
+
+/** A git command at `cwd` with the timeout. The engine rejects a run still going then (`aborted: still running
+ *  after <ms>ms`, no exit code): that one is said as the git command that timed out, any other kept as it is. */
+const gitAt = (host: Host, cwd: string, args: string[]) =>
+  host.run(['git', ...args], { cwd, timeoutMs: TIMEOUT_MS }).catch((err: unknown) => {
+    if (!String(err instanceof Error ? err.message : err).includes(STILL_RUNNING)) throw err
+    throw new Error(`git ${args.find(a => !a.startsWith('-'))} timed out (${TIMEOUT_MS / 1000} s)`)
+  })
+
 /** The repository's top directory, `git rev-parse --show-toplevel` from the session's cwd: git prints paths
  *  relative to it, so the tabs run every git command there. */
 async function repoRoot(host: Host): Promise<string> {
-  const r = await host.run(['git', 'rev-parse', '--show-toplevel'], { cwd: host.cwd, timeoutMs: TIMEOUT_MS })
+  const r = await gitAt(host, host.cwd, ['rev-parse', '--show-toplevel'])
   const root = r.stdout.replace(/\n$/, '')
   if (r.isStdoutTruncated) throw new Error(TOO_LARGE)
   if (r.exitCode !== 0 || !root) throw new Error(`git rev-parse: ${firstLine(r.stderr) || `exit ${r.exitCode}`}`)
@@ -77,7 +89,7 @@ export function filesTab(host: Host): Tab {
   let loaded = false
   let root = host.cwd
 
-  const git = (...args: string[]) => host.run(['git', ...args], { cwd: root, timeoutMs: TIMEOUT_MS })
+  const git = (...args: string[]) => gitAt(host, root, args)
   /** A diff as a detail: every hunk, the first one's header in the title's tail and each later one as a `hunk`
    *  line; lines numbered by the new file, a removed line by the old one. The file headers are dropped by
    *  position, not by prefix, so a removed `-- comment` stays. A diff without a hunk (binary, mode only, pure
@@ -208,6 +220,7 @@ export function filesTab(host: Host): Tab {
     act: async (key, rowId): Promise<Action> => {
       if (key !== 's') return { kind: 'none' }
       const { group, path } = parse(rowId)
+      if (group !== 'staged' && group !== 'unstaged' && group !== 'untracked') return { kind: 'refresh' }
       // A staged rename is two staged entries: unstage the old path with the new one, or its deletion stays staged.
       const from = group === 'staged' ? changes.find(c => c.path === path)?.from : undefined
       // A collapsed row adds exactly the untracked files it stands for, as explicit paths: the directory itself
@@ -224,6 +237,8 @@ export function filesTab(host: Host): Tab {
       const status = await git('--no-optional-locks', 'status', '--untracked-files=all', '--porcelain=v2', '--branch', '-z')
       if (status.exitCode !== 0) throw new Error(`git status: ${firstLine(status.stderr) || `exit ${status.exitCode}`}`)
       const [unstaged, staged] = await Promise.all([git('diff', '--no-ext-diff', '--numstat', '-z'), git('diff', '--no-ext-diff', '--cached', '--numstat', '-z')])
+      const bad = [unstaged, staged].find(r => r.exitCode !== 0)
+      if (bad) throw new Error(`git diff: ${firstLine(bad.stderr) || `exit ${bad.exitCode}`}`)
       if (status.isStdoutTruncated || unstaged.isStdoutTruncated || staged.isStdoutTruncated) throw new Error(TOO_LARGE)
       ;({ changes } = parseStatus(status.stdout))
       stats = { staged: parseNumstat(staged.stdout), unstaged: parseNumstat(unstaged.stdout) }
@@ -240,7 +255,7 @@ export function logTab(host: Host): Tab {
   let loaded = false
   let root = host.cwd
 
-  const git = (...args: string[]) => host.run(['git', ...args], { cwd: root, timeoutMs: TIMEOUT_MS })
+  const git = (...args: string[]) => gitAt(host, root, args)
   const commit = (sha: string) => lines.find(l => l.commit?.sha === sha)?.commit
   const name = (r: string) => (r.startsWith('HEAD -> ') ? r.slice('HEAD -> '.length) : r.startsWith('tag: ') ? r.slice('tag: '.length) : r)
 

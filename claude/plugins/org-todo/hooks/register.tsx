@@ -182,7 +182,8 @@ function sanitise(p: PanelProps): PanelProps {
 }
 
 type View = { tab: number; filter: string; id?: string }
-type Act = { tab: number; key: string; id: string; seq: number }
+/** `filter` is the one the Client listed `id` under: the act runs only on a row the tab lists for it. */
+type Act = { tab: number; key: string; id: string; seq: number; filter: string }
 
 /** The pane's session: the tabs, what the Client last asked, and the work drain() still has to do. */
 type PanelSession = {
@@ -202,8 +203,10 @@ type PanelSession = {
   wanted?: View
   acts: Act[]
   stale: Set<number>
-  /** The loop doing that work, while it runs: every caller waits for the same one. */
+  /** The loop doing that work, while it runs: every caller joins the same one. */
   draining?: Promise<void>
+  /** The message of the drain failure already toasted: the same one is not toasted again until a drain succeeds. */
+  drainFailed?: string
 }
 
 function say($: EngineInterface, text: string) {
@@ -220,8 +223,9 @@ async function load(ps: PanelSession, i: number) {
   }
 }
 
-/** Resolves the selection, loads its detail, and hands the Client what it draws. */
-async function settle($: EngineInterface, ps: PanelSession) {
+/** Resolves the selection, loads its detail, and hands the Client what it draws; `loading` says a load of the
+ *  tab runs, and hands what it has without loading the detail, which may wait on git too. */
+async function settle($: EngineInterface, ps: PanelSession, loading = false) {
   const tab = ps.tabs[ps.view.tab]!
   const failed = ps.failed[ps.view.tab]
   const rows = failed === undefined ? tab.rows(ps.view.filter) : []
@@ -230,7 +234,7 @@ async function settle($: EngineInterface, ps: PanelSession) {
   ps.lastAt = pick ? items.indexOf(pick) : 0
   ps.view = { ...ps.view, id: pick?.id }
   const id = ps.view.id
-  if (id !== undefined && tab.prefetch && !ps.fetched.has(`${ps.view.tab}:${id}`)) {
+  if (!loading && id !== undefined && tab.prefetch && !ps.fetched.has(`${ps.view.tab}:${id}`)) {
     ps.fetched.add(`${ps.view.tab}:${id}`)
     try {
       await tab.prefetch(id)
@@ -246,6 +250,7 @@ async function settle($: EngineInterface, ps: PanelSession) {
     keys: tab.keys,
     enter: tab.enter,
     ...(failed !== undefined && { failed }),
+    ...(loading && { loading }),
     done: ps.done,
   })
   const prev = await read($, panel)
@@ -254,6 +259,12 @@ async function settle($: EngineInterface, ps: PanelSession) {
 
 async function runAct($: EngineInterface, ps: PanelSession, a: Act) {
   try {
+    // What the Client posts is not trusted to name a row: an id the tab does not list (forged, or gone since) acts
+    // on nothing, and the tab is read again.
+    if (!ps.tabs[a.tab]!.rows(a.filter).some(r => r.kind === 'item' && r.id === a.id)) {
+      say($, 'row changed, nothing done')
+      return await load(ps, a.tab)
+    }
     const result = await ps.tabs[a.tab]!.act(a.key, a.id)
     if (result.kind === 'notice') say($, result.text)
     if (result.kind === 'refresh') {
@@ -272,6 +283,36 @@ function drain($: EngineInterface, ps: PanelSession): Promise<void> {
   return ps.draining
 }
 
+/** drain() for a caller that does not wait on it: a failure is toasted once and `loading` is cleared, as the
+ *  loop that failed may have left it set. */
+function kick($: EngineInterface, ps: PanelSession) {
+  void drain($, ps).then(
+    () => {
+      ps.drainFailed = undefined
+    },
+    async err => {
+      const msg = err instanceof Error ? err.message : String(err)
+      const fresh = msg !== ps.drainFailed
+      ps.drainFailed = msg
+      try {
+        if (fresh) say($, `panel: ${msg}`)
+      } catch {
+        // ecomono: untested, the test kit cannot make a toast fail. A failed toast is dropped, so the clear below
+        // still runs; upgrade path: a kit that can throw from ui.toast.
+      }
+      // A drain started since owns `loading` now: clearing it here would erase the one it set.
+      // ecomono: untested. drainLoop's finally clears ps.draining before this handler runs, so this is true only if a
+      // newer drain started in that gap, which the test kit cannot produce; upgrade path: a kit that can interleave.
+      if (ps.draining) return
+      try {
+        await update($, panel, ({ loading: _, ...rest }) => rest)
+      } catch {
+        // A failed clear is dropped so kick never rejects.
+      }
+    },
+  )
+}
+
 async function drainLoop($: EngineInterface, ps: PanelSession) {
   // Yield first, so `ps.draining` holds this loop before its `finally` can clear it; the clear then runs in the
   // same step as the last check for work, so no work is left behind a loop that has ended.
@@ -280,12 +321,18 @@ async function drainLoop($: EngineInterface, ps: PanelSession) {
     while (ps.wanted || ps.acts.length || ps.stale.size) {
       const a = ps.acts.shift()
       if (a) await runAct($, ps, a)
+      let switched = false
       if (ps.wanted) {
         // A tab becoming active is loaded again, as omp's panel does.
-        if (ps.wanted.tab !== ps.view.tab) ps.stale.add(ps.wanted.tab)
+        switched = ps.wanted.tab !== ps.view.tab
+        if (switched) ps.stale.add(ps.wanted.tab)
         ps.view = ps.wanted
         ps.wanted = undefined
       }
+      // The Client has no rows of a tab just switched to until its load ends: it is told one runs. The poll's
+      // reload of the tab shown says nothing, or its props would be sent twice more every POLL_MS. ecomono: a tab
+      // switched to while a poll reload hangs says nothing until that reload ends (at most git's 10 s timeout).
+      if (switched) await settle($, ps, true)
       for (const i of [...ps.stale]) {
         ps.stale.delete(i)
         await load(ps, i)
@@ -317,25 +364,34 @@ export const register: Register = on => {
     await $.command.register({ name: 'org-todo', description: 'Open the todo and git pane (todo, files, log)' })
     void $.ui.open({ id: PANE, title: 'Todo' })
     ps.tabs.forEach((_, i) => ps.stale.add(i))
-    void drain($, ps)
+    kick($, ps)
     // ecomono: the active git tab is re-read on every tick while the pane is shown (open, placed and the one
     // drawn; `$.ui.panes()`), as the pane stays open beside the chat while files change; `--no-optional-locks`
     // keeps git status off the index lock. The ceiling is a large repository's status every POLL_MS; upgrade to
     // reloading on tool.call results and on tab activation only.
     // A refresh that keeps failing toasts once, not on every tick; a success re-arms it.
     let refreshFailed: string | undefined
+    // `$.clock.every` calls its fn without awaiting it (`fn: () => void`) and asks for the next period at once, so
+    // a tick still waiting on grep or git when the next is due would run under it: that tick is skipped.
+    let ticking = false
     $.clock.every(POLL_MS, async () => {
+      if (ticking) return
+      ticking = true
       try {
-        shown = await refresh($, cwd)
-        refreshFailed = undefined
-      } catch (err) {
-        const msg = err instanceof Error ? err.message : String(err)
-        if (msg !== refreshFailed) say($, `panel: ${msg}`)
-        refreshFailed = msg
+        try {
+          shown = await refresh($, cwd)
+          refreshFailed = undefined
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err)
+          if (msg !== refreshFailed) say($, `panel: ${msg}`)
+          refreshFailed = msg
+        }
+        // A failed panes() counts as the pane not shown for this tick, so the drain below still runs.
+        if (ps.view.tab !== 0 && (await $.ui.panes().then(list => list.some(p => p.id === PANE && p.isPlaced && p.isShown)).catch(() => false))) ps.stale.add(ps.view.tab)
+      } finally {
+        ticking = false
       }
-      // A failed panes() counts as the pane not shown for this tick, so the drain below still runs.
-      if (ps.view.tab !== 0 && (await $.ui.panes().then(list => list.some(p => p.id === PANE && p.isPlaced && p.isShown)).catch(() => false))) ps.stale.add(ps.view.tab)
-      void drain($, ps)
+      kick($, ps)
     })
 
     return next(e)
@@ -352,17 +408,20 @@ export const register: Register = on => {
     const data = (e.data ?? {}) as { view?: { tab?: unknown; filter?: unknown; id?: unknown }; act?: { key?: unknown; id?: unknown; seq?: unknown } }
     const v = data.view
     if (!v || !Number.isInteger(v.tab) || (v.tab as number) < 0 || (v.tab as number) >= ps.tabs.length || typeof v.filter !== 'string' || v.filter.length > 256) return next(e)
-    if (v.id !== null && v.id !== undefined && typeof v.id !== 'string') return next(e)
+    // An id is a row's: `<group>:<path>`, a sha or `<file>:<line>`, its path at most PATH_MAX (4096) long and its
+    // prefix a few characters more. An act's id needs no cap: it runs only when it is one the tab lists.
+    if (v.id !== null && v.id !== undefined && (typeof v.id !== 'string' || v.id.length > 4096 + 16)) return next(e)
     const tab = v.tab as number
     ps.wanted = { tab, filter: v.filter, ...(typeof v.id === 'string' && { id: v.id }) }
     const a = data.act
     if (a && typeof a.key === 'string' && typeof a.id === 'string' && Number.isInteger(a.seq)) {
       const known = ps.tabs[tab]!.keys.some(([k]) => k === a.key) && !(a.key === 'enter' && ps.tabs[tab]!.enter !== 'act')
-      if (known) ps.acts.push({ tab, key: a.key, id: a.id, seq: a.seq as number })
+      if (known) ps.acts.push({ tab, key: a.key, id: a.id, seq: a.seq as number, filter: v.filter })
       else ps.done = Math.max(ps.done, a.seq as number)
     }
-    // Awaited, so the post settles once its work is drawn; a post that arrives meanwhile joins the loop running.
-    await drain($, ps)
+    // Not awaited: a load waiting on a slow git never holds the post (the Client is told it is loading); a post
+    // that arrives meanwhile joins the loop running, which still takes the work one at a time.
+    kick($, ps)
     return next(e)
   })
 

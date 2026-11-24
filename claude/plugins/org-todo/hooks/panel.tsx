@@ -165,7 +165,7 @@ const Panel: ClientModule<PanelProps, State> = (p, surface) => {
         </Box>
       ))}
       <Box flexGrow={1} />
-      <Text dimColor>{busy ? 'working…' : pos}</Text>
+      <Text dimColor>{busy ? 'working…' : p.loading ? 'loading…' : pos}</Text>
     </Box>
   )
 
@@ -314,7 +314,7 @@ const Panel: ClientModule<PanelProps, State> = (p, surface) => {
         </Box>
       ) : (
         <Box flexDirection="column" height={room > 0 ? Math.min(area, rows.length) : area} width={W}>
-          {rows.length === 0 && p.tab === s.tab ? line('  Nothing here.', { dimColor: true }) : ''}
+          {rows.length === 0 && p.tab === s.tab ? line(p.loading ? '  loading…' : '  Nothing here.', { dimColor: true }) : ''}
           {rows.slice(top, top + area).map((r, k) => drawRow(r, top + k))}
         </Box>
       )}
