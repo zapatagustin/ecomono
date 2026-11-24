@@ -698,6 +698,17 @@ Transcripts at `~/.claude/projects/*/*.jsonl` carry per-message `usage`. Sum
 growth, and price reads at 0.1x input, writes at 1.25x (5m TTL) or 2x (1h TTL). Do not estimate
 from a token count alone — cache state dominates the result.
 
+`measure-cost.py` at the repo root does this over every transcript, subagents and workflow agents
+included: `python3 measure-cost.py` reports the last 30 days, `--from/--to` and `--base/--new`
+set the windows, `--sections` picks among bucket totals, composition, models, priced and reach.
+It prints two views, and they disagree on purpose. W is the fixed-weight proxy above. The priced
+view uses the list prices in its `PRICES` table, where a cache read costs 0.05x input on Opus and
+Sonnet and 0.025x on Fable, not 0.1x. Measured over 2026-10-18..2026-11-24, cache reads are 54% of
+W but 34% of estimated USD, and 68% against 35% on the main thread alone, so any share quoted from
+W overstates what re-read context costs. The same run put assistant prose at 1.5% of main-thread
+W, 3% of direct-subagent W and 0.1% of workflow W: the register shortens what the user reads, not
+what a session costs.
+
 ## The migration that made decision 1 true
 
 Decision 1 above claimed `nixos-config` consumes this flake. It did not. `nixos-config` had no
