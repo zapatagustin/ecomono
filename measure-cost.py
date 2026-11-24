@@ -620,6 +620,16 @@ def self_test():
         assert "priced" in str(e), e
     else:
         raise AssertionError("sections_arg accepted an unknown name")
+    for argv in (["--base", "2026-11-10", "2026-11-01"], ["--new", "2026-11-10", "2026-11-01"],
+                 ["--from", "2026-11-10", "--to", "2026-11-01"], ["--from", "2999-01-01"]):
+        with contextlib.redirect_stderr(io.StringIO()):
+            try:
+                parse_args(argv)
+            except SystemExit as e:
+                assert e.code == 2, e.code
+                continue
+        raise AssertionError("parse_args accepted reversed range %s" % argv)
+    parse_args(["--from", "2026-11-05", "--to", "2026-11-05"])
     print("self-test ok")
 
 
@@ -643,7 +653,7 @@ def sections_arg(s):
     return names
 
 
-def main():
+def parse_args(argv=None):
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     ap.add_argument("--root", type=Path, default=Path.home() / ".claude" / "projects")
     # Transcript timestamps are UTC, so the default windows end on the UTC date.
@@ -662,7 +672,14 @@ def main():
     ap.add_argument("--sections", type=sections_arg, default=",".join(SECTIONS),
                     help="comma list of: " + ",".join(SECTIONS))
     ap.add_argument("--self-test", action="store_true", help="run built-in synthetic-data asserts and exit")
-    a = ap.parse_args()
+    a = ap.parse_args(argv)
+    for name, (lo, hi) in (("--base", a.base), ("--new", a.new), ("--from/--to", (a.lo, a.hi))):
+        if lo > hi:
+            ap.error("%s: FROM %s is after TO %s" % (name, lo, hi))
+    return a
+
+def main():
+    a = parse_args()
     if a.self_test:
         return self_test()
     want = a.sections
