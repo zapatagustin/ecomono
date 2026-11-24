@@ -4,7 +4,7 @@
 import { dir, makeCtx, makePi, tick, withEnv } from "./fake-pi.ts"
 import assert from "node:assert/strict"
 import { spawnSync } from "node:child_process"
-import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs"
+import { mkdirSync, mkdtempSync, symlinkSync, writeFileSync } from "node:fs"
 import { homedir, tmpdir } from "node:os"
 import { join } from "node:path"
 import { PATTERN, flipLine, parse, rank } from "../../opencode/tui-plugins/org-todo/core.ts"
@@ -417,6 +417,59 @@ for (const [label, over] of [
   assert.equal(status(ctx), "todo 3")
 }
 
+// ---- the detail reads a bounded head of the file, and the todo's own line shows past that bound --------------------
+
+{
+  const cwd = dir("project")
+  mkdirSync(`${cwd}/docs`)
+  const filler = "x".repeat(99) + "\n"
+  const file = `${cwd}/docs/big.md`
+  // 1 MiB cap: line 30000 starts about 3 MB in; line 3 is well inside.
+  writeFileSync(file, "# t\n- [ ] near\n- [ ] three\n" + filler.repeat(30000) + "- [ ] far\n")
+  const { pi } = makePi({ exec: () => grepOut(`${file}:3:- [ ] three\n${file}:30004:- [ ] far`) })
+  const handle = startOrgTodo(pi, makeCtx({ cwd }), core)
+  await tick()
+  const tab = todoTab(core, handle, {} as any)
+  await tab.load!()
+  const near = tab.rows("").find((r) => r.id === `${file}:3`)!
+  await tab.prefetch!(near.id!)
+  assert.deepEqual(tab.detail(near.id!)!.lines.slice(0, 3).map((l) => l.text), ["# t", "- [ ] near", "- [ ] three"])
+  const far = tab.rows("").find((r) => r.id === `${file}:30004`)!
+  await tab.prefetch!(far.id!)
+  assert.deepEqual(tab.detail(far.id!)!.lines.map((l) => l.text), ["- [ ] far"], "past the bound only the todo's own line shows")
+}
+
+// ---- the detail never blocks on a non-regular file, and never reads one and never through a symlink; a short last line needs no newline
+
+{
+  const cwd = dir("project")
+  mkdirSync(`${cwd}/docs`)
+  const detailOf = async (file: string, line: number, text: string) => {
+    const { pi } = makePi({ exec: () => grepOut(`${file}:${line}:${text}`) })
+    const handle = startOrgTodo(pi, makeCtx({ cwd }), core)
+    await tick()
+    const tab = todoTab(core, handle, {} as any)
+    await tab.load!()
+    const row = tab.rows("").find((r) => r.id === `${file}:${line}`)!
+    await within(tab.prefetch!(row.id!)) // a blocked open fails here instead of freezing the suite
+    return tab.detail(row.id!)!.lines.map((l) => l.text)
+  }
+  // A FIFO with no writer: opened without O_NONBLOCK the open never returns.
+  const fifo = `${cwd}/docs/fifo.md`
+  assert.equal(spawnSync("mkfifo", [fifo]).status, 0)
+  assert.deepEqual(await detailOf(fifo, 2, "- [ ] pipe"), ["- [ ] pipe"], "a FIFO returns promptly, the detail is only the todo's own line")
+  // A symlink to a regular file: O_NOFOLLOW refuses it, so the neighbours of the target do not show.
+  writeFileSync(`${cwd}/docs/real.md`, "# t\n- [ ] linked\n- [ ] after\n")
+  symlinkSync(`${cwd}/docs/real.md`, `${cwd}/docs/link.md`)
+  assert.deepEqual(await detailOf(`${cwd}/docs/link.md`, 2, "- [ ] linked"), ["- [ ] linked"], "a symlink is not followed")
+  // A directory named like a file.
+  mkdirSync(`${cwd}/docs/d.md`)
+  assert.deepEqual(await detailOf(`${cwd}/docs/d.md`, 1, "- [ ] dir"), ["- [ ] dir"], "a directory returns promptly, the detail is only the todo's own line")
+  // The whole file read, last line without a newline: it still shows, with its neighbours.
+  writeFileSync(`${cwd}/docs/short.md`, "# t\n- [ ] one\n- [ ] last")
+  assert.deepEqual(await detailOf(`${cwd}/docs/short.md`, 3, "- [ ] last"), ["# t", "- [ ] one", "- [ ] last"], "a last line without a newline shows")
+}
+
 // ---- a killed search is shown as timed out, not as the previous rows -----------------------------------------------
 
 {
@@ -431,7 +484,7 @@ for (const [label, over] of [
   result = { stdout: "", stderr: "", code: -1, killed: true }
   await tab.load!()
   const rows = tab.rows("")
-  assert.ok(rows.every((r) => r.kind === "head") && rows.some((r) => r.text.includes("timeout")), JSON.stringify(rows))
+  assert.ok(rows.every((r) => r.kind === "head") && rows.some((r) => r.text.includes("timed out")), JSON.stringify(rows))
   assert.equal(tab.title(), "todo ?", "the strip does not show the old count of a killed scan")
   result = grepOut(`${cwd}/docs/a.md:1:- [ ] one`)
   await tab.load!()

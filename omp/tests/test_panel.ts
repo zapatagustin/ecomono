@@ -73,7 +73,7 @@ const counter = (ls: string[]): string | undefined => ls[0]!.match(/\d+ \/ \d+$/
 const HAIRLINE = B + "─".repeat(38)
 /** The key bar at 40 columns for a tab with `enter` and `e`: the tab's keys on the first row, the panel's after,
  *  wrapped onto rows of their own, nothing dropped. */
-const KEYS = [row(" enter  do it    e  edit"), row(" /  filtrar    j/k  mover"), row(" tab  pestaña    esc  cerrar")]
+const KEYS = [row(" enter  do it    e  edit"), row(" /  filter    j/k  move"), row(" tab  next tab    esc  close")]
 /** Reverse video (SGR 7 ... 27) is how a solid accent block is drawn: the plain view drops it, `raw` keeps it. */
 const SGR_REVERSE = /\x1b\[(?:7|27)m/g
 const raw = (entry: any, width = 40): string[] => entry.component.render(width)
@@ -121,6 +121,7 @@ const selected = (entry: any): string => lines(entry).slice(3).find((l: string) 
   assert.equal(entry.options.overlay, true)
   assert.equal(entry.options.overlayOptions.anchor, "right-center")
   assert.equal(entry.options.overlayOptions.width, "38%")
+  assert.equal(entry.options.overlayOptions.minWidth, 40, "MIN_WIDTH")
   assert.equal(todo.loads(), 1, "the initial tab loads on open")
   assert.equal(files.loads(), 1, "an inactive tab loads on open too, so the strip shows its count")
   const out = lines(entry)
@@ -218,7 +219,7 @@ const selected = (entry: any): string => lines(entry).slice(3).find((l: string) 
   await press(entry, "e", "j", "k", "q", "\t", "\x1b[Z")
   assert.equal(tab.acts.length, 0, "no tab key acts while typing")
   assert.equal(entry.closed, false, "q does not close while typing")
-  assert.ok(lines(entry)[1]!.startsWith(B + "> ejkq█ "), lines(entry)[2])
+  assert.ok(lines(entry)[1]!.startsWith(B + "> ejkq█ "), lines(entry)[1])
   await press(entry, "\r")
   assert.ok(lines(entry)[1]!.startsWith(B + "> ejkq "), "enter left the filter and kept the text")
   // Outside the filter again: esc clears, then closes.
@@ -271,7 +272,7 @@ const selected = (entry: any): string => lines(entry).slice(3).find((l: string) 
   const at = async (rows: number, tab = fakeTab("todo", 5, { detail: eight })) => lines((await open([tab], 0, { rows, columns: 60 })).entry, 40)
   const tall = await at(40)
   assert.ok(hasDetail(tall) && tall.includes(row("")), "plenty of height: the detail and the blank rows")
-  assert.ok(tall.includes(row("… 3 más")), "a detail cut at ten lines says how many it left out")
+  assert.ok(tall.includes(row("… 3 more")), "a detail cut at ten lines says how many it left out")
   assert.equal(tall.filter((l: string) => l.includes("line ")).length, 9, "nine lines and the marker fill the ten")
   // Taller than the list but short of the detail's smallest form: the list keeps its blank row, the detail goes.
   const mid = await at(14)
@@ -299,7 +300,7 @@ const selected = (entry: any): string => lines(entry).slice(3).find((l: string) 
 // ---- the key bar wraps and drops nothing, at 40, 46 and 61 cells --------------------------------------------------
 
 {
-  const all = ["enter", "do it", "e", "edit", "/", "filtrar", "j/k", "mover", "tab", "pestaña", "esc", "cerrar"]
+  const all = ["enter", "do it", "e", "edit", "/", "filter", "j/k", "move", "tab", "next tab", "esc", "close"]
   for (const [cols, kbRows] of [[40, 3], [46, 3], [61, 2], [100, 2]] as const) {
     const { entry } = await open([fakeTab("todo", 3)], 0, { rows: 30, columns: cols })
     const out = lines(entry, cols)
@@ -308,7 +309,7 @@ const selected = (entry: any): string => lines(entry).slice(3).find((l: string) 
     const text = bar.join(" ")
     for (const word of all) assert.ok(text.includes(word), `${cols}: ${word} is on the key bar`)
     assert.ok(bar[0]!.includes("enter") && bar[0]!.includes("edit"), `${cols}: the tab's keys start the first row`)
-    assert.ok(!bar[0]!.includes("filtrar"), "the panel's keys come after, on a row of their own")
+    assert.ok(!bar[0]!.includes("filter"), "the panel's keys come after, on a row of their own")
     assert.ok(raw(entry, cols).every((l: string) => Bun.stringWidth(l) === cols), `${cols}: every line is as wide as the panel`)
   }
   // A tab with many keys wraps its own too.
@@ -316,7 +317,7 @@ const selected = (entry: any): string => lines(entry).slice(3).find((l: string) 
   const { entry } = await open([many], 0, { rows: 30, columns: 40 })
   const out = lines(entry, 40)
   const text = out.slice(-6).join(" ")
-  for (const word of ["nvim", "stage", "diff", "one more key here", "and another", "filtrar", "mover", "pestaña", "cerrar"]) assert.ok(text.includes(word), word)
+  for (const word of ["nvim", "stage", "diff", "one more key here", "and another", "filter", "move", "tab", "close"]) assert.ok(text.includes(word), word)
 }
 
 // ---- the theme: only omp's names, the row marker colored, the filter key listed ---------------------------------
@@ -333,7 +334,7 @@ const selected = (entry: any): string => lines(entry).slice(3).find((l: string) 
   const out = ctx.recorded.custom.at(-1)!.component.render(60)
   assert.ok(out.some((l: string) => l.startsWith("<border>│</border>   <success>M</success> y")), "an unselected row's marker is its first grapheme, colored; the rest is plain")
   // The panel keys, on the last key row at a width that fits them, list the filter key; the frame is drawn in `border`.
-  assert.ok(out.at(-1)!.includes("filtrar"), out.at(-1))
+  assert.ok(out.at(-1)!.includes("filter"), out.at(-1))
   assert.ok(out.every((l: string) => l.startsWith("<border>│</border> ")), "the left border on every row, no top or bottom rule")
   assert.ok(out.some((l: string) => l.startsWith("<border>│</border> <borderMuted>──")), "the hairlines are borderMuted")
 }
@@ -550,13 +551,76 @@ const selected = (entry: any): string => lines(entry).slice(3).find((l: string) 
     detail: () => ({ title: "漢字/dir/with/a/very/long/path/and-a-name.ts", tail: "@@ -1,3 +1,4 @@ 漢字", note: "漢字 · 2 days ago", lines: [{ text: "+漢字漢字漢字漢字漢字漢字漢字漢字漢字漢字漢字漢字漢字漢字", no: 1, kind: "add" }, { text: "-x", no: 1234, kind: "del" }, { text: " ctx" }] }),
   })
   for (const cols of [40, 46, 61]) {
-    for (const rows of [6, 9, 12, 16, 24, 40]) {
+    for (const rows of [5, 6, 9, 12, 16, 24, 40]) {
       const { entry } = await open([wide, fakeTab("files", 1)], 0, { rows, columns: cols })
       const out = raw(entry, cols)
       assert.equal(out.length, rows, `${cols}x${rows}`)
       for (const l of out) assert.equal(Bun.stringWidth(l), cols, `${cols}x${rows}: ${JSON.stringify(l)}`)
-      assert.deepEqual(out.slice(-2).map((l: string) => l.replace(SGR_REVERSE, "")).join("").includes("cerrar"), true, `${cols}x${rows}: the key bar`)
+      // The key bar goes whole from 5 rows up (strip, selected row, three key rows); at 40 columns it is exactly KEYS.
+      if (cols === 40) assert.deepEqual(out.slice(-3).map((l: string) => l.replace(SGR_REVERSE, "")), KEYS, `${cols}x${rows}: the whole key bar`)
+      else assert.ok(out.slice(-2).map((l: string) => l.replace(SGR_REVERSE, "")).join("").includes("close"), `${cols}x${rows}: the key bar`)
       assert.ok(out.some((l: string) => l.includes("\x1b[7m>")), `${cols}x${rows}: the selected row`)
+    }
+  }
+}
+
+// ---- an inactive tab whose open-time load fails is marked in the strip; opening it retries and shows the error there
+
+for (const fail of [() => Promise.reject(new Error("boom: no repo")), () => { throw new Error("boom: no repo") }] as const) {
+  let tries = 0
+  const bad = fakeTab("files", 2, { load: () => (tries++, fail()) })
+  const { entry } = await open([fakeTab("todo", 3), bad], 0, { rows: 24, columns: 40 })
+  assert.equal(lines(entry)[0], row(" todo 3 │ files 2 !              1 / 3"), "the failed tab carries a marker in the strip")
+  assert.ok(!lines(entry).some((l: string) => l.includes("boom")), "its error is not drawn on the other tab")
+  assert.equal(tries, 1)
+  await press(entry, "\t")
+  assert.equal(tries, 2, "opening the tab loads it again")
+  assert.ok(lines(entry).some((l: string) => l.includes("boom: no repo")), "its error shows on that tab")
+  assert.ok(raw(entry).every((l: string) => Bun.stringWidth(l) === 40))
+  await press(entry, "\t")
+  assert.ok(lines(entry)[0]!.includes("files 2 !"), "the marker stays while the tab still fails")
+  assert.ok(!lines(entry).some((l: string) => l.includes("boom")), "the error stays on its own tab")
+}
+
+// A retry that succeeds clears the marker.
+{
+  let tries = 0
+  const flaky = fakeTab("files", 2, { load: () => (tries++, tries === 1 ? Promise.reject(new Error("boom: no repo")) : Promise.resolve()) })
+  const { entry } = await open([fakeTab("todo", 3), flaky], 0, { rows: 24, columns: 40 })
+  assert.ok(lines(entry)[0]!.includes("files 2 !"), "the first load failed: marked")
+  await press(entry, "\t")
+  assert.equal(tries, 2, "opening the tab loads it again")
+  await press(entry, "\t")
+  assert.ok(!lines(entry)[0]!.includes("!"), "the marker is gone after a retry that succeeded")
+  assert.equal(lines(entry)[0], row(" todo 3 │ files 2                1 / 3"), "the strip is clean")
+}
+
+// ---- a notice reaches notify without escapes or control bytes ----------------------------------------------------
+
+{
+  const tab = fakeTab("todo", 3)
+  const { ctx, entry } = await open([tab])
+  tab.answer({ kind: "notice", text: "git: bad \x1b[31mred\x1b[0m name\x07" })
+  await press(entry, "e")
+  assert.deepEqual(ctx.recorded.notify.at(-1), ["git: bad red name", "warning"], "no escape or control byte reaches notify")
+}
+
+// ---- a terminal shorter than the chrome: the strip and the selected row stay, the rest gives way -------------------
+
+{
+  // The contract: exactly the terminal's height in lines, each as wide as the panel. When rows run out the detail
+  // goes first, then the free rows, then the hairline and the filter row, then key rows from the bottom.
+  for (const cols of [40, 74]) {
+    for (let rows = 1; rows <= 12; rows++) {
+      const { entry } = await open([fakeTab("todo", 8), fakeTab("files", 1)], 0, { rows, columns: cols })
+      const out = raw(entry, cols)
+      const at = `${cols}x${rows}`
+      assert.equal(out.length, rows, `${at}: exactly the terminal height`)
+      for (const l of out) assert.equal(Bun.stringWidth(l), cols, `${at}: ${JSON.stringify(l)}`)
+      assert.ok(lines(entry, cols)[0]!.includes("todo 8"), `${at}: the tab strip is the first line`)
+      if (rows >= 2) assert.ok(out.some((l: string) => l.includes("\x1b[7m>")), `${at}: the selected row`)
+      if (cols === 40 && rows >= 6) assert.equal(lines(entry, cols)[1], filterLine(""), `${at}: the filter row`)
+      if (cols === 40 && rows >= 5) assert.deepEqual(lines(entry, cols).slice(-3), KEYS, `${at}: the whole key bar`)
     }
   }
 }

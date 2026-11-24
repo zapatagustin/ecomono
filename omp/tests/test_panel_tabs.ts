@@ -34,6 +34,14 @@ const makeHost = (cwd: string) => {
 /** A hang in the code under test fails the run instead of freezing it. */
 const within = <T>(p: Promise<T>, ms = 2000): Promise<T> =>
   Promise.race([p, new Promise<never>((_, rej) => setTimeout(() => rej(new Error(`still pending after ${ms} ms`)), ms))])
+/** Polls until `ok()` holds, up to `ms`; fails naming what never showed, instead of sleeping a guessed time. */
+const until = async (ok: () => boolean, what: string, ms = 5000): Promise<void> => {
+  const end = Date.now() + ms
+  while (!ok()) {
+    if (Date.now() > end) throw new Error(`timed out after ${ms} ms waiting for ${what}`)
+    await new Promise((r) => setTimeout(r, 10))
+  }
+}
 const git = (cwd: string, ...args: string[]): string => {
   const r = spawnSync("git", args, { cwd, encoding: "utf8", env: { ...process.env, GIT_AUTHOR_NAME: "t", GIT_AUTHOR_EMAIL: "t@t", GIT_COMMITTER_NAME: "t", GIT_COMMITTER_EMAIL: "t@t" } })
   assert.equal(r.status, 0, `git ${args.join(" ")}: ${r.stderr}`)
@@ -182,7 +190,7 @@ const texts = (tab: Tab, filter = "") => tab.rows(filter).map((r) => (r.kind ===
   const d = tab.detail(row.id!)!
   assert.equal(d.lines.length, 40, "the body is held to the bound, not whole")
   assert.equal(d.lines[0]!.text, "+row 1")
-  assert.equal(d.more, "60 líneas más", "the lines left out are counted")
+  assert.equal(d.more, "60 more lines", "the lines left out are counted")
   assert.deepEqual(await tab.act("d", row.id!), { kind: "close" })
   assert.deepEqual(host.opened.at(-1), [join(cwd, "big.txt"), 1], "d still jumps to the first changed line")
 }
@@ -624,19 +632,22 @@ const texts = (tab: Tab, filter = "") => tab.rows(filter).map((r) => (r.kind ===
     const handle = startOrgTodo(pi, makeCtx({ cwd, mode: "tui", hasUI: true }), core)
     await tick()
     const host = makeHost(cwd)
-    const open = async (initial: number, columns: number, rows = 40) => {
+    /** The line as plain text: theme tags, reverse video escapes and bg tags out. */
+    const text = (l: string): string => l.replace(/<\/?\w+>/g, "").replace(/\x1b\[(?:7|27)m/g, "")
+    const open = async (initial: number, columns: number, rows = 40, shows?: string) => {
       const ctx = makeCtx({ mode: "tui", hasUI: true, terminal: { rows, columns }, theme: makeTheme(true) })
       void openPanel(ctx, [todoTab(core, handle, host), filesTab(host), logTab(host)], initial)
       for (let i = 0; i < 40 && !ctx.recorded.custom.at(-1)?.component; i++) await tick()
       const c = ctx.recorded.custom.at(-1)!.component
-      for (let i = 0; i < 10; i++) await new Promise((r) => setTimeout(r, 30))
-      return { c, out: (): string[] => c.render(columns) as string[] }
+      const out = (): string[] => c.render(columns) as string[]
+      // The open-time loads are done once the strip shows every count; `shows` is a line of the detail to wait for.
+      await until(() => ["todo 3", "files 5", "log 5"].every((n) => text(out()[0]!).includes(n)), "every tab's count in the strip")
+      if (shows) await until(() => out().some((l) => text(l).includes(shows)), `${JSON.stringify(shows)} on screen`)
+      return { c, out, wait: (what: string) => until(() => out().some((l) => text(l).includes(what)), `${JSON.stringify(what)} on screen`) }
     }
-    /** The line as plain text: theme tags, reverse video escapes and bg tags out. */
-    const text = (l: string): string => l.replace(/<\/?\w+>/g, "").replace(/\x1b\[(?:7|27)m/g, "")
 
     // Every tab shows its count at once, including the two that were never visited; the active tab is a solid block.
-    const files = await open(1, 46)
+    const files = await open(1, 46, 40, "+line 1 edited")
     let out = files.out().map(text)
     assert.equal(out[0], "│  todo 3 │ files 5 │ log 5              1 / 5")
     assert.ok(files.out()[0]!.includes("\x1b[7m<accent> files 5 </accent>\x1b[27m"), "the active tab is a solid block")
@@ -669,14 +680,15 @@ const texts = (tab: Tab, filter = "") => tab.rows(filter).map((r) => (r.kind ===
     assert.equal(pad(out[17]!), "│    1 │ +line 1 edited")
     assert.equal(pad(out[18]!), "│    2 │  line 2")
     assert.ok(colored[16]!.includes("<dim>   1 │ </dim><toolDiffRemoved>-line 1") && colored[17]!.includes("<toolDiffAdded>+line 1 edited"), "a dim gutter; removed and added lines in their colors")
-    assert.equal(pad(out[20]!), "│ … 1 hunk más", "the hunks left out are counted")
-    assert.ok(out.slice(21, -3).every((l: string) => pad(l) === "│"), "free rows after the detail, before the key bar")
-    const bar = out.slice(-3).join(" ")
-    assert.ok(bar.includes("nvim") && bar.includes("stage/unstage") && bar.includes("diff") && bar.includes("filtrar") && bar.includes("mover") && bar.includes("pestaña") && bar.includes("cerrar"), bar)
+    const cutAt = out.findIndex((l: string) => l.includes("more hunk"))
+    assert.equal(pad(out[cutAt]!), "│ … 1 more hunk", "the hunks left out are counted")
+    assert.ok(out.slice(cutAt + 1, -4).every((l: string) => pad(l) === "│"), "free rows after the detail, before the key bar")
+    const bar = out.slice(-4).join(" ")
+    assert.ok(bar.includes("nvim") && bar.includes("stage/unstage") && bar.includes("nvim@hunk") && bar.includes("filter") && bar.includes("move") && bar.includes("tab") && bar.includes("close"), bar)
 
     // Unselected, the counters are drawn in their own colors; the selected row is one solid block.
     files.c.handleInput("j")
-    await new Promise((r) => setTimeout(r, 60))
+    await files.wait("a.ts   @@")
     const moved = files.out()
     assert.ok(moved[4]!.includes("<toolDiffAdded>+2</toolDiffAdded>  <toolDiffRemoved>-2</toolDiffRemoved>"), moved[4])
     assert.match(text(moved[14]!), /^│ a\.ts {3}@@ -\d+(,\d+)? \+\d+(,\d+)? @@/, "the path, then the hunk header when both fit")
@@ -686,42 +698,44 @@ const texts = (tab: Tab, filter = "") => tab.rows(filter).map((r) => (r.kind ===
     const narrow = await open(1, 40)
     assert.ok(narrow.out().every((l: string) => Bun.stringWidth(l.replace(/<\/?\w+>/g, "")) === 40))
     assert.ok(narrow.out().map(text)[0]!.startsWith("│  todo 3 │ files 5 │ log 5"), text(narrow.out()[0]!))
-    assert.ok(narrow.out().map(text).slice(-6).join(" ").includes("pestaña"))
+    assert.ok(narrow.out().map(text).slice(-6).join(" ").includes("tab"))
     assert.ok(narrow.out().map(text).slice(-6).some((l: string) => l.includes(" s  stage/unstage")), "s toggles, and the bar says both verbs, uncropped")
 
     // The todo tab: free text cut at a word, `file:line` title, the file's neighbouring lines, the todo's own line a block.
     const todo = await open(0, 46)
-    out = todo.out().map(text)
     todo.c.handleInput("j")
-    await new Promise((r) => setTimeout(r, 60))
+    await todo.wait("│    1 │ # t")
     out = todo.out().map(text)
     const item = out.findIndex((l: string) => l.includes("decide the foot"))
     assert.match(out[item]!, /^│ > ○ decide the foot fallback with a… +:3 *$/, "cut on a word boundary, no half word before the ellipsis")
     const trule = out.findIndex((l: string, i: number) => i > item && l.startsWith("│ ──────"))
     assert.match(out[trule + 1]!, /^│ …?\/?.*docs\/a\.md:3 *$/, "the title is file:line")
     assert.ok(todo.out()[trule + 1]!.includes("<accent>"))
-    assert.deepEqual(out.slice(trule + 3, trule + 7).map((l: string) => l.replace(/ +$/, "")), [
+    const first = out.findIndex((l: string, i: number) => i > trule && l.startsWith("│    1 │ # t"))
+    assert.ok(first > trule, "the numbered lines start after the title")
+    assert.deepEqual(out.slice(first, first + 4).map((l: string) => l.replace(/ +$/, "")), [
       "│    1 │ # t",
       "│    2 │ - [ ] one",
       "│    3 │ - [ ] decide the foot fallback with …",
       "│    4 │ - [ ] two",
     ], "the neighbouring lines of the file, numbered")
-    assert.ok(todo.out()[trule + 5]!.includes("\x1b[7m") && !todo.out()[trule + 4]!.includes("\x1b[7m"), "the todo's own line is the highlighted one")
-    assert.equal(out[trule + 7]!.trim(), "│", "no phantom line after the file's last newline")
+    assert.ok(todo.out()[first + 2]!.includes("\x1b[7m") && !todo.out()[first + 1]!.includes("\x1b[7m"), "the todo's own line is the highlighted one")
+    assert.equal(out[first + 4]!.trim(), "│", "no phantom line after the file's last newline")
 
     // The log tab: graph, short sha, chips in lane colors (the current branch in the accent), the subject.
-    const log = await open(2, 61)
+    const log = await open(2, 61, 40, " · ")
     out = log.out().map(text)
     // The detail of the selected commit: the short sha and its branch names as the title, author and date dim.
-    assert.match(out[11]!, /^│ [0-9a-f]{7} {3}master {3,}$/, out[11])
-    assert.ok(log.out()[11]!.startsWith("<border>│</border> <accent>"), "the title is accent")
-    assert.ok(log.out()[12]!.includes("<dim>t · "), "author and date are dim")
-    assert.equal(out[13]!.trim(), "│", "one blank row under the note")
+    const title = out.findIndex((l: string) => /^│ [0-9a-f]{7} {3}master\s*$/.test(l))
+    assert.ok(title > 3, "the detail title: the short sha and the branch")
+    assert.ok(log.out()[title]!.startsWith("<border>│</border> <accent>"), "the title is accent")
+    assert.ok(log.out()[title + 1]!.includes("<dim>t · "), "author and date are dim")
+    assert.equal(out[title + 2]!.trim(), "│", "one blank row under the note")
     assert.ok(log.out().every((l: string) => Bun.stringWidth(l.replace(/<\/?\w+>|\[\w+\||\|\]/g, "").replace(/\x1b\[(?:7|27)m/g, "")) === 61), "every line as wide as the panel")
     // Moved off the HEAD row, the columns show: lane glyphs each in their own lane's color, the sha dim, the chip of
     // the current branch in the accent and another branch's chip in its lane's color; the accent is on no lane glyph.
     log.c.handleInput("j")
-    await new Promise((r) => setTimeout(r, 60))
+    await log.wait("feature commit")
     const rows = log.out()
     const strip = (l: string): string => l.replace(/\[\w+\||\|\]/g, "")
     assert.match(strip(rows[3]!), /<mdLink>●<\/mdLink> {4}<muted>[0-9a-f]{7}<\/muted> <accent> master <\/accent> add the long one/)
@@ -732,6 +746,22 @@ const texts = (tab: Tab, filter = "") => tab.rows(filter).map((r) => (r.kind ===
     const tight = await open(2, 40)
     const t40 = tight.out().find((l: string) => l.includes("<success> feature/x </success>"))!
     assert.match(strip(t40), /<success> feature\/x <\/success> feature( commit)?…?\s*$/, "the chip stays whole, the subject is what is cut")
+
+    // The real tabs' key bars at 40 cells: every key with its full label, the panel's own keys too; the
+    // bars take exactly the rows pinned here (todo 3, files and log 4), so a growth is caught.
+    const PANEL = [["/", "filter"], ["j/k", "move"], ["tab", "next tab"], ["esc", "close"]]
+    const ROWS_TODO = 3
+    for (const [index, keys, max] of [
+      [0, [["enter", "done"], ["e", "nvim"]], ROWS_TODO],
+      [1, [["enter", "nvim"], ["s", "stage/unstage"], ["d", "nvim@hunk"]], 4],
+      [2, [["enter", "switch/nvim"], ["a", "all branches"], ["d", "nvim 1st file"]], 4],
+    ] as Array<[number, string[][], number]>) {
+      const lines = (await open(index, 40)).out().map(text).slice(-8)
+      const first = lines.findIndex((l: string) => l.includes(`  ${keys[0]![0]}  ${keys[0]![1]}`))
+      assert.ok(first >= 0, `tab ${index}: the bar starts with its first key`)
+      assert.equal(lines.length - first, max, `tab ${index}: key bar of ${lines.length - first} rows, expected ${max}`)
+      for (const [k, label] of [...keys, ...PANEL]) assert.ok(lines.slice(first).some((l: string) => l.includes(`${k}  ${label}`)), `tab ${index}: ${k} ${label}`)
+    }
   })
 }
 

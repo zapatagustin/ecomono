@@ -6,6 +6,7 @@
  * clears. Every git command runs at the repository root (git's paths are relative to it) with literal pathspecs.
  */
 
+import { constants } from "node:fs"
 import { lstat, open } from "node:fs/promises"
 import { dirname, join } from "node:path"
 import { type Change, parseNumstat, parseStatus, repoRoot } from "./git.ts"
@@ -48,7 +49,7 @@ export function filesTab(host: Host): Tab {
         if (l.startsWith("\\")) return { text: l }
         return { text: l, no: (from++, to++) }
       })
-      return { title: path, tail: /^@@ [^@]*@@/.exec(hunk[0]!)?.[0] ?? hunk[0]!, lines: body, more: [hidden > 0 ? `${hidden} línea${hidden > 1 ? "s" : ""} más` : "", hunks > 0 ? `${hunks} hunk${hunks > 1 ? "s" : ""} más` : ""].filter(Boolean).join(" · ") || undefined }
+      return { title: path, tail: /^@@ [^@]*@@/.exec(hunk[0]!)?.[0] ?? hunk[0]!, lines: body, more: [hidden > 0 ? `${hidden} more line${hidden > 1 ? "s" : ""}` : "", hunks > 0 ? `${hunks} more hunk${hunks > 1 ? "s" : ""}` : ""].filter(Boolean).join(" · ") || undefined }
     }
     const head = (prefix: string) => lines.find((l) => l.startsWith(prefix))?.slice(prefix.length)
     const parts: string[] = []
@@ -70,9 +71,11 @@ export function filesTab(host: Host): Tab {
     const st = await lstat(join(root, path)).catch(() => undefined)
     if (!st) return []
     if (!st.isFile()) return [{ text: st.isSymbolicLink() ? "symbolic link" : st.isDirectory() ? "directory or nested repository" : st.isFIFO() ? "named pipe" : st.isSocket() ? "socket" : "special file" }]
-    const f = await open(join(root, path)).catch(() => undefined)
+    // The path may have been swapped since the lstat: refuse a symlink, never block on a FIFO, and check the handle.
+    const f = await open(join(root, path), constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK).catch(() => undefined)
     if (!f) return []
     try {
+      if (!(await f.stat()).isFile()) return []
       const buf = Buffer.alloc(4096)
       const { bytesRead } = await f.read(buf, 0, buf.length, 0)
       if (buf.subarray(0, bytesRead).includes(0)) return [{ text: "binary file" }]
@@ -152,7 +155,7 @@ export function filesTab(host: Host): Tab {
     keys: [
       ["enter", "nvim"],
       ["s", "stage/unstage"],
-      ["d", "diff"],
+      ["d", "nvim@hunk"],
     ],
     act: async (key, rowId): Promise<Action> => {
       const { group, path } = parse(rowId)

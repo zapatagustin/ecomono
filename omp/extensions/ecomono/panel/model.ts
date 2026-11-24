@@ -42,7 +42,7 @@ export type Detail = {
   /** A dim line under the title (author and date). */
   note?: string
   lines: DetailLine[]
-  /** What was left out that the panel cannot count, `2 hunks más`; the panel adds the lines it cuts itself. */
+  /** What was left out that the panel cannot count, `2 more hunks`; the panel adds the lines it cuts itself. */
   more?: string
 }
 

@@ -7,7 +7,8 @@
  * free rows, and the key bar, which wraps onto as many rows as it needs.
  * omp crops an overlay to the terminal height from the bottom, so this returns exactly `tui.terminal.rows`
  * lines and scrolls the rows itself. When the height runs short the panel gives up the detail first, then the
- * blank rows between sections; the key bar and the selected row always stay. The panel is modal: omp focuses
+ * blank rows between sections, then the filter row and its hairline, then key bar rows from the bottom; the tab
+ * strip always stays and the selected row from two rows up. The panel is modal: omp focuses
  * the overlay until done() is called.
  * Keys, outside the filter: j k, the select keys, tab / shift+tab and the tab's own keys act, q closes, `/`
  * starts the filter, esc clears a filter and then closes; any other printable key is ignored. In the filter
@@ -38,13 +39,17 @@ const CONTENT_MAX = 10
 const LIST_FLOOR = 6
 /** Lines above the rows: the strip, the filter, its hairline. */
 const HEAD = 3
+/** Rows a detail spends besides its content: the hairline, the title and one blank row. */
+const FRAME = 3
+/** Columns between a detail's title and its tail. */
+const TAIL_GAP = 3
 /** The panel's own keys, after the tab's: the filter, moving, the tab strip, closing. */
-const PANEL_KEYS: Array<[string, string]> = [["/", "filtrar"], ["j/k", "mover"], ["tab", "pestaña"], ["esc", "cerrar"]]
+const PANEL_KEYS: Array<[string, string]> = [["/", "filter"], ["j/k", "move"], ["tab", "next tab"], ["esc", "close"]]
 
 export function openPanel(ctx: any, tabs: Tab[], initial: number): Promise<void> {
   const say = (text: string): void => {
     try {
-      ctx.ui.notify(text, "warning")
+      ctx.ui.notify(plain(text), "warning")
     } catch {
       // A notice that cannot be shown changes nothing.
     }
@@ -116,6 +121,8 @@ export function openPanel(ctx: any, tabs: Tab[], initial: number): Promise<void>
        *  has two loads at once (its git commands would run twice, and the late one would clear what the early one
        *  prefetched). A refresh does not join: it must read what an action just changed. */
       const opening = new Map<number, Promise<void>>()
+      /** The tabs whose last load failed: the strip marks the inactive ones, as it cannot show their error. */
+      const lost = new Set<number>()
       /** The newest load's number: an older one (another tab's, or one a refresh replaced) settles unheard. */
       let loadGen = 0
       const load = async (join = false): Promise<void> => {
@@ -128,6 +135,7 @@ export function openPanel(ctx: any, tabs: Tab[], initial: number): Promise<void>
           // A load replaces what the tab knows, so every detail is asked again.
           fetched.clear()
           failed = undefined
+          lost.delete(which)
           reload(current()?.id)
           prefetch()
         } catch (e) {
@@ -135,6 +143,7 @@ export function openPanel(ctx: any, tabs: Tab[], initial: number): Promise<void>
           // The tab's source is not there (no git repository, a missing directory): the panel says so where the
           // rows would be, and stays open so the other tabs work.
           failed = e instanceof Error ? e.message : String(e)
+          lost.add(which)
           rows = []
         } finally {
           if (gen === loadGen) busy = false
@@ -167,19 +176,19 @@ export function openPanel(ctx: any, tabs: Tab[], initial: number): Promise<void>
       }
 
       void load()
-      // Every tab loads on open so the strip shows each count; a failure here is shown when the tab is opened.
-      // A load clears the tab's caches, so its details are asked again whichever tab is showing; a synchronous throw
-      // is a failed load of that tab, never the panel's.
+      // Every tab loads on open so the strip shows each count; a failure here marks the tab in the strip with a `!`,
+      // and opening the tab loads it again (the retry), its error shown on that tab. A tab has no rows before its
+      // load settles and keys do nothing during a load, so nothing of it is cached when this one settles. A
+      // synchronous throw is a failed load of that tab, never the panel's.
       tabs.forEach((t, i) => {
         if (i === active) return
         const p = (async () => t.load())()
         opening.set(i, p)
         const settle = (): void => {
           opening.delete(i)
-          for (const k of fetched) if (k.startsWith(`${i}:`)) fetched.delete(k)
           redraw()
         }
-        p.then(settle, settle)
+        p.then(settle, () => (lost.add(i), settle()))
       })
 
       return {
@@ -206,9 +215,11 @@ export function openPanel(ctx: any, tabs: Tab[], initial: number): Promise<void>
           const idx = items()
           const at = idx.indexOf(sel)
           const pos = `${idx.length === 0 ? 0 : at + 1} / ${idx.length}`
-          const cells = tabs.map((t) => ` ${t.title()} `)
+          const marked = (i: number): boolean => lost.has(i) && i !== active
+          const cells = tabs.map((t, i) => ` ${t.title()}${marked(i) ? " !" : ""} `)
           const stripWidth = cells.reduce((n, c) => n + width(c), 0) + (cells.length - 1)
-          const strip = cells.map((c, i) => (i === active ? block(c) : c)).join(theme.fg("border", box.vertical))
+          // A failed tab's `!` is the warning color; the cell ends `! `, so the plain width is unchanged.
+          const strip = cells.map((c, i) => (i === active ? block(c) : marked(i) ? c.slice(0, -2) + theme.fg("warning", "!") + " " : c)).join(theme.fg("border", box.vertical))
           out.push(
             line(
               stripWidth + 1 + width(pos) <= I
@@ -249,34 +260,35 @@ export function openPanel(ctx: any, tabs: Tab[], initial: number): Promise<void>
           // accent title (path cut at its start, tail kept), a dim note, one blank row, the numbered lines and a
           // cut marker. A detail shorter than its smallest form (title, blank, a line, a marker) is dropped.
           const d: Detail | undefined = failed !== undefined || current()?.id === undefined ? undefined : tab.detail(current()!.id!)
-          const fixed = d ? 3 + (d.note ? 1 : 0) : 0
-          const wants = d ? fixed + Math.min(CONTENT_MAX, d.lines.length + (d.more ? 1 : 0)) : 0
+          const fixed = d ? FRAME + (d.note ? 1 : 0) : 0
+          const count = d ? d.lines.length + (d.more ? 1 : 0) : 0
+          const wants = d ? fixed + Math.min(CONTENT_MAX, count) : 0
           const smallest = d ? Math.min(wants, fixed + 2) : 0
           const detailBlock = (room: number): string[] => {
             if (!d || room < smallest) return []
             const content = Math.min(CONTENT_MAX, room - fixed)
-            const cut = d.lines.length + (d.more ? 1 : 0) > content
+            const cut = count > content
             const shown = d.more || cut ? Math.min(d.lines.length, content - 1) : d.lines.length
             const hidden = d.lines.length - shown
             const title = plain(d.title)
             const tail = d.tail ? plain(d.tail) : ""
             // The path keeps its file name over the tail: the tail gets what the whole title leaves, or nothing.
-            let t = fitPath(title, Math.max(1, I - 3 - width(tail)))
+            let t = fitPath(title, Math.max(1, I - TAIL_GAP - width(tail)))
             if (t.startsWith("…") && !t.startsWith("…/")) t = fitPath(title, I)
-            const tl = tail && width(tail) <= I - width(t) - 3 ? tail : ""
-            const rows = [theme.fg("accent", pad(tl ? `${t}   ${tl}` : t, I))]
-            if (d.note) rows.push(theme.fg("dim", pad(plain(d.note), I)))
-            rows.push(" ".repeat(I))
+            const tl = tail && width(tail) <= I - width(t) - TAIL_GAP ? tail : ""
+            const body = [theme.fg("accent", pad(tl ? `${t}${" ".repeat(TAIL_GAP)}${tl}` : t, I))]
+            if (d.note) body.push(theme.fg("dim", pad(plain(d.note), I)))
+            body.push(" ".repeat(I))
             const numbered = d.lines.some((l) => l.no !== undefined)
             const noW = Math.max(3, String(Math.max(0, ...d.lines.map((l) => l.no ?? 0))).length)
             const gutterW = numbered ? noW + 4 : 0
             for (const l of d.lines.slice(0, shown)) {
               const gutter = numbered ? theme.fg("dim", ` ${l.no === undefined ? " ".repeat(noW) : String(l.no).padStart(noW)} │ `) : ""
               const text = pad(plain(l.text), I - gutterW)
-              rows.push(gutter + (l.kind === "add" ? theme.fg("toolDiffAdded", text) : l.kind === "del" ? theme.fg("toolDiffRemoved", text) : l.kind === "hit" ? block(text) : text))
+              body.push(gutter + (l.kind === "add" ? theme.fg("toolDiffAdded", text) : l.kind === "del" ? theme.fg("toolDiffRemoved", text) : l.kind === "hit" ? block(text) : text))
             }
-            if (hidden > 0 || d.more) rows.push(theme.fg("dim", pad(`… ${[hidden > 0 ? `${hidden} más` : "", d.more ?? ""].filter(Boolean).join(" · ")}`, I)))
-            return [hairline, ...rows.map(line)].slice(0, room)
+            if (hidden > 0 || d.more) body.push(theme.fg("dim", pad(`… ${[hidden > 0 ? `${hidden} more` : "", d.more ?? ""].filter(Boolean).join(" · ")}`, I)))
+            return [hairline, ...body.map(line)].slice(0, room)
           }
 
           // The display list: the rows, one blank row before each section but the first. `blanks` false drops them.
@@ -325,7 +337,7 @@ export function openPanel(ctx: any, tabs: Tab[], initial: number): Promise<void>
             const row = rows[e.i]!
             const chosen = e.i === sel
             if (row.kind === "head" && !row.spans) {
-              out.push(line(theme.fg("dim", sides(plain(row.text), row.right ?? "", I))))
+              out.push(line(theme.fg("dim", sides(plain(row.text), plain(row.right ?? ""), I))))
               continue
             }
             // The indent is two cells; the selected row's holds the `>` marker.
@@ -365,9 +377,14 @@ export function openPanel(ctx: any, tabs: Tab[], initial: number): Promise<void>
           // Free rows sit between the detail and the key bar, so the detail stays under the list.
           while (out.length < H - keyRows.length) out.push(blank)
           out.push(...keyRows)
-          // ecomono: below HEAD + key rows + 1 lines the strip and filter are cropped from the top; the selected row
-          // and the key bar stay. Reached only on a terminal a few rows high.
-          return out.length > H ? out.slice(out.length - H) : out
+          if (out.length <= H) return out
+          // ecomono: reached only when H < HEAD + 1 + key rows (the detail and the free rows are already gone, the
+          // list is one row): the hairline and the filter row go, then key rows from the bottom; the strip stays
+          // always and the selected row from H = 2. A terminal that short is rare; upgrade by scrolling the key bar.
+          const body = out.slice(HEAD, out.length - keyRows.length)
+          const spare = Math.max(0, H - 1 - body.length)
+          const bar = Math.min(spare, keyRows.length)
+          return [out[0]!, ...out.slice(1, HEAD).slice(0, spare - bar), ...body.slice(0, H - 1), ...keyRows.slice(0, bar)]
         },
         handleInput(data: string): void {
           const key = keyOf(data)

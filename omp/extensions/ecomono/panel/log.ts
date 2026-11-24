@@ -75,9 +75,9 @@ export function logTab(host: Host): Tab {
       details.set(sha, { title: sha, tail: names.join(" "), note, lines: [subject, ...stat].filter((t): t is string => t !== undefined && t.trim() !== "").map((text) => ({ text })) })
     },
     keys: [
-      ["enter", "switch · nvim"],
-      ["a", "todas"],
-      ["d", "diff"],
+      ["enter", "switch/nvim"],
+      ["a", "all branches"],
+      ["d", "nvim 1st file"],
     ],
     act: async (key, sha): Promise<Action> => {
       if (key === "a") {

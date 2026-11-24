@@ -15,8 +15,8 @@
  */
 
 import type { ExtensionAPI } from "@oh-my-pi/pi-coding-agent"
-import { readdirSync, statSync } from "node:fs"
-import { readFile, writeFile } from "node:fs/promises"
+import { constants, readdirSync, statSync } from "node:fs"
+import { open, readFile, writeFile } from "node:fs/promises"
 import { homedir } from "node:os"
 import { join } from "node:path"
 import type { Action, Detail, DetailLine, Host, Row, Tab } from "./panel/model.ts"
@@ -43,6 +43,35 @@ const KEY = "org-todo"
 const POLL_MS = 3000
 /** Lines of the file shown on each side of the selected todo in the detail. */
 const NEIGHBOURS = 3
+/** Bytes of a file read for a todo's detail. ecomono: a todo further in than this shows only its own line; raise it, or index line offsets, if that shows. */
+const READ_CAP = 1 << 20
+/** The first `lines` lines of a file, at most READ_CAP bytes (a cut last line is dropped); undefined when unreadable. */
+async function head(file: string, lines: number): Promise<string | undefined> {
+  const f = await open(file, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK).catch(() => undefined)
+  if (!f) return undefined
+  try {
+    const st = await f.stat()
+    // A non-regular file ends in an empty read (size 0) or in the catch (EISDIR).
+    // Sized from the file, so a small one does not allocate and zero the whole cap.
+    const cap = Math.min(st.size, READ_CAP)
+    const buf = Buffer.alloc(cap)
+    let got = 0
+    let nl = 0
+    while (got < cap && nl < lines) {
+      const { bytesRead } = await f.read(buf, got, Math.min(65536, cap - got), got)
+      if (bytesRead === 0) return buf.toString("utf8", 0, got)
+      for (let i = got; i < got + bytesRead; i++) if (buf[i] === 10) nl++
+      got += bytesRead
+    }
+    if (got === st.size) return buf.toString("utf8", 0, got) // the whole file was read: its last line needs no newline
+    const end = nl >= lines ? got : buf.lastIndexOf(10, got - 1) + 1
+    return buf.toString("utf8", 0, end)
+  } catch {
+    return undefined
+  } finally {
+    await f.close()
+  }
+}
 
 /**
  * Tick once now, then every POLL_MS through ctx.setInterval (omp contains a throw there and clears the timer on
@@ -143,7 +172,7 @@ export function todoTab(core: OrgTodoCore, h: OrgTodoHandle, host: Host): Tab {
     title: () => (h.timedOut() ? "todo ?" : `todo ${h.todos().length}`),
     rows: (filter) => {
       // The old rows are not current once a scan was killed: say so instead of listing them.
-      if (h.timedOut()) return [{ kind: "head", text: "búsqueda agotada (timeout)" }]
+      if (h.timedOut()) return [{ kind: "head", text: "search timed out" }]
       const q = filter.toLowerCase()
       const rows: Row[] = []
       let last: string | undefined
@@ -164,11 +193,13 @@ export function todoTab(core: OrgTodoCore, h: OrgTodoHandle, host: Host): Tab {
     // The file's lines around the todo; a file that cannot be read keeps the todo's own line.
     prefetch: async (id) => {
       const t = byId(id)
-      const body = t ? await readFile(t.file, "utf8").catch(() => undefined) : undefined
+      const body = t ? await head(t.file, t.line + NEIGHBOURS) : undefined
       if (!t || body === undefined) return
       const all = body.split("\n")
       // A final newline ends the last line; it does not start one more.
       if (all.at(-1) === "") all.pop()
+      // A todo past the bytes read keeps its own line.
+      if (t.line > all.length) return
       const lines: DetailLine[] = []
       for (let n = Math.max(1, t.line - NEIGHBOURS); n <= Math.min(all.length, t.line + NEIGHBOURS); n++) {
         lines.push(n === t.line ? own(t) : { no: n, text: all[n - 1]!.replace(/\r$/, "") })
@@ -176,7 +207,7 @@ export function todoTab(core: OrgTodoCore, h: OrgTodoHandle, host: Host): Tab {
       details.set(id, { title: `${t.file}:${t.line}`, lines })
     },
     keys: [
-      ["enter", "hecho"],
+      ["enter", "done"],
       ["e", "nvim"],
     ],
     act: async (key, id): Promise<Action> => {
