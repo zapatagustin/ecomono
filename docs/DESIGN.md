@@ -67,12 +67,22 @@ running into, so both agents now read one tree.
 
 ### The register is written four times
 
-`claude/output-styles/ecomono.md` (106 lines, the active output style),
+`claude/output-styles/ecomono.md` (58 lines, the active output style),
 `agent-skills/ecomono/SKILL.md` (73 lines, on demand), and the `ecomono:persona` blocks in both
 `claude/CLAUDE.md` and `opencode/AGENTS.md`. The first two are different axes — cold/deep-dive is
 how much warmth and context, lite/full/ultra is how much lexical compression — so they are not
 redundant with each other. The two persona blocks are: same content, two agents, nothing keeping
 them equal.
+
+The output style used to be a third full copy: it restated the decision tiers, the voice bullets
+and the ladder in Spanish, about 8 KB of its 11 KB, and the main thread paid for it on every turn
+next to the persona block that says the same. Every surface that loads the style also loads a
+persona block (`CLAUDE.md` on Claude Code, `RULES.md` on omp), so the style now carries only what
+the block does not say: the cold/deep-dive wording, the before/after example, the exact-terms and
+persona-scope elaborations, and the build and mentor clauses with no counterpart. It keeps its
+`## Comportamiento mentor` heading because `omp/tests/smoke.sh` uses it to prove `PERSONALITY.md`
+reached the prompt. Ceiling: no check ties the style to the block, so a rule added to the style
+alone is invisible to opencode, which never loads it.
 
 They had already diverged. `opencode/AGENTS.md` was missing the entire "default cold, deep-dive
 only on request" rule, so on opencode the register's own default did not exist. A missing rule
