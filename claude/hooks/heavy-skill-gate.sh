@@ -7,7 +7,8 @@
 #    one is `size x turns_remaining`, not a one-time charge. Measured on
 #    claude-api: 250,123 cache-write tokens for a two-number answer, and ~$7 of a
 #    single session when it landed early and was re-read 61 times. Route these
-#    through an Agent, whose context dies on return.
+#    through an Agent, whose context dies on return: the gate denies them in the
+#    main thread only and stays silent when a subagent makes the call.
 #
 # 2. Ownership. Some harness-shipped skills cover a job an ecomono skill already
 #    owns, and their trigger phrases collide outright — the shipped `review`
@@ -30,12 +31,20 @@ set -uo pipefail
 # Fail open. A gate that errors must not block every skill in the session.
 command -v jq >/dev/null 2>&1 || exit 0
 
-skill=$(cat | jq -r '.tool_input.skill // empty' 2>/dev/null) || exit 0
+payload=$(cat)
+skill=$(printf '%s' "$payload" | jq -r '.tool_input.skill // empty' 2>/dev/null) || exit 0
 [ -n "$skill" ] || exit 0
 
 ours=""
 case "$skill" in
-  claude-api) ;;
+  claude-api)
+    # Weight only bites a thread that keeps the body. `agent_id` is present when the call comes
+    # from a subagent, whose context dies on return: that is the route the deny reason names, so
+    # denying there too leaves no way to load the skill at all. `agent_type` alone does not
+    # qualify, because a `--agent` session carries it in its main thread.
+    agent_id=$(printf '%s' "$payload" | jq -r '.agent_id // empty' 2>/dev/null) || exit 0
+    [ -n "$agent_id" ] && exit 0
+    ;;
   simplify) ours="ecomono-cut for a diff, ecomono-audit for the whole repo" ;;
   review) ours="ecomono-review for the comment format, or ecomono-judgment for dual adversarial review" ;;
   security-review) ours="the ecomono-r1-risk agent (R1), launched via Agent" ;;
