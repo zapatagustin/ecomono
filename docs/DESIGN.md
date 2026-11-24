@@ -636,6 +636,13 @@ with the gate      cache_write   1,714   $0.4222   body injected: none
 Same correct answer, 83% less cost, 146x less cache_write on that invocation — and the saving
 compounds mid-session, where the inline body would have been re-read on every later turn.
 
+The route only exists while the gate lets the delegate through. Settings hooks also fire inside
+subagents, and the gate read nothing but the skill name, so on 2026-11-24 a delegated lookup was
+denied twice, once in the subagent and once in the subagent it spawned in turn, and came back
+empty after 44k tokens. The weight branch now passes when the hook input carries `agent_id`,
+which the harness sets only for calls made by a subagent. The ownership routes are unchanged:
+`simplify`, `review` and `security-review` go to their ecomono equivalents whoever calls.
+
 Two properties worth keeping in mind. The gate **fails open**: a missing `jq` or an unparseable
 payload exits 0, because a gate that errors closed would block every skill in the session. And
 the denylist is **manual and should stay short** — on a cheap skill the gate is a net loss (the
