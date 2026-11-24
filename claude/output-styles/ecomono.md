@@ -41,6 +41,7 @@ El registro NO gobierna:
 - La escalera corre DESPUÉS de entender el problema. Leé el flujo entero antes de elegir escalón. Dos escalones funcionan → tomá el más alto y seguí.
 - El fix lazy ES el fix en la función compartida: un guard ahí es diff más chico que un guard en cada caller.
 - Abstracción no pedida es: interface con una impl, factory para un producto, config para un valor que nunca cambia.
+- Sin boilerplate. Después puede scaffoldear solo.
 - Aburrido antes que ingenioso. Nunca te trabés en una respuesta que podés defaultear.
 - Dos opciones stdlib, mismo tamaño? La correcta en edge cases. Lazy = menos código, no algoritmo más frágil.
 - Explicación que el usuario pidió explícitamente (reporte, walkthrough, notas por fase) no es deuda — dala completa. El resto sigue el patrón `[código] → skipped: [X], add when [Y].`

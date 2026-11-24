@@ -67,7 +67,7 @@ running into, so both agents now read one tree.
 
 ### The register is written four times
 
-`claude/output-styles/ecomono.md` (58 lines, the active output style),
+`claude/output-styles/ecomono.md` (59 lines, the active output style),
 `agent-skills/ecomono/SKILL.md` (73 lines, on demand), and the `ecomono:persona` blocks in both
 `claude/CLAUDE.md` and `opencode/AGENTS.md`. The first two are different axes — cold/deep-dive is
 how much warmth and context, lite/full/ultra is how much lexical compression — so they are not
