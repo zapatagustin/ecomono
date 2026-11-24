@@ -2,7 +2,7 @@
 name: ecomono-judgment
 description: "Trigger: judgment day, dual review, adversarial review, juzgar. Two blind judges review in parallel, confirmed issues get fixed, then re-judged."
 metadata:
-  version: "1.15"
+  version: "1.16"
 ---
 
 Two independent reviewers, neither of which saw the work being written, agreeing on a
@@ -29,10 +29,10 @@ slice.
   them say nothing about the code under review. Either way every sub-agent reports which
   it received, and a report of none is about the delegator, not about the sub-agent.
 - Wait for both. Never synthesize from a partial verdict.
-- **Ask before fixing** in round 1, bounded by the round cap below; everything else goes
-  to the "Needs your decision" list.
+- **Fix confirmed blockers without asking** while the round cap below leaves a re-judge,
+  and report them in the output; everything else goes to the "Needs your decision" list.
 - **Three rounds per judgment.** `rounds:` never passes three: round one, then the
-  re-judges that follow, whether step 7's approved batch and its one retry (never later
+  re-judges that follow, whether step 7's batch and its one retry (never later
   than round three) or step 8's shared `fix` batch. Step 8 tests the cap once, when the
   list is returned. A round discarded for drift is not counted (step 4): the cap bounds
   judged rounds, not launches.
@@ -139,7 +139,7 @@ makes reachable is not pre-existing.
 | Subject hash changed other than by a re-freeze | **Drift.** Write nothing, discard the round, re-freeze, re-launch (step 4) |
 | No skill registry, SDD-shaped target | Say which skills you could not resolve, build the block from the project's own standards instead, and record `Skill Resolution: fallback-path`. A missing registry is never licence to send no block |
 | A sub-agent reports it received no standards block | The round's SETUP was defective, not its findings. Name it beside the verdict, build the block before the next launch, and do NOT discard the round over it |
-| Both judges find the same CRITICAL or real WARNING | **Confirmed** blocker. First confirmed in round 1 → step 7; first confirmed in round 2 or later → the list (step 8) |
+| Both judges find the same CRITICAL or real WARNING | **Confirmed** blocker. Fewer than three rounds run → step 7; first confirmed in round 3 → the list (step 8) |
 | One judge finds it | **Suspect.** Triage per step 6. Never auto-fix unprompted |
 | Judges contradict each other | Put to the user via the list. Never resolve it yourself |
 | Round 2+ has only theoretical warnings or suggestions | Report as INFO or suspects per step 6. Do not re-judge |
@@ -169,25 +169,21 @@ converge, which is information about the finding, not about the judge.
    want it answered; an open suspect does not block APPROVED by itself. A contradiction
    always goes on the list — you never resolve it; the user's answer is the human decision
    the Gates row asks for. A confirmed CRITICAL or real WARNING is a **blocker**, open until
-   a re-judge stops reporting it or the review ends. Round 1 → step 7. First confirmed in
-   round 2 or later → never auto-fixed, onto the list.
-7. Ask before fixing the round-1 blockers. The first wait under a given hash — at
-   this ask or at list return — write the ESCALATED receipt under it before the question is
-   put; later writes under that hash only refresh `rounds:` or rewrite it to the terminal
-   verdict (step 9). No answer at the ask leaves that ESCALATED standing. This decision, and
-   on approval its loop, is settled first; the round's list is returned after, at once on
-   decline.
-   - **Approve** → one batch covering all of them, by a **separate** fix agent — the judges
+   a re-judge stops reporting it or the review ends. Fewer than three rounds run → step 7.
+   First confirmed in round 3 → never fixed, onto the list.
+7. Fix the blockers without asking. Before the fix agent runs, or at list return under a
+   hash that carries no ESCALATED yet, write the ESCALATED receipt under the round's hash; later writes under
+   that hash only refresh `rounds:` or rewrite it to the terminal verdict (step 9). A session
+   that ends mid-loop leaves that ESCALATED standing. The fix loop is settled first; the
+   round's list is returned after.
+   - **Batch** → one batch covering all of them, by a **separate** fix agent — the judges
      do not fix what they found. Then the **re-freeze**: re-run step 1 in full (hash,
      changed-line count, empty-diff and untracked-file guards); its hash is the next
      round's subject. Re-judge from step 3 — both judges, same standards block, scope
      limited to those blockers, round counter continuing. A blocker that still fails gets
-     ONE more batch under the same approval; failing again makes it **exhausted**: open,
-     fix no longer offered, onto the list with `stop` as its only answer.
-   - **Decline** → the blockers stay open and the verdict is pinned at ESCALATED. A declined
-     blocker is not a list item: its decision is made. The list carries only the other
-     items, `fix` not offered: their answers, `accept` or `stop`, are recorded and change
-     nothing.
+     ONE more batch when its re-judge still fits within round three; failing again, or
+     failing with no round left, makes it **exhausted**: open, fix no longer offered, onto
+     the list with `stop` as its only answer.
    - **Re-freeze guard refusal** (the fix agent added an untracked file, or reverted
      everything to an empty diff) → there is no new hash, so nothing is written under
      the refused re-freeze: the verdict, on `stop`, no answer or session end here, is the
@@ -201,26 +197,25 @@ converge, which is information about the finding, not about the judge.
    until answered. Return is a wait: the receipt goes first per step 7, so a session that
    ends unanswered still leaves a record — no answer, and that receipt stands. Per item:
    - **fix** approves exactly one correction batch for that item, whatever its class — the
-     Gates row on suspects covers unprompted fixes only — and is not offered after a
-     decline. It is not offered on any item when the list is returned with three rounds
-     already run (the cap). Every item answered `fix` on one list shares one batch and one
-     re-judge, scoped to those items. Separate fix agent, re-freeze per step 7,
+     Gates row on suspects covers unprompted fixes only. It is not offered on any item when
+     the list is returned with three rounds already run (the cap). Every item answered
+     `fix` on one list shares one batch and one re-judge, scoped to those items. Separate fix agent, re-freeze per step 7,
      NO retry: still failing → back on the list, `stop` its only answer.
    - **accept**, for suspect and contradiction items only, records the item in the memory
      copy's body with its original severity and judge(s), a contradiction with both judges'
-     positions. A blocker's answers are fix or stop; stop alone when it is exhausted or
-     `fix` is not offered.
+     positions. A blocker on the list has `stop` only: it is exhausted, or first confirmed
+     in round three.
    - **stop** ends the review. The existing ESCALATED is left in place; `rounds:` is
      refreshed only if the hash still verifies, and after a guard refusal nothing is
      rewritten.
-9. Close. APPROVED requires ALL of: no blocker open (none declined, exhausted or
+9. Close. APPROVED requires ALL of: no blocker open (none exhausted or
    unanswered), no list item unanswered, and the hash verified unchanged since the last
    round's judges saw it — plus, over 400 changed lines, the round's coverage statement;
    without it the candidate is ESCALATED. Anything else is ESCALATED. Write the terminal
    verdict under the hash of the round that produced it. After a guard refusal there is no
    such hash: the verdict is the ESCALATED under the last hash that carries one (step 7).
    If the hash the verdict is written under already carries an
-   ESCALATED (written at the round's first wait, no re-freeze since) → rewrite both copies
+   ESCALATED (written before the round's fix or at list return, no re-freeze since) → rewrite both copies
    in place, the only case a receipt can change verdict under one hash; otherwise write
    new. Every earlier ESCALATED under an earlier hash stays, certifying bytes that no longer
    exist. Every write or rewrite is preceded by the hash
