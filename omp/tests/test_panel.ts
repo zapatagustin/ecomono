@@ -163,6 +163,11 @@ const selected = (entry: any): string => lines(entry).slice(3).find((l: string) 
   assert.ok(!out.some((l: string) => l.includes("item 6")), "item 6 is past the rows area")
   await press(entry, "j", "j", "j", "j", "j", "j")
   assert.equal(selected(entry), row("> todo item 7                       :7"))
+  // h/t are what physical J/K type on us(dvorak): they move like j/k.
+  await press(entry, "t")
+  assert.equal(selected(entry), row("> todo item 6                       :6"), "t moves up")
+  await press(entry, "h")
+  assert.equal(selected(entry), row("> todo item 7                       :7"), "h moves down")
   assert.ok(!lines(entry, 40).some((l: string) => l.includes("item 1 ")), "the window scrolled")
   await press(entry, FAKE_KEYS["tui.select.pageDown"]!)
   // One page = the row lines the last draw had (6): from item 7 to item 13.

@@ -430,8 +430,9 @@ export function openPanel(ctx: any, tabs: Tab[], initial: number): Promise<void>
           if (key === "/") filtering = true
           else if (key === "tab") activate(active + 1)
           else if (key === "shift+tab") activate(active - 1)
-          else if (key === "j") move(1)
-          else if (key === "k") move(-1)
+          // Physical J/K type h/t on us(dvorak); both pairs move, so the keys sit where vim's do.
+          else if (key === "j" || key === "h") move(1)
+          else if (key === "k" || key === "t") move(-1)
           else if (navigate()) return redraw()
           else if (key === "enter" || is(data, "tui.select.confirm")) {
             const row = current()
