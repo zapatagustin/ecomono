@@ -32,6 +32,26 @@ export const fitTail = (s: string, cols: number): string => {
   return `…${out}`
 }
 
+/** A path cut at its start on a directory boundary, so the file name survives: `…/ecomono/index.ts`. A name that
+ *  alone is too wide falls back to `fitTail`, which cuts inside it. */
+export const fitPath = (s: string, cols: number): string => {
+  if (width(s) <= cols) return s
+  for (let i = s.indexOf("/"); i !== -1; i = s.indexOf("/", i + 1)) {
+    const cut = `…${s.slice(i)}`
+    if (width(cut) <= cols) return cut
+  }
+  return fitTail(s, cols)
+}
+
+/** Free text cut at its end, on a word boundary when that keeps at least half of what fits. */
+export const fitWords = (s: string, cols: number): string => {
+  if (width(s) <= cols) return s
+  const cut = fit(s, cols)
+  const head = cut.slice(0, -1)
+  const at = head.lastIndexOf(" ")
+  return s[head.length] === " " || at < head.length / 2 ? cut : `${head.slice(0, at).trimEnd()}…`
+}
+
 /** `s` broken at spaces into lines of at most `cols` columns; a word wider than `cols` is cut with `fit`. */
 export const wrap = (s: string, cols: number): string[] => {
   const lines: string[] = []
@@ -63,4 +83,4 @@ export const sides = (left: string, right: string, cols: number): string => {
 
 /** Control characters and escape sequences out of text that came from a file or a command: the panel draws
  *  it, and a stray ESC would otherwise reach the terminal. */
-export const plain = (s: string): string => s.replace(/\x1b\[[0-9;:?]*[ -/]*[@-~]/g, "").replace(/[\x00-\x08\x0b-\x1f\x7f-\x9f]/g, "").replace(/\t/g, "  ")
+export const plain = (s: string): string => s.replace(/\x1b\[[0-9;:?]*[ -/]*[@-~]/g, "").replace(/[\x00-\x08\x0b-\x1f\x7f-\x9f]/g, "").replace(/\t/g, "  ").replace(/\n/g, " ")

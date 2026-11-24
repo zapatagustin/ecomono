@@ -19,7 +19,7 @@ import { readdirSync, statSync } from "node:fs"
 import { readFile, writeFile } from "node:fs/promises"
 import { homedir } from "node:os"
 import { join } from "node:path"
-import type { Action, Host, Row, Tab } from "./panel/model.ts"
+import type { Action, Detail, DetailLine, Host, Row, Tab } from "./panel/model.ts"
 
 type Todo = { file: string; line: number; text: string; kind: "org" | "md"; src: string }
 
@@ -41,6 +41,8 @@ export interface OrgTodoHandle {
 
 const KEY = "org-todo"
 const POLL_MS = 3000
+/** Lines of the file shown on each side of the selected todo in the detail. */
+const NEIGHBOURS = 3
 
 /**
  * Tick once now, then every POLL_MS through ctx.setInterval (omp contains a throw there and clears the timer on
@@ -133,6 +135,9 @@ async function markDone(core: OrgTodoCore, t: Todo): Promise<string | null> {
  */
 export function todoTab(core: OrgTodoCore, h: OrgTodoHandle, host: Host): Tab {
   const byId = (id: string): Todo | undefined => h.todos().find((t) => `${t.file}:${t.line}` === id)
+  /** What `detail` shows before prefetch has read the file: the todo's own line, as the scan saw it. */
+  const own = (t: Todo): DetailLine => ({ no: t.line, text: t.kind === "org" ? `* TODO ${t.text}` : `- [ ] ${t.text}`, kind: "hit" })
+  const details = new Map<string, Detail>()
   return {
     name: "todo",
     title: () => (h.timedOut() ? "todo ?" : `todo ${h.todos().length}`),
@@ -154,7 +159,21 @@ export function todoTab(core: OrgTodoCore, h: OrgTodoHandle, host: Host): Tab {
     },
     detail: (id) => {
       const t = byId(id)
-      return t ? [t.file, t.kind === "org" ? `* TODO ${t.text}` : `- [ ] ${t.text}`] : []
+      return t ? (details.get(id) ?? { title: `${t.file}:${t.line}`, lines: [own(t)] }) : undefined
+    },
+    // The file's lines around the todo; a file that cannot be read keeps the todo's own line.
+    prefetch: async (id) => {
+      const t = byId(id)
+      const body = t ? await readFile(t.file, "utf8").catch(() => undefined) : undefined
+      if (!t || body === undefined) return
+      const all = body.split("\n")
+      // A final newline ends the last line; it does not start one more.
+      if (all.at(-1) === "") all.pop()
+      const lines: DetailLine[] = []
+      for (let n = Math.max(1, t.line - NEIGHBOURS); n <= Math.min(all.length, t.line + NEIGHBOURS); n++) {
+        lines.push(n === t.line ? own(t) : { no: n, text: all[n - 1]!.replace(/\r$/, "") })
+      }
+      details.set(id, { title: `${t.file}:${t.line}`, lines })
     },
     keys: [
       ["enter", "hecho"],
@@ -172,6 +191,6 @@ export function todoTab(core: OrgTodoCore, h: OrgTodoHandle, host: Host): Tab {
       // line changed on disk, not UTF-8) shows the rows as they are now, with the reason said first.
       return refused ? { kind: "refresh", notice: refused } : { kind: "refresh" }
     },
-    load: () => h.refresh(),
+    load: () => (details.clear(), h.refresh()),
   }
 }

@@ -432,6 +432,7 @@ for (const [label, over] of [
   await tab.load!()
   const rows = tab.rows("")
   assert.ok(rows.every((r) => r.kind === "head") && rows.some((r) => r.text.includes("timeout")), JSON.stringify(rows))
+  assert.equal(tab.title(), "todo ?", "the strip does not show the old count of a killed scan")
   result = grepOut(`${cwd}/docs/a.md:1:- [ ] one`)
   await tab.load!()
   assert.deepEqual(tab.rows("").map((r) => r.text), ["a.md", "○ one"], "the next good scan shows rows again")

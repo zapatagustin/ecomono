@@ -10,15 +10,19 @@
 import { existsSync } from "node:fs"
 import { join } from "node:path"
 import { type GraphLine, branchTargets, parseGraph, repoRoot } from "./git.ts"
-import type { Action, Host, Row, Tab } from "./model.ts"
+import type { Action, Detail, Host, Row, Span, Tab } from "./model.ts"
+import { width } from "./text.ts"
 
 const LIMIT = 200
-const DETAIL_LINES = 8
+/** Theme colors the graph lanes cycle through, by lane position. `accent` is left out: it marks the current branch. */
+const LANES = ["mdLink", "success", "warning", "syntaxKeyword", "syntaxType", "syntaxString"]
 
 export function logTab(host: Host): Tab {
   let all = true
   let lines: GraphLine[] = []
-  const details = new Map<string, string[]>()
+  const details = new Map<string, Detail>()
+  /** False until the first load worked: the strip shows no count before that, never a zero that is not known. */
+  let loaded = false
 
   let root = host.cwd
 
@@ -27,27 +31,48 @@ export function logTab(host: Host): Tab {
 
   return {
     name: "log",
-    title: () => (all ? "log" : "log ·"),
+    // The load stops at LIMIT, so a full list is a floor, not a total.
+    title: () => {
+      const n = lines.filter((l) => l.commit).length
+      return !loaded ? "log" : `log ${n >= LIMIT ? `${LIMIT}+` : n}${all ? "" : " ·"}`
+    },
     rows: (filter) => {
       const q = filter.toLowerCase()
       const rows: Row[] = []
+      // The sha column lines up across rows: the graph is padded to the widest one (filtered-out rows included).
+      const graphWidth = Math.max(0, ...lines.map((l) => width(l.graph)))
       for (const l of lines) {
         if (!l.commit) {
-          if (!q) rows.push({ kind: "head", text: l.graph })
+          if (!q) rows.push({ kind: "head", text: l.graph, spans: laneSpans(l.graph, graphWidth), tight: true })
           continue
         }
         const { sha, refs, subject } = l.commit
-        const chips = refs.map((r) => (r.startsWith("HEAD -> ") ? r.slice("HEAD -> ".length) : r.startsWith("tag: ") ? r.slice("tag: ".length) : r)).map((r) => `[${r}]`)
+        const names = refs.map((r) => (r.startsWith("HEAD -> ") ? r.slice("HEAD -> ".length) : r.startsWith("tag: ") ? r.slice("tag: ".length) : r))
+        const chips = names.map((r) => `[${r}]`)
         const text = `${l.graph} ${sha} ${chips.length ? `${chips.join(" ")} ` : ""}${subject}`
         if (q && !subject.toLowerCase().includes(q) && !sha.includes(q) && !chips.join(" ").toLowerCase().includes(q)) continue
-        rows.push({ kind: "item", text, id: sha, color: l.commit.head ? "accent" : undefined })
+        // A chip takes the color of the lane its commit sits on; the current branch is the accent.
+        const lane = LANES[Math.floor(Math.max(0, l.graph.indexOf("●")) / 2) % LANES.length]!
+        const spans: Span[] = [
+          ...laneSpans(l.graph, graphWidth),
+          { text: " " },
+          { text: sha, color: "muted" },
+          { text: " " },
+          ...names.flatMap((n, i): Span[] => [{ text: n, color: refs[i]!.startsWith("HEAD -> ") ? "accent" : lane, chip: true }, { text: " " }]),
+          { text: subject },
+        ]
+        rows.push({ kind: "item", text, id: sha, color: l.commit.head ? "accent" : undefined, spans })
       }
       return rows
     },
-    detail: (sha) => details.get(sha) ?? [],
+    detail: (sha) => details.get(sha),
     prefetch: async (sha) => {
       const r = await git("show", "--no-ext-diff", "--stat=60", "--format=%s%n%an · %ar", sha)
-      details.set(sha, r.stdout.split("\n").filter((l) => l.trim() !== "").slice(0, DETAIL_LINES))
+      // The two format lines by position: an empty subject must not pull the author line into the title.
+      const [subject, note] = r.stdout.split("\n")
+      const stat = r.stdout.split("\n").slice(2).filter((l) => l.trim() !== "")
+      const names = (commit(sha)?.refs ?? []).map((x) => (x.startsWith("HEAD -> ") ? x.slice("HEAD -> ".length) : x.startsWith("tag: ") ? x.slice("tag: ".length) : x))
+      details.set(sha, { title: sha, tail: names.join(" "), note, lines: [subject, ...stat].filter((t): t is string => t !== undefined && t.trim() !== "").map((text) => ({ text })) })
     },
     keys: [
       ["enter", "switch · nvim"],
@@ -93,8 +118,25 @@ export function logTab(host: Host): Tab {
       if (r.code !== 0) throw new Error(`git log: ${firstLine(r.stderr) || `exit ${r.code}`}`)
       lines = parseGraph(r.stdout)
       details.clear()
+      loaded = true
     },
   }
+}
+
+/** A graph prefix as colored runs, one color per lane (git lays lanes two columns apart), padded to `cols`. A
+ *  glyph keeps its own lane's color, so no lane is ever drawn in another's. */
+function laneSpans(graph: string, cols: number): Span[] {
+  const spans: Span[] = []
+  let pos = 0
+  for (const { segment } of new Intl.Segmenter().segment(graph)) {
+    const color = segment === " " ? undefined : LANES[Math.floor(pos / 2) % LANES.length]
+    const last = spans.at(-1)
+    if (last && last.color === color) last.text += segment
+    else spans.push({ text: segment, color })
+    pos += width(segment)
+  }
+  if (pos < cols) spans.push({ text: " ".repeat(cols - pos) })
+  return spans
 }
 
 const firstLine = (s: string): string => s.split("\n")[0]?.trim() ?? ""

@@ -9,27 +9,47 @@
 import { lstat, open } from "node:fs/promises"
 import { dirname, join } from "node:path"
 import { type Change, parseNumstat, parseStatus, repoRoot } from "./git.ts"
-import type { Action, Host, Row, Tab } from "./model.ts"
+import type { Action, Detail, DetailLine, Host, Row, Tab } from "./model.ts"
 
-const DETAIL_LINES = 8
+/** Lines of an untracked file, or of a diff's hunk, held as its detail; the panel cuts further to the room it has. */
+const DETAIL_LINES = 40
 /** An untracked directory with more files than this is one row. */
 const COLLAPSE_OVER = 20
 
 export function filesTab(host: Host): Tab {
   let changes: Change[] = []
   let stats = { staged: new Map<string, { add: number; del: number }>(), unstaged: new Map<string, { add: number; del: number }>() }
-  const diffs = new Map<string, string[]>()
+  const diffs = new Map<string, Detail>()
+  /** False until the first load worked: the strip shows no count before that, never a zero that is not known. */
+  let loaded = false
 
   let root = host.cwd
 
   const git = (...args: string[]) => host.exec("git", args, { timeout: 10_000, cwd: root })
-  /** The selected row's diff, from the first hunk on (the file headers are dropped by position, not by prefix, so a
-   *  removed `-- comment` stays), as detail lines. A diff without a hunk (binary, mode only, pure rename) is said
-   *  in one line from its extended headers instead. */
-  const diffLines = (out: string): string[] => {
-    const lines = out.split("\n")
+  /** The selected row's diff as a detail: the first hunk (header in the title's tail, lines numbered by the new
+   *  file, a removed line by the old one) and a count of the hunks after it. The file headers are dropped by
+   *  position, not by prefix, so a removed `-- comment` stays. A diff without a hunk (binary, mode only, pure
+   *  rename) is said in one line from its extended headers instead. */
+  const diffDetail = (path: string, out: string): Detail => {
+    const lines = out.split("\n").filter((l) => l !== "")
     const at = lines.findIndex((l) => l.startsWith("@@"))
-    if (at >= 0) return lines.slice(at).filter((l) => l !== "").slice(0, DETAIL_LINES)
+    if (at >= 0) {
+      const rest = lines.slice(at)
+      const next = rest.findIndex((l, i) => i > 0 && l.startsWith("@@"))
+      const hunk = next === -1 ? rest : rest.slice(0, next)
+      const hunks = rest.filter((l) => l.startsWith("@@")).length - 1
+      const m = /^@@ -(\d+)(?:,\d+)? \+(\d+)/.exec(hunk[0]!)
+      let [from, to] = [Number(m?.[1] ?? 1), Number(m?.[2] ?? 1)]
+      // The body is capped at DETAIL_LINES, the panel draws only what fits: a huge hunk (a staged new file) is held to the bound, the rest is counted.
+      const hidden = Math.max(0, hunk.length - 1 - DETAIL_LINES)
+      const body: DetailLine[] = hunk.slice(1, 1 + DETAIL_LINES).map((l) => {
+        if (l.startsWith("+")) return { text: l, no: to++, kind: "add" }
+        if (l.startsWith("-")) return { text: l, no: from++, kind: "del" }
+        if (l.startsWith("\\")) return { text: l }
+        return { text: l, no: (from++, to++) }
+      })
+      return { title: path, tail: /^@@ [^@]*@@/.exec(hunk[0]!)?.[0] ?? hunk[0]!, lines: body, more: [hidden > 0 ? `${hidden} línea${hidden > 1 ? "s" : ""} más` : "", hunks > 0 ? `${hunks} hunk${hunks > 1 ? "s" : ""} más` : ""].filter(Boolean).join(" · ") || undefined }
+    }
     const head = (prefix: string) => lines.find((l) => l.startsWith(prefix))?.slice(prefix.length)
     const parts: string[] = []
     if (lines.some((l) => l.startsWith("Binary files ") || l === "GIT binary patch")) parts.push("binary file")
@@ -41,22 +61,24 @@ export function filesTab(host: Host): Tab {
     if (deleted) parts.push(`deleted file · mode ${deleted}`)
     const from = head("rename from ")
     if (from) parts.push(`renamed from ${from}`)
-    return parts.length ? [parts.join(" · ")] : []
+    return { title: path, lines: parts.length ? [{ text: parts.join(" · ") }] : [] }
   }
   /** An untracked file has no diff: its first lines, or `binary file` when the head holds a NUL. Only a regular
    *  file is opened (a FIFO would block, a symlink may point outside the repository): anything else is named in one
-   *  line. A read error gives no lines. */
-  const headOf = async (path: string): Promise<string[]> => {
+   *  line. A read error gives no lines. The lines of a file are numbered, a one-line statement is not. */
+  const headOf = async (path: string): Promise<DetailLine[]> => {
     const st = await lstat(join(root, path)).catch(() => undefined)
     if (!st) return []
-    if (!st.isFile()) return [st.isSymbolicLink() ? "symbolic link" : st.isDirectory() ? "directory or nested repository" : st.isFIFO() ? "named pipe" : st.isSocket() ? "socket" : "special file"]
+    if (!st.isFile()) return [{ text: st.isSymbolicLink() ? "symbolic link" : st.isDirectory() ? "directory or nested repository" : st.isFIFO() ? "named pipe" : st.isSocket() ? "socket" : "special file" }]
     const f = await open(join(root, path)).catch(() => undefined)
     if (!f) return []
     try {
       const buf = Buffer.alloc(4096)
       const { bytesRead } = await f.read(buf, 0, buf.length, 0)
-      if (buf.subarray(0, bytesRead).includes(0)) return ["binary file"]
-      return buf.toString("utf8", 0, bytesRead).split("\n").slice(0, DETAIL_LINES)
+      if (buf.subarray(0, bytesRead).includes(0)) return [{ text: "binary file" }]
+      const text = buf.toString("utf8", 0, bytesRead).split("\n")
+      if (text.at(-1) === "") text.pop()
+      return text.slice(0, DETAIL_LINES).map((t, i) => ({ text: t, no: i + 1 }))
     } catch {
       return []
     } finally {
@@ -74,10 +96,6 @@ export function filesTab(host: Host): Tab {
   }
   /** The file count of a collapsed row's path (`<dir>/`), by membership in the collapse set, never by the slash. */
   const collapsedCount = (path: string): number | undefined => (path.endsWith("/") ? bigDirs().get(path.slice(0, -1)) : undefined)
-  const plusMinus = (m: Map<string, { add: number; del: number }>, path: string): string => {
-    const s = m.get(path)
-    return s ? `+${s.add} -${s.del}` : ""
-  }
   /** Rows are `<group>\0<path>` so a path staged and unstaged at once has two selectable rows. */
   const id = (group: string, path: string): string => `${group}\0${path}`
   const parse = (rowId: string): { group: string; path: string } => {
@@ -89,18 +107,18 @@ export function filesTab(host: Host): Tab {
     const { group, path } = parse(rowId)
     if (group === "untracked") {
       const n = collapsedCount(path)
-      diffs.set(rowId, n !== undefined ? [`${n} untracked files`] : await headOf(path))
+      diffs.set(rowId, { title: path, lines: n !== undefined ? [{ text: `${n} untracked files` }] : await headOf(path) })
       return
     }
     // A staged rename is diffed with its old path too: on the new path alone git sees a new file, not a rename.
     const from = group === "staged" ? changes.find((c) => c.path === path)?.from : undefined
     const r = await git("--literal-pathspecs", "diff", "--no-ext-diff", ...(group === "staged" ? ["--cached"] : []), "-U2", "--", path, ...(from ? [from] : []))
-    diffs.set(rowId, diffLines(r.stdout))
+    diffs.set(rowId, diffDetail(path, r.stdout))
   }
 
   return {
     name: "files",
-    title: () => `files ${changes.length}`,
+    title: () => (loaded ? `files ${changes.length}` : "files"),
     rows: (filter) => {
       const q = filter.toLowerCase()
       const groups: Array<[string, Array<[Change, string]>]> = [
@@ -119,17 +137,17 @@ export function filesTab(host: Host): Tab {
         for (const [c, letter] of shown) {
           const dir = group === "untracked" ? dirname(c.path) : "."
           if (big.has(dir)) {
-            if (!folded.has(dir)) rows.push({ kind: "item", text: `? ${dir}/`, right: `${big.get(dir)} files`, id: id(group, `${dir}/`), color: color("?") })
+            if (!folded.has(dir)) rows.push({ kind: "item", text: `? ${dir}/`, right: `${big.get(dir)} files`, id: id(group, `${dir}/`), color: color("?"), cut: "start" })
             folded.add(dir)
             continue
           }
-          const stat = group === "staged" ? plusMinus(stats.staged, c.path) : group === "unstaged" ? plusMinus(stats.unstaged, c.path) : ""
-          rows.push({ kind: "item", text: `${letter} ${c.path}`, right: stat, id: id(group, c.path), color: color(letter) })
+          const stat = group === "staged" ? stats.staged.get(c.path) : group === "unstaged" ? stats.unstaged.get(c.path) : undefined
+          rows.push({ kind: "item", text: `${letter} ${c.path}`, add: stat?.add, del: stat?.del, id: id(group, c.path), color: color(letter), cut: "start" })
         }
       }
       return rows
     },
-    detail: (rowId) => diffs.get(rowId) ?? [],
+    detail: (rowId) => diffs.get(rowId),
     prefetch,
     keys: [
       ["enter", "nvim"],
@@ -147,8 +165,7 @@ export function filesTab(host: Host): Tab {
         // ecomono: the diff is shown in the editor as the file at its first changed hunk, not as a diff buffer: a
         // pipe into `nvim -R -` has no stdin under foot. Write the diff to a temp file if a diff view is wanted.
         if (!diffs.has(rowId)) await prefetch(rowId)
-        const first = (diffs.get(rowId) ?? []).find((l) => l.startsWith("@@"))
-        const line = Number(/\+(\d+)/.exec(first ?? "")?.[1] ?? 1)
+        const line = Number(/\+(\d+)/.exec(diffs.get(rowId)?.tail ?? "")?.[1] ?? 1)
         await host.openEditor(file, line)
         return { kind: "close" }
       }
@@ -174,6 +191,7 @@ export function filesTab(host: Host): Tab {
       const [unstaged, staged] = await Promise.all([git("diff", "--no-ext-diff", "--numstat", "-z"), git("diff", "--no-ext-diff", "--cached", "--numstat", "-z")])
       stats = { staged: parseNumstat(staged.stdout), unstaged: parseNumstat(unstaged.stdout) }
       diffs.clear()
+      loaded = true
     },
   }
 }
