@@ -9,6 +9,10 @@ Sections
   models      W by model, heaviest agents, first appearance per model (--from/--to).
   priced      USD estimate by bucket/family and cache_read share of USD vs of W (--base/--new/--from/--to).
   reach       share of agents whose context carries CLAUDE.md / output-style text.
+  limits      USD and tokens per 5-hour window by model family; limit events per ISO week (--from/--to).
+  context     main thread: USD above/below 200k context, compactions, cold resumes (--from/--to).
+  floor       first-request tokens and cache_read share per agent type and family (--from/--to).
+  outcomes    agents, USD, turns and verdict counts per agent type/phase, family, effort; advisor usage.
 
 Transcript facts this relies on
   * One API message spans several jsonl lines with the same message.id: dedupe by id across
@@ -20,6 +24,9 @@ Transcript facts this relies on
   * CLAUDE.md arrives as an `attachment` line of type "instructions"; the output style as
     attachment types "output_style" / "output_style_instructions". The system prompt itself
     is not recorded, so absence of an attachment is not proof the text is absent there.
+  * Limit events: assistant lines with isApiErrorMessage and quotaLimits.rateLimitType. Compactions:
+    system lines with subtype compact_boundary. Effort: the assistant line's `effort` field.
+    Workflow phase: workflowPhase in the agent's .meta.json.
   * Thinking blocks are almost always stored empty (redacted). See thinking_split().
 """
 import argparse
@@ -37,6 +44,12 @@ NUDGES = [("dale", r"\bdale\b"), ("continua", r"contin[uú]a"),
 # Strings for the reach section: first two live only in CLAUDE.md, the last only in the style.
 CLAUDE_MD_PROBES = ("Lazy senior dev. Lazy = efficient", "Re-read context is ~50% of session cost")
 STYLE_PROBE = "Voz mentor comprimida"
+WINDOW_HOURS = 5          # usage-limit window length
+CTX_HIGH = 200_000        # context tokens above which a main-thread turn counts as "long context"
+COLD_MIN_CTX = 50_000     # a cold resume needs at least this much context ...
+COLD_CR_SHARE = 0.10      # ... and cache_read below this share of it
+VERDICTS = ("APPROVED", "ESCALATED", "PASS", "FAIL")
+VERDICT_TEXT = re.compile(r"JUDGMENT:\s*(APPROVED|ESCALATED)|\b(PASS|FAIL)\b")
 
 
 # USD per million tokens: (input, output, cache write 5m, cache write 1h, cache read).
@@ -101,6 +114,24 @@ def meta_label(path):
     except (OSError, ValueError):
         return ""
     return "/".join(x for x in (m.get("workflowPhase"), m.get("description")) if x)
+
+
+def meta_phase(path):
+    try:
+        return json.loads(path.with_suffix(".meta.json").read_text()).get("workflowPhase") or ""
+    except (OSError, ValueError):
+        return ""
+
+
+def advisor_used(j, usage):
+    """True when the usage or a content block (type or tool name) names the advisor.
+
+    The line field advisorModel is the configured advisor, present on most lines, so it is not usage.
+    """
+    if "advisor" in json.dumps(usage).lower():
+        return True
+    return any("advisor" in (str(b.get("type", "")) + str(b.get("name", ""))).lower()
+               for b in (j.get("message") or {}).get("content") or [] if isinstance(b, dict))
 
 
 def transcripts(root):
@@ -239,6 +270,7 @@ def scan(root, lo, hi, idx):
         msgs = {}
         order = []
         prompts = []
+        compacts, seen_uuid, limit_events = [], set(), []
         flags = {"claude_md": set(), "style": False, "instructions": False}
         for j in lines(p):
             t = j.get("type")
@@ -251,12 +283,20 @@ def scan(root, lo, hi, idx):
                 elif a.get("type") in ("output_style", "output_style_instructions"):
                     flags["style"] = True
                 continue
+            if t == "system" and j.get("subtype") == "compact_boundary":
+                if lo <= (j.get("timestamp") or "")[:10] <= hi and j.get("uuid") not in seen_uuid:
+                    seen_uuid.add(j.get("uuid"))
+                    compacts.append(j["timestamp"])
             if t == "user" and len(prompts) < 2:
                 prompts.append(text_of((j.get("message") or {}).get("content", "")))
             if t != "assistant":
                 continue
             m = j.get("message", {})
             ts, mid, model = j.get("timestamp", ""), m.get("id"), m.get("model")
+            if j.get("isApiErrorMessage") and j.get("quotaLimits") and lo <= ts[:10] <= hi \
+                    and j.get("uuid") not in seen_uuid:
+                seen_uuid.add(j.get("uuid"))
+                limit_events.append((ts, j["quotaLimits"].get("rateLimitType") or "?"))
             if model and model != "<synthetic>" and ts:
                 fs = first_seen[model]
                 if kind not in fs or ts < fs[kind]:
@@ -267,11 +307,16 @@ def scan(root, lo, hi, idx):
             rec = msgs.get(mid)
             if rec is None:
                 rec = msgs[mid] = {"ts": own["ts"], "usage": own["usage"], "model": own["model"],
-                                   "blocks": {}}
+                                   "blocks": {}, "effort": j.get("effort"), "adv": False,
+                                   "adv_cfg": bool(j.get("advisorModel"))}
                 order.append(mid)
+            rec["adv"] = rec["adv"] or advisor_used(j, m["usage"])
             for b in m.get("content") or []:
                 if isinstance(b, dict):
                     rec["blocks"][json.dumps(b, sort_keys=True)] = b
+        # ecomono: an agent with no owned message in the window is dropped here, so its limit
+        # events and compactions are not counted. Upgrade path: build the record anyway when
+        # limit_events or compacts is non-empty and let the sections skip agents without msgs.
         if not msgs:
             continue
         # A workflow agent's first turn is the harness relaying the user request; the
@@ -281,7 +326,8 @@ def scan(root, lo, hi, idx):
             prompt = prompts[1]
         agents.append({"kind": kind, "sid": sid, "type": agent_type, "path": p,
                        "msgs": [msgs[i] for i in order], "prompt": prompt, "flags": flags,
-                       "label": meta_label(p)})
+                       "label": meta_label(p), "compacts": compacts, "limits": limit_events,
+                       "phase": meta_phase(p) if kind != "main" else ""})
     return agents, first_seen
 
 
@@ -295,10 +341,12 @@ def load(root, idx, window, extra=()):
     full, first_seen = scan(root, min(w[0] for w in wins), max(w[1] for w in wins), idx)
     prepare(full)
     clipped = []
+    inside = lambda ts: window[0] <= ts[:10] <= window[1]
     for a in full:
-        ms = [m for m in a["msgs"] if window[0] <= m["ts"][:10] <= window[1]]
+        ms = [m for m in a["msgs"] if inside(m["ts"])]
         if ms:
-            clipped.append(dict(a, msgs=ms))
+            clipped.append(dict(a, msgs=ms, limits=[e for e in a["limits"] if inside(e[0])],
+                                compacts=[t for t in a["compacts"] if inside(t)]))
     prepare(clipped)
     return full, clipped, first_seen
 
@@ -527,6 +575,310 @@ def reach(agents):
     print("   CLAUDE#1 = %r ; CLAUDE#2 = %r" % CLAUDE_MD_PROBES)
 
 
+# ------------------------------------------------------------ baseline meters
+def parse_ts(ts):
+    return datetime.datetime.fromisoformat(ts.replace("Z", "+00:00"))
+
+
+def tokens_of(u):
+    return sum(u.get(k, 0) for k in ("input_tokens", "output_tokens", "cache_creation_input_tokens",
+                                     "cache_read_input_tokens"))
+
+
+def context_of(u):
+    return (u.get("input_tokens", 0) + u.get("cache_read_input_tokens", 0)
+            + u.get("cache_creation_input_tokens", 0))
+
+
+def priced_msgs(a):
+    """Messages of a known model family: drops synthetic error lines and unknown models."""
+    return [m for m in a["msgs"] if family(m["model"])]
+
+
+def iso_week(ts):
+    y, w, _ = datetime.date.fromisoformat(ts[:10]).isocalendar()
+    return f"{y}-W{w:02d}"
+
+
+def limits(agents):
+    """USD and tokens per usage-limit window by family, plus limit events per ISO week.
+
+    ecomono: the account's real window clock is not in the transcripts. A window opens at the first
+    message after the previous one opened WINDOW_HOURS ago, so a gap of that length always starts a
+    new one; in continuous use the cut can be off by up to the window length, and activity outside
+    the scanned transcripts is invisible. Upgrade path: anchor on the reset time carried by a
+    limit event when present.
+    """
+    rows = sorted((parse_ts(m["ts"]), family(m["model"]), usd(m["usage"], m["model"]),
+                   tokens_of(m["usage"])) for a in agents for m in priced_msgs(a))
+    wins, start = [], None
+    for t, fam, cost, tok in rows:
+        if start is None or t - start >= datetime.timedelta(hours=WINDOW_HOURS):
+            wins.append({"start": t, "usd": collections.Counter(), "tok": collections.Counter()})
+            start = t
+        wins[-1]["usd"][fam] += cost
+        wins[-1]["tok"][fam] += tok
+    print("\n== E. usage-limit windows (%dh; list-price USD estimate): %d windows" % (WINDOW_HOURS, len(wins)))
+    print("%-8s %5s | %8s %8s %8s | %9s %9s %9s" % ("family", "wins", "USD med", "p90", "max",
+                                                    "Mtok med", "p90", "max"))
+    for fam in (*PRICES, None):
+        cs = [sum(w["usd"].values()) if fam is None else w["usd"][fam] for w in wins
+              if fam is None or fam in w["usd"]]
+        ts = [sum(w["tok"].values()) if fam is None else w["tok"][fam] for w in wins
+              if fam is None or fam in w["tok"]]
+        if cs:
+            print("%-8s %5d | %8.2f %8.2f %8.2f | %9.1f %9.1f %9.1f" % (
+                fam or "all", len(cs), statistics.median(cs), quantile(cs, .9), max(cs),
+                statistics.median(ts) / 1e6, quantile(ts, .9) / 1e6, max(ts) / 1e6))
+    events = collections.defaultdict(collections.Counter)
+    hit = collections.Counter()
+    for a in agents:
+        for ts, kind in a["limits"]:
+            events[iso_week(ts)][kind] += 1
+            t = parse_ts(ts)
+            i = max((i for i, w in enumerate(wins) if w["start"] <= t), default=None)
+            if i is not None:
+                hit[i] += 1
+    print("limit events per ISO week (rateLimitType): total %d in %d windows" % (
+        sum(sum(c.values()) for c in events.values()), len(hit)))
+    for w in sorted(events):
+        print("  %s  %s" % (w, "  ".join("%s %d" % kv for kv in events[w].most_common())))
+    hit_usd = [sum(wins[i]["usd"].values()) for i in hit]
+    rest = [sum(w["usd"].values()) for i, w in enumerate(wins) if i not in hit]
+    if hit_usd and rest:
+        print("window USD median: with a limit event $%.2f, without $%.2f" % (
+            statistics.median(hit_usd), statistics.median(rest)))
+    return {"windows": len(wins), "events": {w: dict(c) for w, c in events.items()}}
+
+
+def context(agents):
+    """Main thread: USD split at CTX_HIGH, context quantiles, compactions and cold resumes.
+
+    ecomono: a cold resume is inferred from usage alone (cache_read under COLD_CR_SHARE of the
+    context, context over COLD_MIN_CTX); a compaction or a cache TTL expiry look the same, and the
+    idle gap is measured from the previous message's timestamp, not from the last tool result.
+    Upgrade path: tell them apart with the compact_boundary timestamp and the cache TTL in
+    cache_creation.
+    """
+    main = [a for a in agents if a["kind"] == "main"]
+    low = high = 0.0
+    ctxs, cold, compacts = [], [], 0
+    for a in main:
+        compacts += len(a["compacts"])
+        prev = None
+        for m in priced_msgs(a):
+            u, c = m["usage"], context_of(m["usage"])
+            cost = usd(u, m["model"])
+            ctxs.append(c)
+            if c > CTX_HIGH:
+                high += cost
+            else:
+                low += cost
+            if prev is not None and c > COLD_MIN_CTX and u.get("cache_read_input_tokens", 0) < COLD_CR_SHARE * c:
+                cc = {k: u[k] for k in ("cache_creation_input_tokens", "cache_creation") if k in u}
+                cold.append((usd(cc, m["model"]), cost, (parse_ts(m["ts"]) - parse_ts(prev["ts"])).total_seconds()))
+            prev = m
+    tot = low + high
+    print("\n== F. main-thread context (%d sessions, %d turns, USD $%.0f)" % (len(main), len(ctxs), tot))
+    print("USD in turns <= %dk context $%.0f (%.0f%%), above $%.0f (%.0f%%)" % (
+        CTX_HIGH // 1000, low, pct(low, tot), high, pct(high, tot)))
+    print("context tokens per turn: median %d, p90 %d" % (statistics.median(ctxs) if ctxs else 0, quantile(ctxs, .9)))
+    print("compactions (compact_boundary): %d" % compacts)
+    gaps = [g for _, _, g in cold]
+    print("cold resumes (cache_read < %d%% of context, context > %dk): %d turns, "
+          "cache_creation $%.0f (%.0f%% of main), whole turns $%.0f (%.0f%%)" % (
+              100 * COLD_CR_SHARE, COLD_MIN_CTX // 1000, len(cold), sum(c for c, _, _ in cold),
+              pct(sum(c for c, _, _ in cold), tot), sum(t for _, t, _ in cold), pct(sum(t for _, t, _ in cold), tot)))
+    if gaps:
+        print("  idle gap before them: median %.0f min, p90 %.0f min" % (
+            statistics.median(gaps) / 60, quantile(gaps, .9) / 60))
+    return {"above": high, "below": low, "compactions": compacts, "cold": len(cold),
+            "gap_median": statistics.median(gaps) if gaps else 0, "cold_cc_usd": sum(c for c, _, _ in cold)}
+
+
+def dominant_family(a):
+    by = collections.Counter()
+    for m in priced_msgs(a):
+        by[family(m["model"])] += usd(m["usage"], m["model"])
+    return by.most_common(1)[0][0] if by else None
+
+
+def floor(agents):
+    """First-request tokens (input + cache_read + cache_creation) and cache_read share, per agent type."""
+    groups = collections.defaultdict(list)
+    for a in agents:
+        ms = priced_msgs(a)
+        if a["kind"] != "main" and ms:
+            u = ms[0]["usage"]
+            c = context_of(u)
+            key = (("wf:" if a["kind"] == "workflow" else "") + a["type"], family(ms[0]["model"]))
+            groups[key].append((c, u.get("cache_read_input_tokens", 0) / c if c else 0.0))
+    print("\n== G. first-request tokens per agent type and family (cached = cache_read share)")
+    print("%-26s %-7s %5s %9s %9s %8s" % ("agent type", "family", "n", "tok med", "tok p90", "cached"))
+    out = {}
+    for key, xs in sorted(groups.items(), key=lambda kv: -len(kv[1])):
+        toks = [c for c, _ in xs]
+        out[key] = {"n": len(xs), "tokens": statistics.median(toks), "cached": statistics.median(s for _, s in xs)}
+        if len(xs) >= 3 or len(groups) < 6:
+            print("%-26s %-7s %5d %9.0f %9.0f %7.0f%%" % (
+                key[0], key[1], len(xs), statistics.median(toks), quantile(toks, .9), 100 * out[key]["cached"]))
+    return out
+
+
+def normalize_verdict(v):
+    if isinstance(v, bool):
+        return "PASS" if v else "FAIL"
+    v = str(v).strip().upper()
+    return v if v in VERDICTS else None
+
+
+def verdict_of(a):
+    """Verdict word from structured output (a verdict/passed field), else the last text, else unknown.
+
+    ecomono: text detection takes the last uppercase JUDGMENT:/PASS/FAIL token in the last text
+    message, so prose quoting those words can misread, and a field named otherwise is unknown.
+    The unknown share is printed so a wrong scorecard shows. Upgrade path: one marker line per role.
+    """
+    found = None
+    for m in a["msgs"]:
+        for b in m["blocks"].values():
+            if b.get("type") == "tool_use" and isinstance(b.get("input"), dict):
+                for k in ("verdict", "passed"):
+                    if k in b["input"]:
+                        found = normalize_verdict(b["input"][k]) or found
+    if found:
+        return found
+    for m in reversed(a["msgs"]):
+        text = " ".join(b.get("text", "") for b in m["blocks"].values() if b.get("type") == "text")
+        if text.strip():
+            hits = VERDICT_TEXT.findall(text)
+            return next((x or y for x, y in reversed(hits) if x or y), "unknown")
+    return "unknown"
+
+
+def outcomes(agents, top=30):
+    rows = collections.defaultdict(list)
+    adv_agents = adv_msgs = cfg = 0
+    for a in agents:
+        adv = sum(m["adv"] for m in a["msgs"])
+        adv_msgs += adv
+        cfg += sum(m["adv_cfg"] for m in a["msgs"])
+        adv_agents += bool(adv)
+        ms = priced_msgs(a)
+        if a["kind"] == "main" or not ms:
+            continue
+        eff = collections.Counter(str(m["effort"]) for m in ms).most_common(1)[0][0]
+        rows[(a["phase"] or a["type"], dominant_family(a), eff)].append(
+            (sum(usd(m["usage"], m["model"]) for m in ms), len(ms), verdict_of(a)))
+    print("\n== H. outcomes per (agent type or workflow phase, family, effort); verdict from final output")
+    print("%-26s %-7s %-7s %5s %8s %8s %6s  %s" % ("type/phase", "family", "effort", "n", "USD", "USD med",
+                                                    "turns", "verdicts"))
+    allv = collections.Counter()
+    for key, xs in sorted(rows.items(), key=lambda kv: -sum(c for c, _, _ in kv[1]))[:top]:
+        v = collections.Counter(x for _, _, x in xs)
+        print("%-26s %-7s %-7s %5d %8.2f %8.2f %6.0f  %s" % (
+            key[0][:26], key[1], key[2], len(xs), sum(c for c, _, _ in xs), statistics.median(c for c, _, _ in xs),
+            statistics.median(n for _, n, _ in xs), " ".join("%s:%d" % kv for kv in v.most_common())))
+    if len(rows) > top:
+        print("(%d more cells omitted)" % (len(rows) - top))
+    for xs in rows.values():
+        allv.update(x for _, _, x in xs)
+    n = sum(allv.values())
+    print("all cells: %d agents, verdicts %s, unknown share %.0f%%" % (
+        n, dict(allv.most_common()), pct(allv["unknown"], n)))
+    print("advisor usage (block or usage names it): %d messages in %d agents; advisorModel configured on %d"
+          " messages" % (adv_msgs, adv_agents, cfg))
+    return {"verdicts": dict(allv), "advisor_msgs": adv_msgs, "advisor_cfg": cfg}
+
+
+def self_test_meters():
+    """Synthetic transcripts for limits, context, floor and outcomes."""
+    import io
+    import tempfile
+    from contextlib import redirect_stdout
+
+    def asst(mid, model, usage, content, ts, **extra):
+        return {"type": "assistant", "timestamp": ts, "uuid": "u" + mid, "effort": "high",
+                "message": {"id": mid, "model": model, "usage": usage, "content": content}, **extra}
+
+    def write(path, rows, meta=None):
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("\n".join(map(json.dumps, rows)))
+        if meta:
+            path.with_suffix(".meta.json").write_text(json.dumps(meta))
+
+    son = "claude-sonnet-5-5"
+    day = "2026-11-02T"  # a Monday, ISO week 2026-W45
+    with tempfile.TemporaryDirectory() as d:
+        root = Path(d)
+        write(root / "proj" / "sess.jsonl", [
+            asst("m1", son, {"input_tokens": 100, "output_tokens": 10, "cache_creation_input_tokens": 5000},
+                 [], day + "10:00:00Z"),
+            asst("m2", son, {"input_tokens": 50, "output_tokens": 10, "cache_read_input_tokens": 5000},
+                 [], day + "10:05:00Z"),
+            # cold resume: 1h55 idle, no cache_read, 60k context
+            asst("m3", son, {"input_tokens": 10, "output_tokens": 10, "cache_creation_input_tokens": 60000},
+                 [], day + "12:00:00Z"),
+            # more than 5h after the window opened at 10:00 -> second window; context above 200k
+            asst("m4", son, {"input_tokens": 10, "output_tokens": 10, "cache_read_input_tokens": 240000,
+                             "cache_creation_input_tokens": 10000}, [], day + "16:00:00Z"),
+            asst("e1", "<synthetic>", {"input_tokens": 0, "output_tokens": 0},
+                 [{"type": "text", "text": "limit"}], day + "16:01:00Z",
+                 isApiErrorMessage=True, quotaLimits={"rateLimitType": "five_hour"}),
+            {"type": "system", "subtype": "compact_boundary", "uuid": "c1", "timestamp": day + "16:02:00Z"},
+            {"type": "system", "subtype": "compact_boundary", "uuid": "c1", "timestamp": day + "16:02:00Z"}])
+        sub = root / "proj" / "sess" / "subagents"
+        warm = {"input_tokens": 0, "output_tokens": 5, "cache_read_input_tokens": 600,
+                "cache_creation_input_tokens": 400}
+        write(sub / "agent-j1.jsonl", [asst("j1", son, warm, [
+            {"type": "text", "text": "findings\nJUDGMENT: APPROVED"}], day + "11:00:00Z")],
+              {"agentType": "ecomono-judge-a"})
+        write(sub / "agent-g1.jsonl", [asst("g1", son, warm, [
+            {"type": "text", "text": "done"},
+            {"type": "tool_use", "id": "t2", "name": "advisor", "input": {}}], day + "11:01:00Z",
+            advisorModel="claude-opus-5")],
+              {"agentType": "general-purpose"})
+        write(sub / "workflows" / "wf_1" / "agent-w1.jsonl", [asst("w1", son, warm, [
+            {"type": "tool_use", "id": "t", "name": "StructuredOutput", "input": {"passed": False}}],
+            day + "11:02:00Z")], {"agentType": "general-purpose", "workflowPhase": "Verify"})
+        agents, _ = scan(root, "2026-10-01", "2026-12-01", message_index(root))
+        prepare(agents)
+        with redirect_stdout(io.StringIO()) as out:
+            lim = limits(agents)
+            ctxr = context(agents)
+            flr = floor(agents)
+            oc = outcomes(agents)
+        assert lim["windows"] == 2, lim
+        assert lim["events"] == {"2026-W45": {"five_hour": 1}}, lim["events"]
+        assert abs(ctxr["above"] - (10 * 2 + 240000 * .1 + 10000 * 2.5 + 10 * 10) / 1e6) < 1e-9 and ctxr["compactions"] == 1, ctxr
+        assert ctxr["cold"] == 1 and abs(ctxr["gap_median"] - 6900) < 1, ctxr
+        assert abs(ctxr["cold_cc_usd"] - 60000 * 2.5 / 1e6) < 1e-9, ctxr
+        gp = flr[("wf:general-purpose", "sonnet")]
+        assert gp["n"] == 1 and gp["tokens"] == 1000 and abs(gp["cached"] - 0.6) < 1e-9, gp
+        assert oc["verdicts"] == {"APPROVED": 1, "FAIL": 1, "unknown": 1}, oc["verdicts"]
+        assert oc["advisor_msgs"] == 1 and oc["advisor_cfg"] == 1, oc
+        assert "unknown" in out.getvalue() and "five_hour" in out.getvalue()
+
+    # Events outside --from/--to but inside a wider --base/--new hull must not reach the sections.
+    with tempfile.TemporaryDirectory() as d:
+        root = Path(d)
+        lim = lambda i, t: asst("e" + i, "<synthetic>", {"input_tokens": 0, "output_tokens": 0}, [], t,
+                                isApiErrorMessage=True, quotaLimits={"rateLimitType": "five_hour"})
+        cb = lambda i, t: {"type": "system", "subtype": "compact_boundary", "uuid": "c" + i, "timestamp": t}
+        write(root / "proj" / "s.jsonl", [
+            asst("a", son, {"input_tokens": 1, "output_tokens": 1}, [], "2026-11-01T10:00:00Z"),
+            asst("b", son, {"input_tokens": 1, "output_tokens": 1}, [], "2026-11-02T10:00:00Z"),
+            lim("1", "2026-11-01T11:00:00Z"), lim("2", "2026-11-02T11:00:00Z"),
+            cb("1", "2026-11-01T11:00:00Z"), cb("2", "2026-11-02T11:00:00Z")])
+        full, clipped, _ = load(root, message_index(root), ("2026-11-02", "2026-11-02"),
+                                [("2026-11-01", "2026-11-01")])
+        with redirect_stdout(io.StringIO()):
+            assert limits(full)["events"] == {"2026-W44": {"five_hour": 1}, "2026-W45": {"five_hour": 1}}
+            assert context(full)["compactions"] == 2
+            assert limits(clipped)["events"] == {"2026-W45": {"five_hour": 1}}, "limits clipped to window"
+            assert context(clipped)["compactions"] == 1, "compactions clipped to window"
+
+
 def self_test():
     """Synthetic transcripts in a temp dir; asserts dedupe, bucket W and priced totals."""
     import contextlib
@@ -630,10 +982,13 @@ def self_test():
                 continue
         raise AssertionError("parse_args accepted reversed range %s" % argv)
     parse_args(["--from", "2026-11-05", "--to", "2026-11-05"])
+    self_test_meters()
     print("self-test ok")
 
 
 SECTIONS = ("legacy", "composition", "models", "priced", "reach")
+# Opt-in: a run with these takes minutes, so the default list leaves them out.
+METERS = ("limits", "context", "floor", "outcomes")
 
 
 def date_arg(s):
@@ -646,10 +1001,10 @@ def date_arg(s):
 
 def sections_arg(s):
     names = set(s.split(","))
-    bad = names - set(SECTIONS)
+    bad = names - set(SECTIONS + METERS)
     if bad:
         raise argparse.ArgumentTypeError("unknown section %s; valid: %s"
-                                         % (", ".join(sorted(bad)), ", ".join(SECTIONS)))
+                                         % (", ".join(sorted(bad)), ", ".join(SECTIONS + METERS)))
     return names
 
 
@@ -669,8 +1024,9 @@ def parse_args(argv=None):
                     help="window start (composition, models, reach)")
     ap.add_argument("--to", dest="hi", type=date_arg, default=ago(0), help="window end, inclusive")
     ap.add_argument("--top", type=int, default=12)
+    # METERS are opt-in: the default run's output stays as it was.
     ap.add_argument("--sections", type=sections_arg, default=",".join(SECTIONS),
-                    help="comma list of: " + ",".join(SECTIONS))
+                    help="comma list of: " + ",".join(SECTIONS + METERS))
     ap.add_argument("--self-test", action="store_true", help="run built-in synthetic-data asserts and exit")
     a = ap.parse_args(argv)
     for name, (lo, hi) in (("--base", a.base), ("--new", a.new), ("--from/--to", (a.lo, a.hi))):
@@ -687,7 +1043,7 @@ def main():
     idx = message_index(a.root)
     if "legacy" in want:
         legacy(a.root, {"base": base, "new": new}, idx)
-    if want & {"composition", "models", "priced", "reach"}:
+    if want & {"composition", "models", "priced", "reach", *METERS}:
         print("\n== window %s .. %s" % window)
         # priced reads --base/--new too: scan their span as well as --from/--to.
         full, agents, first_seen = load(a.root, idx, window, (base, new) if "priced" in want else ())
@@ -699,6 +1055,9 @@ def main():
             priced(full, {"window": window, "base": base, "new": new})
         if "reach" in want:
             reach(agents)
+        for name, fn in zip(METERS, (limits, context, floor, outcomes)):
+            if name in want:
+                fn(agents)
 
 
 if __name__ == "__main__":
