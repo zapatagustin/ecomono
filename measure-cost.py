@@ -11,8 +11,9 @@ Sections
   reach       share of agents whose context carries CLAUDE.md / output-style text.
 
 Transcript facts this relies on
-  * One API message spans several jsonl lines with the same message.id: dedupe by id,
-    keep the usage line with the highest output_tokens, union the content blocks.
+  * One API message spans several jsonl lines with the same message.id: dedupe by id across
+    ALL transcript files (before any window), keep the usage line with the highest
+    output_tokens, union the content blocks.
   * Subagents: <project>/<session>/subagents/agent-*.jsonl (+ .meta.json with agentType);
     workflow agents: <project>/<session>/subagents/workflows/wf_*/agent-*.jsonl.
   * Human turns: user lines with origin.kind == "human".
@@ -126,7 +127,33 @@ def text_of(content):
 
 
 # ---------------------------------------------------------------- legacy section
-def legacy(root, wins):
+def message_index(root):
+    """message.id -> {path, kind, sid, type, ts, usage, model}, deduped across every transcript.
+
+    usage/ts/model come from the highest-output_tokens line, over all files and all dates, so
+    a window cannot clip a message into a partial line. Assumption: one id found in several
+    files is one API message, counted once, in the main-thread file if any of them is a main
+    thread, else in the first file in sorted path order (transcripts() yields sorted paths).
+    """
+    idx = {}
+    for p, kind, sid, agent_type in transcripts(root):
+        for j in lines(p):
+            m = j.get("message") or {}
+            mid, u, ts = m.get("id"), m.get("usage"), j.get("timestamp")
+            if j.get("type") != "assistant" or not (mid and u and ts):
+                continue
+            rec = idx.get(mid)
+            if rec is None:
+                rec = idx[mid] = {"path": p, "kind": kind, "sid": sid, "type": agent_type,
+                                  "ts": ts, "usage": u, "model": m.get("model")}
+            elif kind == "main" and rec["kind"] != "main":
+                rec.update(path=p, kind=kind, sid=sid, type=agent_type)
+            if u.get("output_tokens", 0) >= rec["usage"].get("output_tokens", 0):
+                rec.update(ts=ts, usage=u, model=m.get("model"))
+    return idx
+
+
+def legacy(root, wins, idx):
     def window(ts):
         for k, (a, b) in wins.items():
             if a <= ts[:10] <= b:
@@ -139,9 +166,6 @@ def legacy(root, wins):
     nud = {k: collections.Counter() for k in wins}
     hum = {k: 0 for k in wins}
     for p, kind, sid, agent_type in transcripts(root):
-        if kind == "sub" and re.search(r"ecomono-(r\d|judge)", agent_type):
-            kind = "review"
-        best = {}
         last_q, in_turn, w_prev = None, False, None
         for j in lines(p):
             ts = j.get("timestamp")
@@ -150,13 +174,7 @@ def legacy(root, wins):
                 continue
             t = j.get("type")
             if t == "assistant":
-                m = j.get("message", {})
-                u = m.get("usage")
-                if u and m.get("id"):
-                    o = best.get(m["id"])
-                    if not o or u.get("output_tokens", 0) >= o[1].get("output_tokens", 0):
-                        best[m["id"]] = (w, u, ts)
-                c = m.get("content")
+                c = j.get("message", {}).get("content")
                 if kind == "main" and isinstance(c, list):
                     tx = [b.get("text", "") for b in c
                           if b.get("type") == "text" and b.get("text", "").strip()]
@@ -172,37 +190,47 @@ def legacy(root, wins):
                 for n, r in NUDGES:
                     if re.search(r, s, re.I):
                         nud[w][n] += 1
-        for w, u, ts in best.values():
-            x = agg[w]
-            x[kind] += weight(u)
-            x[kind + "_cr"] += .1 * u.get("cache_read_input_tokens", 0)
-            x[kind + "_out"] += 5 * u.get("output_tokens", 0)
-            days[w].add(ts[:10])
-            if kind == "main":
-                sess[w].add(sid)
-            x["n_" + kind] += 1
+    for rec in idx.values():
+        w = window(rec["ts"])
+        if not w:
+            continue
+        kind, u = rec["kind"], rec["usage"]
+        if kind == "sub" and re.search(r"ecomono-(r\d|judge)", rec["type"]):
+            kind = "review"
+        x = agg[w]
+        x[kind] += weight(u)
+        x[kind + "_cr"] += .1 * u.get("cache_read_input_tokens", 0)
+        x[kind + "_out"] += 5 * u.get("output_tokens", 0)
+        days[w].add(rec["ts"][:10])
+        if kind == "main":
+            sess[w].add(rec["sid"])
+        x["n_" + kind] += 1
     for k in wins:
         x = agg[k]
         tot = sum(x[b] for b in LEGACY_BUCKETS)
         nd, ns = len(days[k]), len(sess[k])
+        if not nd and not hum[k]:
+            print(k, wins[k], "no data")
+            continue
         print(k, wins[k], "activedays", nd, "mainsess", ns, "totalW %.0fM" % (tot / 1e6),
-              "W/day %.1fM" % (tot / nd / 1e6), "W/mainsess %.1fM" % (tot / max(ns, 1) / 1e6))
+              "W/day %.1fM" % (tot / max(nd, 1) / 1e6), "W/mainsess %.1fM" % (tot / max(ns, 1) / 1e6))
         for b in LEGACY_BUCKETS:
-            print("  %-8s %7.1fM %5.1f%%  msgs %d" % (b, x[b] / 1e6, 100 * x[b] / tot, x["n_" + b]))
+            print("  %-8s %7.1fM %5.1f%%  msgs %d" % (b, x[b] / 1e6, pct(x[b], tot), x["n_" + b]))
         print("  main cache_read share of main W %.1f%%  of total W %.1f%%; main out share %.1f%%"
-              % (100 * x["main_cr"] / x["main"], 100 * x["main_cr"] / tot, 100 * x["main_out"] / x["main"]))
+              % (pct(x["main_cr"], x["main"]), pct(x["main_cr"], tot), pct(x["main_out"], x["main"])))
         allcr = sum(x[b + "_cr"] for b in LEGACY_BUCKETS)
-        print("  all cache_read share of total W %.1f%%" % (100 * allcr / tot))
+        print("  all cache_read share of total W %.1f%%" % pct(allcr, tot))
         t = turns[k]
         print("  turns", t, "question %.0f%%" % (100 * t[1] / max(t[0], 1)), "human msgs", hum[k],
               dict(nud[k]), "per100 turns", {n: round(100 * c / max(t[0], 1), 1) for n, c in nud[k].items()})
 
 
 # ------------------------------------------------------- composition/models/reach
-def scan(root, lo, hi):
+def scan(root, lo, hi, idx):
     """One pass over every transcript. Returns (agents, first_seen).
 
-    agents: one record per transcript with at least one message in [lo, hi].
+    agents: one record per transcript with at least one message in [lo, hi]. A message
+    belongs to the file and window that message_index() assigns it, not to every file holding it.
     first_seen: model -> {kind: earliest timestamp}, over ALL dates, not just the window.
     """
     agents = []
@@ -233,14 +261,14 @@ def scan(root, lo, hi):
                 fs = first_seen[model]
                 if kind not in fs or ts < fs[kind]:
                     fs[kind] = ts
-            if not (lo <= ts[:10] <= hi) or not mid or not m.get("usage"):
+            own = idx.get(mid)
+            if not own or own["path"] != p or not (lo <= own["ts"][:10] <= hi):
                 continue
             rec = msgs.get(mid)
             if rec is None:
-                rec = msgs[mid] = {"ts": ts, "usage": m["usage"], "model": model, "blocks": {}}
+                rec = msgs[mid] = {"ts": own["ts"], "usage": own["usage"], "model": own["model"],
+                                   "blocks": {}}
                 order.append(mid)
-            if m["usage"].get("output_tokens", 0) >= rec["usage"].get("output_tokens", 0):
-                rec["usage"] = m["usage"]
             for b in m.get("content") or []:
                 if isinstance(b, dict):
                     rec["blocks"][json.dumps(b, sort_keys=True)] = b
@@ -255,6 +283,24 @@ def scan(root, lo, hi):
                        "msgs": [msgs[i] for i in order], "prompt": prompt, "flags": flags,
                        "label": meta_label(p)})
     return agents, first_seen
+
+
+def load(root, idx, window, extra=()):
+    """Scan the hull of `window` and every window in `extra`, so none is clipped to another.
+
+    Returns (all, clipped, first_seen): every agent with messages in the hull, and those
+    restricted to `window` for the sections that only use --from/--to.
+    """
+    wins = [window, *extra]
+    full, first_seen = scan(root, min(w[0] for w in wins), max(w[1] for w in wins), idx)
+    prepare(full)
+    clipped = []
+    for a in full:
+        ms = [m for m in a["msgs"] if window[0] <= m["ts"][:10] <= window[1]]
+        if ms:
+            clipped.append(dict(a, msgs=ms))
+    prepare(clipped)
+    return full, clipped, first_seen
 
 
 def block_chars(blocks):
@@ -483,6 +529,8 @@ def reach(agents):
 
 def self_test():
     """Synthetic transcripts in a temp dir; asserts dedupe, bucket W and priced totals."""
+    import contextlib
+    import io
     import tempfile
 
     def asst(mid, model, usage, content, ts="2026-11-01T10:00:00Z"):
@@ -511,7 +559,7 @@ def self_test():
         sub = root / "proj" / "sess" / "subagents" / "agent-a1.jsonl"
         sub.write_text("\n".join(map(json.dumps, sub_lines)))
         sub.with_suffix(".meta.json").write_text(json.dumps({"agentType": "general-purpose"}))
-        agents, _ = scan(root, "2026-10-01", "2026-12-01")
+        agents, _ = scan(root, "2026-10-01", "2026-12-01", message_index(root))
         prepare(agents)
         by = {a["kind"]: a for a in agents}
         assert len(by["main"]["msgs"]) == 1 and len(by["sub"]["msgs"]) == 2, "dedupe by message.id"
@@ -525,41 +573,113 @@ def self_test():
                                               "cache_creation_input_tokens": 0,
                                               "cache_read_input_tokens": 0}, t["unpriced"]
         assert abs(t["cr_usd"]["main"] - 0.002) < 1e-9
+        # An explicit window outside --from/--to is scanned, not clipped to it.
+        idx = message_index(root)
+        full, clipped, _ = load(root, idx, ("2026-12-01", "2026-12-02"), [("2026-11-01", "2026-11-01")])
+        assert not clipped and priced_totals(full, "2026-11-01", "2026-11-01")["usd"]["main"] > 0, \
+            "base/new window outside --from/--to must keep its data"
+
+    # Ids shared by several files, ids straddling a window edge, empty windows.
+    def use(out):
+        return {"input_tokens": 0, "output_tokens": out}
+
+    with tempfile.TemporaryDirectory() as d:
+        root = Path(d)
+        (root / "proj" / "a" / "subagents").mkdir(parents=True)
+        put = lambda rel, ls: (root / rel).write_text("\n".join(map(json.dumps, ls)))
+        put("proj/a/subagents/agent-a0.jsonl", [asst("d1", "x", use(200000), []), asst("f1", "x", use(4), [])])
+        put("proj/a/subagents/agent-a1.jsonl", [asst("d1", "x", use(1000000), [])])
+        put("proj/z.jsonl", [asst("f1", "x", use(3), []),
+                             asst("e1", "x", use(20), [], "2026-11-01T10:00:00Z"),
+                             asst("e1", "x", use(5), [], "2026-11-02T10:00:00Z")])
+        idx = message_index(root)
+        assert idx["d1"]["usage"]["output_tokens"] == 1000000 and idx["d1"]["path"].name == "agent-a0.jsonl"
+        assert idx["f1"]["kind"] == "main" and idx["f1"]["usage"]["output_tokens"] == 4, "main file owns a shared id"
+        ag, _ = scan(root, "2026-11-01", "2026-11-01", idx)
+        got = {(a["kind"], m["usage"]["output_tokens"]) for a in ag for m in a["msgs"]}
+        assert got == {("sub", 1000000), ("main", 4), ("main", 20)}, got
+        assert not scan(root, "2026-11-02", "2026-11-02", idx)[0], "window follows the highest-output line"
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            legacy(root, {"base": ("2026-11-01", "2026-11-01"), "none": ("2030-01-01", "2030-01-02")}, idx)
+            legacy(root / "missing", {"base": ("2026-11-01", "2026-11-01")}, message_index(root / "missing"))
+        out = buf.getvalue()
+        assert "totalW 5M" in out and "sub          5.0M 100.0%  msgs 1" in out, out
+        assert "main         0.0M   0.0%  msgs 2" in out and "none ('2030-01-01', '2030-01-02') no data" in out, out
+        assert out.count("no data") == 2, out
+    for bad in ("2026-11-5", "nope"):
+        try:
+            date_arg(bad)
+        except argparse.ArgumentTypeError:
+            continue
+        raise AssertionError("date_arg accepted " + bad)
+    assert date_arg("2026-11-05") == "2026-11-05"
+    try:
+        sections_arg("legacy,price")
+    except argparse.ArgumentTypeError as e:
+        assert "priced" in str(e), e
+    else:
+        raise AssertionError("sections_arg accepted an unknown name")
     print("self-test ok")
+
+
+SECTIONS = ("legacy", "composition", "models", "priced", "reach")
+
+
+def date_arg(s):
+    """argparse type: a valid ISO date, returned normalised (YYYY-MM-DD)."""
+    try:
+        return datetime.date.fromisoformat(s).isoformat()
+    except ValueError:
+        raise argparse.ArgumentTypeError("not a valid YYYY-MM-DD date: %r" % s)
+
+
+def sections_arg(s):
+    names = set(s.split(","))
+    bad = names - set(SECTIONS)
+    if bad:
+        raise argparse.ArgumentTypeError("unknown section %s; valid: %s"
+                                         % (", ".join(sorted(bad)), ", ".join(SECTIONS)))
+    return names
 
 
 def main():
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     ap.add_argument("--root", type=Path, default=Path.home() / ".claude" / "projects")
-    today = datetime.date.today()
+    # Transcript timestamps are UTC, so the default windows end on the UTC date.
+    today = datetime.datetime.now(datetime.timezone.utc).date()
 
     def ago(days):
         return (today - datetime.timedelta(days=days)).isoformat()
 
     # Defaults: the last 30 days, split into the last week ("new") and the 23 days before it.
-    ap.add_argument("--base", nargs=2, default=(ago(30), ago(8)), metavar=("FROM", "TO"))
-    ap.add_argument("--new", nargs=2, default=(ago(7), ago(0)), metavar=("FROM", "TO"))
-    ap.add_argument("--from", dest="lo", default=ago(30), help="window start (composition, models, reach)")
-    ap.add_argument("--to", dest="hi", default=ago(0), help="window end, inclusive")
+    ap.add_argument("--base", nargs=2, type=date_arg, default=(ago(30), ago(8)), metavar=("FROM", "TO"))
+    ap.add_argument("--new", nargs=2, type=date_arg, default=(ago(7), ago(0)), metavar=("FROM", "TO"))
+    ap.add_argument("--from", dest="lo", type=date_arg, default=ago(30),
+                    help="window start (composition, models, reach)")
+    ap.add_argument("--to", dest="hi", type=date_arg, default=ago(0), help="window end, inclusive")
     ap.add_argument("--top", type=int, default=12)
-    ap.add_argument("--sections", default="legacy,composition,models,priced,reach")
+    ap.add_argument("--sections", type=sections_arg, default=",".join(SECTIONS),
+                    help="comma list of: " + ",".join(SECTIONS))
     ap.add_argument("--self-test", action="store_true", help="run built-in synthetic-data asserts and exit")
     a = ap.parse_args()
     if a.self_test:
         return self_test()
-    want = set(a.sections.split(","))
+    want = a.sections
+    base, new, window = tuple(a.base), tuple(a.new), (a.lo, a.hi)
+    idx = message_index(a.root)
     if "legacy" in want:
-        legacy(a.root, {"base": tuple(a.base), "new": tuple(a.new)})
+        legacy(a.root, {"base": base, "new": new}, idx)
     if want & {"composition", "models", "priced", "reach"}:
-        print("\n== window %s .. %s" % (a.lo, a.hi))
-        agents, first_seen = scan(a.root, a.lo, a.hi)
-        prepare(agents)
+        print("\n== window %s .. %s" % window)
+        # priced reads --base/--new too: scan their span as well as --from/--to.
+        full, agents, first_seen = load(a.root, idx, window, (base, new) if "priced" in want else ())
         if "composition" in want:
             composition(agents)
         if "models" in want:
             models(agents, first_seen, a.top)
         if "priced" in want:
-            priced(agents, {"window": (a.lo, a.hi), "base": tuple(a.base), "new": tuple(a.new)})
+            priced(full, {"window": window, "base": base, "new": new})
         if "reach" in want:
             reach(agents)
 
