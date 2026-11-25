@@ -99,16 +99,41 @@ that installs on four platforms has no business hardcoding one platform's
 secret store. A NixOS consumer still injecting those four keys can drop them;
 nothing reads them any more.
 
-**omp** ships no provider block, model id, key or `config.yml` either: authenticate once
+**omp** ships no provider block, key or `config.yml` either: authenticate once
 with `omp login` (or `/login` in the TUI) or the provider's env key. The agents' `model:` tiers become omp roles
-when a subagent is spawned — `haiku` → `@smol`, `sonnet` → `@task`, `opus` → `@slow` —
-and a subagent that would silently inherit the main model goes to `@task` instead. Set
-the three roles once with `/model` (smol, task, slow). An unset role falls back through
-omp's role defaults, so nothing breaks, but every tier then runs on one model. Each
+when a subagent is spawned — `haiku` → `@smol`, `sonnet` → `@task`, `opus` → `@slow`,
+`fable` → `@fable` — and a subagent that would silently inherit the main model goes to
+`@task` instead. Bind the roles once, with `/model` (smol, task, slow) or from the routing
+table's candidates (next paragraph). An unset built-in role falls back through
+omp's role defaults, and an unset `fable` role to the model the bare word matches, so
+nothing breaks, but every tier then runs on one model. Each
 routed spawn carries a note such as `ecomono: sonnet tier -> @task`. To pin one agent,
 use omp's `task.agentModelOverrides`, which outranks the frontmatter; an override that
 names exactly the main model's `provider/id` looks like silent inheritance and is
 rerouted to `@task`, so bind it through a role alias such as `@slow` instead.
+
+`claude/hooks/routing.json` lists under `candidates` the models each rung may run on:
+ordered `provider/id` selectors, across providers. `bun omp/roles-snippet.ts` prints them
+as omp settings, one `modelRoles` list per role plus three settings, to paste into
+`~/.omp/agent/config.yml`; ecomono never writes that file. What the binding does, read from
+the omp 18.22.0 source and not exercised against live providers:
+
+- When a session or subagent starts, omp takes the first selector of the role's list whose
+  provider is authenticated and skips the rest. A provider you never logged into breaks
+  nothing and joins when you do. The order is the policy: the first authenticated
+  candidate takes every spawn of its rung.
+- A run stays on the model it started with. `retry.modelFallback: false`,
+  `retry.usageAwareFallback: false` and `contextPromotion.enabled: false` turn off omp's
+  run-time model switching, for the main session as well as for subagents; same-model
+  retries still run.
+- A usage limit ends the run, and the next spawn of that rung picks the same provider
+  again: its credential still counts as authenticated. The rung fails until the limit
+  resets or you reorder the list.
+- A rung with no authenticated candidate fails at its first prompt with `No model selected`.
+- The ids are a snapshot and go stale; the drift check validates their shape only.
+  `omp models --json` lists the selectors your logins expose.
+
+Claude Code is unaffected: its `Agent` tool accepts only the four tier words.
 
 omp's own `memory.backend` and `autolearn.enabled` stay off, their defaults. Turning
 either on adds a second memory store next to ecomono-memory.
@@ -388,7 +413,7 @@ Make sure `~/.local/bin` is on your `PATH`.
 `bash check.sh` runs everything: the memory store and its committed MCP bundle, the opencode
 plugin suite, the installer's linking primitives, the Claude Code hook gates, the session handoff notice (`claude/hooks/context-handoff.sh`, advises a new session past 200k context), the persona-drift
 and skill-registry selftests, the compress skill's secret guard, the cost-measurement script's
-self-test, the routing table's drift check (`claude/hooks/routing.json` against agent frontmatter and the orchestrator), and shell syntax. Nothing runs
+self-test, the routing table's drift check (`claude/hooks/routing.json` against agent frontmatter and the orchestrator, plus the shape of its `candidates`), and shell syntax. Nothing runs
 it for you — there is no CI and no git hook in this repo, so it is worth running before a
 commit that touches `opencode/plugins/`, `claude/hooks/`, `install.sh`, or `lib/common.sh`.
 

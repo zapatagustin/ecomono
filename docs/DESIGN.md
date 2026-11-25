@@ -354,10 +354,10 @@ it is designed. Read the served model from the transcript, never from the alias.
 
 A same-model retry repeats its own blind spot, so a gate FAIL re-runs the phase one tier up
 (`haiku → sonnet → opus → fable`) via an explicit `model` on the `Agent` call. A phase whose
-starting tier is Opus re-runs once on Fable, the last rung. On omp `fable` has no role:
-`TIER_ROLE` turns `haiku`, `sonnet` and `opus` into roles, so the spawn handler leaves a bare
-`fable` alone and omp fuzzy-matches it against the authenticated models itself, first match
-wins; a role for it is the upgrade path. `ecomono-sdd-verify` runs on Opus as final validation
+starting tier is Opus re-runs once on Fable, the last rung. On omp `fable` maps to the custom
+role `@fable`. omp gives a custom role no default, so the spawn handler returns
+`[@fable, fable]`: an unbound role matches no model and omp moves to the bare word, which it
+fuzzy-matches against the authenticated models itself, first match wins. `ecomono-sdd-verify` runs on Opus as final validation
 before archive. Opus costs about 1.7x Sonnet at list price (see "Model tier is 5x, not 60x";
 its 5x is Opus vs Haiku), accepted because verify runs per change or attempt, not per file.
 OpenCode is out of scope: it pins its own map in `opencode/opencode.json`.
@@ -371,6 +371,38 @@ review agents and `ecomono-sdd-verify` owe are copies of it, and `check-routing-
 fails with one `DRIFT:` line per mismatch (fixtures in `test-routing-drift.sh`). Change the
 table first, then the copies. The verdict line (`VERDICT: CLEAN|ISSUES`, `PASS|FAIL`) exists
 so the outcomes meter in `measure-cost.py` stops reading reviewer finals as `unknown`.
+
+### Decision: each rung lists model candidates across providers
+
+`routing.json` also holds `candidates`: per rung, an ordered list of `provider/id` selectors.
+It exists to spread omp work across providers by cost, and so that a provider without access
+breaks nothing and joins once it is authenticated. Claude Code gains nothing from it: its
+`Agent` tool accepts only the four tier words, so its selection stays the ladder over the
+Anthropic aliases.
+
+On omp the selection is native: `modelRoles.<role>` accepts a list, and the first
+authenticated entry wins when a session or subagent starts. `omp/roles-snippet.ts` prints
+that binding from `candidates` and `TIER_ROLE`; the consumer pastes it, and ecomono never
+writes `config.yml`. This reverses "ecomono ships no model ids" (omp target > Open questions,
+resolved). The ids now sit in one reviewed table, at the price of going stale:
+`check-routing-drift.sh` validates their shape only.
+
+No model switch inside a run, ruled out as impractical. The snippet sets
+`retry.modelFallback: false` (and pins `retry.usageAwareFallback: false` and
+`contextPromotion.enabled: false`), because the leftover entries of a role's list otherwise
+become a subagent's run-time fallback chain. The cost, read from the omp 18.22.0 source: omp
+skips a usage-limited provider at spawn only through `usageAwareFallback`, which needs
+`modelFallback`. With both off the limited provider's credential still counts as
+authenticated, so a rung whose first candidate is out of quota fails until the limit resets
+or the list is reordered. Accepted: the order is edited by hand.
+
+Order inside a rung is the policy, since the first authenticated candidate takes every spawn.
+Placement rests on public benchmarks, which separate the haiku class well and the sonnet, opus
+and fable classes poorly (the Anthropic references lose their own order on 7 of 16). GPT-6.1
+Terra leads the sonnet rung on cost per task. `openai-codex/gpt-6-astra` sits behind Opus as a
+backup; the comparison measured GPT-6.2 Astra, which that provider does not list. A bench on
+this repo's own tasks is the upgrade path before a non-Anthropic model goes ahead of the
+reference on the opus or fable rung.
 
 ### What saves tokens: context isolation
 
@@ -1009,7 +1041,7 @@ to hide them.
 
 | Question | Resolution |
 |---|---|
-| Provider and models | Tiers become `@smol` / `@task` / `@slow` in `before_subagent_spawn`; silent inheritance goes to `@task`, and so does a selector that is exactly the main model (a ceiling: the event carries no selection source). Task items also carry an optional `model` (`task.perCallModel`, off by default), so with it on a model-chosen per-call model equal to the main model reaches that rule too. The consumer binds roles and per-agent `task.agentModelOverrides`. Roles over explicit ids: ids go stale and lock the provider. |
+| Provider and models | Tiers become `@smol` / `@task` / `@slow` / `@fable` in `before_subagent_spawn`; silent inheritance goes to `@task`, and so does a selector that is exactly the main model (a ceiling: the event carries no selection source). Task items also carry an optional `model` (`task.perCallModel`, off by default), so with it on a model-chosen per-call model equal to the main model reaches that rule too. The consumer binds roles and per-agent `task.agentModelOverrides`. The handler returns roles, never ids. Reversed since: ecomono shipped no model ids ("ids go stale and lock the provider"); `routing.json` now lists candidates per rung and `omp/roles-snippet.ts` prints the binding (see "Decision: each rung lists model candidates across providers"). |
 | `xd://` mounting | Accept omp's default; the memory protocol arrives through MCP server instructions. Opt-ins `tools.xdevDocs: inline`, `tools.xdev: false`. |
 | Symlinked extension imports | Yes, by source and by spike 1: realpath import, relative graph resolution. |
 | Persona to subagents | `RULES.md` -> `opencode/AGENTS.md`, omp's only file-based carrier that reaches subagents; not also `AGENTS.md` (double injection). |
