@@ -60,7 +60,11 @@ reset; sed -i '/VERDICT: /d' "$a/ecomono-sdd-verify.md";               t fail "v
 reset; mut 'del(.candidates.fable)';                                   t fail "candidates rung missing" "candidates: rungs are 'haiku sonnet opus', ladder is 'haiku sonnet opus fable'"
 reset; mut '.candidates.opus = []';                                     t fail "candidates rung empty" "candidates.opus: must be a non-empty list of selectors"
 reset; mut '.candidates.haiku[0] = "anthropic/a,b"';                    t fail "candidates selector with a comma" 'candidates.haiku: "anthropic/a,b" is not a provider/id selector'
-reset; mut '.candidates.sonnet += [.candidates.sonnet[0]]';             t fail "candidates selector repeated" 'candidates.sonnet: "openai-codex/gpt-6.1-terra" is listed twice'
+reset; mut '.candidates.sonnet = ["a/b", "c/d", "a/b"]';                t fail "candidates selector repeated" 'candidates.sonnet: "a/b" is listed twice'
+reset; mut '.candidates |= (to_entries | reverse | from_entries)';      t fail "candidates rungs out of ladder order" "candidates: rungs are 'fable opus sonnet haiku'"
+reset; mut '.candidates.opus = "a/b"';                                  t fail "candidates rung not a list" "candidates.opus: must be a non-empty list of selectors"
+reset; mut '.candidates.opus = [1]';                                    t fail "candidates entry not a string" "candidates.opus: 1 is not a provider/id selector"
+reset; mut '.candidates.haiku[0] = "a/b\n"';                            t fail "candidates selector ending in a newline" 'candidates.haiku: "a/b.n" is not a provider/id selector'
 
 [ $fail -eq 0 ] && echo "all routing-drift fixtures pass"
 exit $fail

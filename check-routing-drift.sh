@@ -50,12 +50,13 @@ grep -qF "\`$ladder\`" "$orch" || drift "ladder: $orch does not contain \`$ladde
 # comma or space, because omp stores a role's list comma-joined.
 # ecomono: shape only — an id that left the provider's catalog still passes. Upgrade path:
 # compare against `omp models --json` where omp is installed.
-rungs=$(jq -r '.candidates // {} | keys_unsorted | join(" ")' "$rt"); steps=$(jq -r '.ladder | join(" ")' "$rt")
+rungs=$(jq -r '(.candidates | objects) // {} | keys_unsorted | join(" ")' "$rt"); steps=$(jq -r '.ladder | join(" ")' "$rt")
 [ "$rungs" = "$steps" ] || drift "candidates: rungs are '$rungs', ladder is '$steps'"
 while IFS= read -r line; do drift "$line"; done < <(jq -r '
-  .candidates // {} | to_entries[] | .key as $r | .value as $v
+  (.candidates | objects) // {} | to_entries[] | .key as $r | .value as $v
   | if ($v | type) != "array" or ($v | length) == 0 then "candidates.\($r): must be a non-empty list of selectors"
-    else ($v[] | select(type != "string" or (test("^[a-z0-9-]+/[A-Za-z0-9._/-]+$") | not))
+    # \z, not $: jq lets $ match before a final newline, which omp/roles-snippet.ts refuses.
+    else ($v[] | select(type != "string" or (test("^[a-z0-9-]+/[A-Za-z0-9._/-]+\\z") | not))
                 | "candidates.\($r): \(tojson) is not a provider/id selector"),
          ($v | group_by(.)[] | select(length > 1) | "candidates.\($r): \(.[0] | tojson) is listed twice")
     end' "$rt")
