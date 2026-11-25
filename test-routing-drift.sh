@@ -39,6 +39,7 @@ t() { # t <expected pass|fail> <description> [DRIFT substring]
 }
 
 a=$fixture/claude/agents
+mut() { jq "$1" "$fixture/$rt" > "$fixture/rt.tmp" && mv "$fixture/rt.tmp" "$fixture/$rt"; } # edit the routing.json copy
 
 reset;                                                                  t pass "baseline: the real tree agrees"
 reset; sed -i 's/^model: sonnet/model: opus/' "$a/ecomono-sdd-apply.md"; t fail "wrong model" "ecomono-sdd-apply: frontmatter model is 'opus'"
@@ -56,6 +57,10 @@ reset; sed -i '/^| `ecomono-judge-b`/p' "$fixture/$orch";               t fail "
 reset; sed -i 's#^<!-- /ecomono:sdd-model-assignments -->#| `ecomono-ghost` | sonnet | low | x |\n&#' "$fixture/$orch"; t fail "orchestrator row for unknown agent" "ecomono-ghost: orchestrator table row for an agent not in"
 reset; sed -i '/VERDICT: /d' "$a/ecomono-r3-reliability.md";           t fail "review agent without verdict line" "ecomono-r3-reliability: review agent lacks the VERDICT"
 reset; sed -i '/VERDICT: /d' "$a/ecomono-sdd-verify.md";               t fail "verify without verdict line" "ecomono-sdd-verify: lacks the VERDICT"
+reset; mut 'del(.candidates.fable)';                                   t fail "candidates rung missing" "candidates: rungs are 'haiku sonnet opus', ladder is 'haiku sonnet opus fable'"
+reset; mut '.candidates.opus = []';                                     t fail "candidates rung empty" "candidates.opus: must be a non-empty list of selectors"
+reset; mut '.candidates.haiku[0] = "anthropic/a,b"';                    t fail "candidates selector with a comma" 'candidates.haiku: "anthropic/a,b" is not a provider/id selector'
+reset; mut '.candidates.sonnet += [.candidates.sonnet[0]]';             t fail "candidates selector repeated" 'candidates.sonnet: "openai-codex/gpt-6.1-terra" is listed twice'
 
 [ $fail -eq 0 ] && echo "all routing-drift fixtures pass"
 exit $fail
