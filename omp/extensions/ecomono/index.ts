@@ -54,9 +54,10 @@ const OMP_TESTED = "18.22.0"
 let versionWarned = false
 
 // The agents' frontmatter `model:` tier -> the omp role that stands for it. The consumer binds each role to a real
-// model with omp's own modelRoles; ecomono ships no model ids (docs/DESIGN.md, omp target > Open questions,
-// resolved: provider and models).
-export const TIER_ROLE = { haiku: "@smol", sonnet: "@task", opus: "@slow" } as const
+// model with omp's own modelRoles; ecomono never writes that binding, and omp/roles-snippet.ts prints one from the
+// `candidates` of claude/hooks/routing.json (docs/DESIGN.md, omp target > Open questions, resolved: provider and
+// models). `fable` is a custom role, the only one here that omp gives no default.
+export const TIER_ROLE = { haiku: "@smol", sonnet: "@task", opus: "@slow", fable: "@fable" } as const
 
 // What omp does with each script claude/settings.template.json registers. omp/tests/test_contract.ts keeps this
 // table total: a hook added to the template without a line here fails the suite (the omp analogue of
@@ -1164,7 +1165,10 @@ export function ecomono(o: { repo: string; hooksDir?: string; timeoutMs?: number
         const tier = pattern.toLowerCase()
         if (Object.hasOwn(TIER_ROLE, tier)) {
           const role = TIER_ROLE[tier as keyof typeof TIER_ROLE]
-          return { model: role, note: `ecomono: ${tier} tier -> ${role}` }
+          // An unbound custom role matches no model and omp moves to the next pattern (18.22.0,
+          // config/model-resolver.ts:1270-1272 and 1741-1751), so the bare word after it keeps the fuzzy match a
+          // consumer without that role had before; a bound role wins because it comes first.
+          return { model: tier === "fable" ? [role, tier] : role, note: `ecomono: ${tier} tier -> ${role}` }
         }
         if (!event.modelRole && ctx?.model && pattern === `${ctx.model.provider}/${ctx.model.id}`) {
           return { model: "@task", note: "ecomono: no model tier; routed to @task instead of the main model" }
