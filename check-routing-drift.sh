@@ -3,6 +3,7 @@
 # restates it must agree: each claude/agents/*.md frontmatter (model, effort, maxTurns,
 # omitClaudeMd — a key the role lacks must be absent), the orchestrator's model-assignments
 # table and tier-up ladder, and the final verdict line the review agents and sdd-verify owe.
+# Its own `candidates` must name every ladder rung, in order, with well-formed selectors.
 # One DRIFT: line per mismatch.
 #
 # ecomono: frontmatter is read as flat `key: value` lines and table rows as `| `name` | model |
@@ -44,6 +45,20 @@ done
 
 ladder=$(jq -r '.ladder | join(" → ")' "$rt")
 grep -qF "\`$ladder\`" "$orch" || drift "ladder: $orch does not contain \`$ladder\`"
+
+# candidates: per rung, the ordered provider/id selectors omp may run it on. A selector holds no
+# comma or space, because omp stores a role's list comma-joined.
+# ecomono: shape only — an id that left the provider's catalog still passes. Upgrade path:
+# compare against `omp models --json` where omp is installed.
+rungs=$(jq -r '.candidates // {} | keys_unsorted | join(" ")' "$rt"); steps=$(jq -r '.ladder | join(" ")' "$rt")
+[ "$rungs" = "$steps" ] || drift "candidates: rungs are '$rungs', ladder is '$steps'"
+while IFS= read -r line; do drift "$line"; done < <(jq -r '
+  .candidates // {} | to_entries[] | .key as $r | .value as $v
+  | if ($v | type) != "array" or ($v | length) == 0 then "candidates.\($r): must be a non-empty list of selectors"
+    else ($v[] | select(type != "string" or (test("^[a-z0-9-]+/[A-Za-z0-9._/-]+$") | not))
+                | "candidates.\($r): \(tojson) is not a provider/id selector"),
+         ($v | group_by(.)[] | select(length > 1) | "candidates.\($r): \(.[0] | tojson) is listed twice")
+    end' "$rt")
 
 table=$(sed -n '/<!-- ecomono:sdd-model-assignments -->/,/<!-- \/ecomono:sdd-model-assignments -->/p' "$orch")
 row() { awk -F'|' -v n="\`$1\`" '{for(i=2;i<=4;i++)gsub(/^ +| +$/,"",$i)} $2==n{c++; print $3 " " $4} END{if(c!=1)print "rows=" c+0}' <<<"$table"; }
