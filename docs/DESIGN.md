@@ -659,6 +659,23 @@ the denylist is **manual and should stay short** — on a cheap skill the gate i
 model spends a denied call plus a delegation round trip on something whose body was small), so an
 entry belongs there only after its weight has been measured.
 
+### Session handoff notice, not compaction
+
+Turns above 200k context hold about 65% of main-thread cost, and at list prices cache reads are
+about a third of session cost (34% measured). The user prefers a clean session over compaction, so
+`claude/hooks/context-handoff.sh` (`UserPromptSubmit`) only advises: at or above
+`ECOMONO_HANDOFF_TOKENS` (default 200000), once per 50k step, it prints a `systemMessage` for the
+user and `hookSpecificOutput.additionalContext` for the model, which carries the session id,
+transcript path and the steps (tell the user, save the summary, give the opener and
+`claude --resume <id>`). The size is the last assistant `message.usage` in the transcript tail;
+the last notified step lives in `${XDG_STATE_HOME:-~/.local/state}/ecomono/handoff/<session id>`.
+It exits 0 silently for subagents (`agent_id`), without `jq`, and on any parse or read error.
+`statusline.sh` shows `context_window.total_input_tokens` with a red `!` past the same threshold,
+and `/handoff` writes the summary. Field names were checked on claude-code 2.1.329: the hooks and
+status-line docs, plus one capture run for `systemMessage` on `UserPromptSubmit`, which the docs
+leave open. `settings.template.json` is a seed: the hook entry and `env.CLAUDE_CODE_SUBAGENT_EFFORT`
+reach a running harness only when applied to the live `~/.claude/settings.json`.
+
 ### The second reason the 4-file rule never fired
 
 The diagnosis above — the rule asks for a prediction before the work that would answer it — was
@@ -939,7 +956,7 @@ Every key of `claude/settings.template.json` and `opencode/cli.json`, and the ho
 
 | Claude key | omp |
 |---|---|
-| `hooks` | the extension; each script is classified in `CLAUDE_HOOKS` (gates, compression, registry), the model gates are replaced by tier routing, `heavy-skill-gate` is not needed (gated skills ship only inside Claude Code) |
+| `hooks` | the extension; each script is classified in `CLAUDE_HOOKS` (gates, compression, registry), the model gates are replaced by tier routing, `heavy-skill-gate` and `context-handoff` are not needed (gated skills ship only inside Claude Code) |
 | `permissions.defaultMode: bypassPermissions` | `tools.approvalMode` defaults to `yolo` |
 | `permissions.deny` `Bash(...)`, `Read(...)`, `Edit(...)` | the gates: `rm -rf` literals, the path deny, the read post-check |
 | `skipDangerousModePermissionPrompt` | nothing: `yolo` has no prompt |

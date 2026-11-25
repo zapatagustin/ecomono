@@ -22,6 +22,7 @@ run "installer linking primitives" bash lib/test-common.sh
 run "agent model gate"             bash claude/hooks/test-agent-model-gate.sh
 run "workflow model gate"          bash claude/hooks/test-workflow-model-gate.sh
 run "heavy skill gate"             bash claude/hooks/test-heavy-skill-gate.sh
+run "context handoff"              bash claude/hooks/test-context-handoff.sh
 run "secret access gate"           bash claude/hooks/test-secret-access-gate.sh
 run "diff size gate"               bash claude/hooks/test-check-diff-size.sh
 run "judge standards gate"         bash claude/hooks/test-judge-standards-gate.sh
@@ -42,7 +43,7 @@ run "compress hook overhead"       node claude/hooks/ecomono-compress.js --selft
 run "compress secret guard"        python3 agent-skills/ecomono-compress/scripts/test_secrets.py
 run "compress pipeline"            python3 agent-skills/ecomono-compress/scripts/test_compress.py
 run "cost measurement"             python3 measure-cost.py --self-test
-run "shell syntax"                 bash -c 'rc=0; for f; do bash -n "$f" || rc=1; done; exit $rc' _ install.sh lib/common.sh lib/mcp.sh lib/test-common.sh check-persona-drift.sh check-gate-drift.sh test-gate-drift.sh check-judge-twins.sh test-judge-twins.sh check-inline-skill-drift.sh check-panel-drift.sh test-panel-drift.sh check-hook-install-drift.sh test-hook-install-drift.sh omp/tests/run-tests.sh omp/tests/smoke.sh
+run "shell syntax"                 bash -c 'rc=0; for f; do bash -n "$f" || rc=1; done; exit $rc' _ claude/hooks/context-handoff.sh claude/hooks/test-context-handoff.sh install.sh lib/common.sh lib/mcp.sh lib/test-common.sh check-persona-drift.sh check-gate-drift.sh test-gate-drift.sh check-judge-twins.sh test-judge-twins.sh check-inline-skill-drift.sh check-panel-drift.sh test-panel-drift.sh check-hook-install-drift.sh test-hook-install-drift.sh omp/tests/run-tests.sh omp/tests/smoke.sh
 
 if [ "$fail" -eq 0 ]; then echo "all checks pass"; else echo "some checks failed" >&2; fi
 exit "$fail"

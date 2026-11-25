@@ -72,6 +72,7 @@ export const CLAUDE_HOOKS: Record<string, string> = {
   "workflow-model-gate.sh": "replaced: before_subagent_spawn tiers, eval spawns take the inheritance rule",
   "heavy-skill-gate.sh": "not needed: gated skills ship only inside Claude Code",
   "statusline.sh": "not needed: native status line",
+  "context-handoff.sh": "not needed: Claude Code UserPromptSubmit notice, reads a Claude transcript",
 }
 
 // omp names an MCP tool `mcp__<server>_<tool>` with the server's `-` turned into `_`; Claude's agent files name the
