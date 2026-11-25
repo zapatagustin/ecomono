@@ -357,7 +357,8 @@ A same-model retry repeats its own blind spot, so a gate FAIL re-runs the phase 
 starting tier is Opus re-runs once on Fable, the last rung. On omp `fable` maps to the custom
 role `@fable`. omp gives a custom role no default, so the spawn handler returns
 `[@fable, fable]`: an unbound role matches no model and omp moves to the bare word, which it
-fuzzy-matches against the authenticated models itself, first match wins. `ecomono-sdd-verify` runs on Opus as final validation
+fuzzy-matches against the authenticated models itself, first match wins. A bound role whose
+candidates are all unauthenticated reaches the bare word the same way. `ecomono-sdd-verify` runs on Opus as final validation
 before archive. Opus costs about 1.7x Sonnet at list price (see "Model tier is 5x, not 60x";
 its 5x is Opus vs Haiku), accepted because verify runs per change or attempt, not per file.
 OpenCode is out of scope: it pins its own map in `opencode/opencode.json`.
@@ -383,9 +384,10 @@ Anthropic aliases.
 On omp the selection is native: `modelRoles.<role>` accepts a list, and the first
 authenticated entry wins when a session or subagent starts. `omp/roles-snippet.ts` prints
 that binding from `candidates` and `TIER_ROLE`; the consumer merges it into the keys already
-in `config.yml`, and ecomono never writes that file. This reverses "ecomono ships no model ids" (omp target > Open questions,
-resolved). The ids now sit in one reviewed table, at the price of going stale:
-`check-routing-drift.sh` validates their shape only.
+in `config.yml`, and ecomono never writes that file. This reverses
+"ecomono ships no model ids" (omp target > Open questions, resolved). The ids now sit in one
+reviewed table, at the price of going stale: `check-routing-drift.sh` validates their shape
+only.
 
 No model switch inside a run, ruled out as impractical. The snippet sets
 `retry.modelFallback: false` (and pins `retry.usageAwareFallback: false` and
@@ -395,6 +397,14 @@ skips a usage-limited provider at spawn only through `usageAwareFallback`, which
 `modelFallback`. With both off the limited provider's credential still counts as
 authenticated, so a rung whose first candidate is out of quota fails until the limit resets
 or the list is reordered. Accepted: the order is edited by hand.
+
+Ceiling: a subagent whose rung has no usable candidate is not reliably stopped. When omp
+knows the candidates' models but has a working credential for none of them (and, on the
+`fable` rung, the bare word matches no authenticated model either), it runs the subagent on
+the parent session's model, which is the silent inheritance the spawn handler otherwise
+prevents. README.md lists the cases, stale ids included. Nothing in ecomono detects it.
+Upgrade path: have the handler compare the rung's candidates with the authenticated models
+omp's extension API lists.
 
 Order inside a rung is the policy, since the first authenticated candidate takes every spawn.
 Placement rests on public benchmarks, which separate the haiku class well and the sonnet, opus
