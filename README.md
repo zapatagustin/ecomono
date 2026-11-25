@@ -103,8 +103,9 @@ nothing reads them any more.
 with `omp login` (or `/login` in the TUI) or the provider's env key. The agents' `model:` tiers become omp roles
 when a subagent is spawned — `haiku` → `@smol`, `sonnet` → `@task`, `opus` → `@slow`,
 `fable` → `@fable` — and a subagent that would silently inherit the main model goes to
-`@task` instead. Bind the roles once, with `/model` (smol, task, slow) or from the routing
-table's candidates (next paragraph). An unset built-in role falls back through
+`@task` instead. Bind the roles once: smol, task and slow with `/model`, `fable` (a custom
+role) under `modelRoles` in `config.yml`, or all four from the routing table's candidates
+(next paragraph). An unset built-in role falls back through
 omp's role defaults, and an unset `fable` role to the model the bare word matches, so
 nothing breaks, but every tier then runs on one model. Each
 routed spawn carries a note such as `ecomono: sonnet tier -> @task`. To pin one agent,
