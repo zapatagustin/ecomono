@@ -959,6 +959,7 @@ Every key of `claude/settings.template.json` and `opencode/cli.json`, and the ho
 | `hooks` | the extension; each script is classified in `CLAUDE_HOOKS` (gates, compression, registry), the model gates are replaced by tier routing, `heavy-skill-gate` and `context-handoff` are not needed (gated skills ship only inside Claude Code) |
 | `permissions.defaultMode: bypassPermissions` | `tools.approvalMode` defaults to `yolo` |
 | `permissions.deny` `Bash(...)`, `Read(...)`, `Edit(...)` | the gates: `rm -rf` literals, the path deny, the read post-check |
+| `env` (`CLAUDE_CODE_SUBAGENT_EFFORT: medium`) | nothing: Claude-only; omp subagent routing is the tier routing of the extension, not an env effort |
 | `skipDangerousModePermissionPrompt` | nothing: `yolo` has no prompt |
 | `model: opus[1m]` | not shipped; the user's `modelRoles` and `/model` |
 | `effortLevel: high` | `defaultThinkingLevel`, whose omp default is already `high` |
