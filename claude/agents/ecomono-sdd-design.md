@@ -5,6 +5,7 @@ description: >
   proposal is approved and the implementation approach needs to be chosen before tasks are
   broken down.
 model: opus
+effort: high
 tools: Read, Edit, Write, Grep, Glob, mcp__ecomono-memory__mem_search, mcp__ecomono-memory__mem_get_observation, mcp__ecomono-memory__mem_save, mcp__ecomono-memory__mem_judge
 ---
 

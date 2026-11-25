@@ -4,6 +4,7 @@ description: >
   Validate that implementation matches specs, design, and tasks. Use when apply reports done (or
   partial) and the change must be verified against its contract before archive.
 model: opus
+effort: high
 tools: Read, Grep, Glob, Bash, mcp__ecomono-memory__mem_search, mcp__ecomono-memory__mem_get_observation, mcp__ecomono-memory__mem_save, mcp__ecomono-memory__mem_judge
 ---
 
@@ -42,3 +43,5 @@ Return a structured result with these fields:
 - `risks`: unresolved CRITICAL issues that block archive
 - `skill_resolution`: `paths-injected` | `fallback-registry` | `fallback-path` | `none`, per `~/.claude/skills/ecomono-sdd-shared/sdd-phase-common.md` §D
 - `key_learnings`: durable, non-obvious facts that outlive this change, or `None`, per the same §D
+
+After the result envelope, end your final message with exactly one last line: `VERDICT: PASS` when you found no CRITICAL, else `VERDICT: FAIL`.

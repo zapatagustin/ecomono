@@ -4,6 +4,7 @@ description: >
   Break down a change into an implementation task checklist. Use when spec and design are both
   ready and the change needs to be sliced into actionable, ordered work items.
 model: sonnet
+effort: medium
 tools: Read, Edit, Write, Grep, Glob, mcp__ecomono-memory__mem_search, mcp__ecomono-memory__mem_get_observation, mcp__ecomono-memory__mem_save, mcp__ecomono-memory__mem_judge
 ---
 

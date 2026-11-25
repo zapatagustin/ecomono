@@ -4,6 +4,7 @@ description: >
   Surgical fix agent for ecomono-judgment protocol. Applies only confirmed fixes
   from the verdict synthesis. Triggered by the orchestrator after judges agree on issues.
 model: sonnet
+effort: medium
 tools: Read, Edit, Write, Glob, Grep, Bash, mcp__ecomono-memory__mem_search, mcp__ecomono-memory__mem_get_observation, mcp__ecomono-memory__mem_save, mcp__ecomono-memory__mem_judge, mcp__ecomono-memory__mem_update
 ---
 

@@ -192,11 +192,11 @@ How to run it, by cost:
 **PASS** → continue automatically. Auto stays auto on the happy path.
 
 **FAIL** → re-run that phase exactly once, with corrective feedback naming the
-specific failures, one model tier up (`haiku` → `sonnet` → `opus`). The starting tier is
+specific failures, one model tier up on the ladder `haiku → sonnet → opus → fable`. The starting tier is
 the phase's model in the model assignments table; pass the higher tier as an explicit
 `model` on the `Agent` call, since the agent's frontmatter pins its tier otherwise. The
-same model rarely fixes its own blind spot. Phases already on `opus` re-run on `opus`: a
-stated, accepted ceiling, not a fix for that blind spot. Never blanket-retry. Re-gate the
+same model rarely fixes its own blind spot. A phase that fails on `opus` re-runs once on
+`fable`, the last rung. Never blanket-retry. Re-gate the
 result. Still failing → STOP the chain and report the phase, what was caught, both
 attempts, and the recommended fix. Never advance to a dependent phase on a failed gate;
 a bad artifact compounds.
@@ -252,20 +252,26 @@ call `Agent` and have not chosen an alias, STOP and choose one.
 No access to the assigned model? Substitute `sonnet` and continue. Your own session
 model is Claude Code's business, not this table's.
 
-| Phase | Model | Why |
-|---|---|---|
-| `ecomono-sdd-explore` | sonnet | Reads code; structural, not architectural |
-| `ecomono-sdd-propose` | opus | Architectural decisions |
-| `ecomono-sdd-spec` | sonnet | Structured writing |
-| `ecomono-sdd-design` | opus | Architectural decisions |
-| `ecomono-sdd-tasks` | sonnet | Mechanical breakdown |
-| `ecomono-sdd-apply` | sonnet | Implementation |
-| `ecomono-sdd-verify` | opus | Final validation before archive |
-| `ecomono-sdd-archive` | sonnet | Destructive merge into the baseline, behind four gates |
-| `ecomono-judge-a` | sonnet | Blind adversarial review |
-| `ecomono-judge-b` | sonnet | Blind adversarial review |
-| `ecomono-judge-fix` | sonnet | Surgical fixes from confirmed issues |
-| `default` | sonnet | Non-SDD delegation |
+| Phase | Model | Effort | Why |
+|---|---|---|---|
+| `ecomono-explore` | sonnet | low | General exploration; reads, never edits |
+| `ecomono-sdd-explore` | sonnet | low | Reads code; structural, not architectural |
+| `ecomono-sdd-init` | sonnet | medium | Detects the stack, writes the skill registry |
+| `ecomono-sdd-propose` | opus | high | Architectural decisions |
+| `ecomono-sdd-spec` | sonnet | medium | Structured writing |
+| `ecomono-sdd-design` | opus | high | Architectural decisions |
+| `ecomono-sdd-tasks` | sonnet | medium | Mechanical breakdown |
+| `ecomono-sdd-apply` | sonnet | medium | Implementation |
+| `ecomono-sdd-verify` | opus | high | Final validation before archive |
+| `ecomono-sdd-archive` | sonnet | medium | Destructive merge into the baseline, behind four gates |
+| `ecomono-judge-a` | sonnet | high | Blind adversarial review |
+| `ecomono-judge-b` | sonnet | high | Blind adversarial review |
+| `ecomono-judge-fix` | sonnet | medium | Surgical fixes from confirmed issues |
+| `ecomono-r1-risk` | sonnet | high | Review lens: security and risk |
+| `ecomono-r2-readability` | sonnet | high | Review lens: readability and size |
+| `ecomono-r3-reliability` | sonnet | high | Review lens: tests and contracts |
+| `ecomono-r4-resilience` | sonnet | high | Review lens: fallbacks and rollback |
+| `default` | sonnet | medium | Non-SDD delegation |
 <!-- /ecomono:sdd-model-assignments -->
 
 ## Launching sub-agents

@@ -64,12 +64,13 @@ only to what the candidate introduces, so it never collides with the baseline ru
 `Intent:` is scope for the baseline rule and this one, not evidence of what changed. No
 `Intent:` line -> the unrequested-output half of this rule does not apply; say so in your
 report. A clean verdict still reads exactly `VERDICT: CLEAN — No issues found.`, with
-either fallback note on its own line after it.
+either fallback note on its own line before it.
 
 You have not seen this code being written and hold no narrative about it. Do not accept a
 description of what changed as evidence — derive every finding from the files themselves.
 
-Clean: `VERDICT: CLEAN — No issues found.`
+Clean: `VERDICT: CLEAN — No issues found.` With confirmed issues the verdict line is `VERDICT: ISSUES`. Either way it is the
+message's last line, after Skill Resolution and Key Learnings.
 
 Close with `Coverage: {the changed paths you read, against the diff's path list}` — required
 when the candidate exceeds 400 changed lines, optional below.
@@ -134,9 +135,9 @@ Named agents exist on Claude Code and are the correct path. Every `Agent` call M
 `model`, per the mandatory model gate in the orchestrator protocol:
 
 ```
-Judge A:   Agent(subagent_type="ecomono-judge-a",   model="sonnet", prompt="...")
-Judge B:   Agent(subagent_type="ecomono-judge-b",   model="sonnet", prompt="...")
-Fix agent: Agent(subagent_type="ecomono-judge-fix", model="sonnet", prompt="...")
+Judge A:   Agent(subagent_type="ecomono-judge-a",   model="sonnet", effort="high", prompt="...")
+Judge B:   Agent(subagent_type="ecomono-judge-b",   model="sonnet", effort="high", prompt="...")
+Fix agent: Agent(subagent_type="ecomono-judge-fix", model="sonnet", effort="medium", prompt="...")
 ```
 
 Issue both judge calls **in the same response** so they run concurrently. Sequential calls
