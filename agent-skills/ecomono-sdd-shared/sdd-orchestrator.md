@@ -196,11 +196,10 @@ specific failures, one model tier up on the ladder
 `haiku → sonnet → opus → fable`. The starting tier is the phase's model in the model
 assignments table; pass the higher tier as an explicit `model` on the `Agent` call, since the
 agent's frontmatter pins its tier otherwise. The same model rarely fixes its own blind spot.
-A phase whose starting tier is `opus` re-runs once on `fable`, the last rung, on Claude Code
-only. On omp, whose tier map has no `fable`, pass `opus` again: a stated, accepted ceiling,
-not a fix for that blind spot. Never blanket-retry. Re-gate the result. Still failing → STOP
-the chain and report the phase, what was caught, both attempts, and the recommended fix.
-Never advance to a dependent phase on a failed gate; a bad artifact compounds.
+A phase whose starting tier is `opus` re-runs once on `fable`, the last rung. Never
+blanket-retry. Re-gate the result. Still failing → STOP the chain and report the phase, what
+was caught, both attempts, and the recommended fix. Never advance to a dependent phase on a
+failed gate; a bad artifact compounds.
 
 The gatekeeper adds to the hard gates and the review workload guard. It never relaxes
 them, and it never auto-marks anything reviewed.

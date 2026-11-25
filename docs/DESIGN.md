@@ -354,13 +354,13 @@ it is designed. Read the served model from the transcript, never from the alias.
 
 A same-model retry repeats its own blind spot, so a gate FAIL re-runs the phase one tier up
 (`haiku → sonnet → opus → fable`) via an explicit `model` on the `Agent` call. A phase whose
-starting tier is Opus re-runs once on Fable, the last rung. That rung is Claude Code only:
-omp's `TIER_ROLE` has no `fable` and passes an unmapped tier through untouched, so on omp the
-orchestrator is told to pass `opus` again, an accepted ceiling that the harness does not
-enforce. `ecomono-sdd-verify` runs on Opus as final validation before archive. Opus costs
-about 1.7x Sonnet at list price (see "Model tier is 5x, not 60x"; its 5x is Opus vs Haiku),
-accepted because verify runs per change or attempt, not per file. OpenCode is out of scope:
-it pins its own map in `opencode/opencode.json`.
+starting tier is Opus re-runs once on Fable, the last rung. On omp `fable` has no role:
+`TIER_ROLE` turns `haiku`, `sonnet` and `opus` into roles, so the spawn handler leaves a bare
+`fable` alone and omp fuzzy-matches it against the authenticated models itself, first match
+wins; a role for it is the upgrade path. `ecomono-sdd-verify` runs on Opus as final validation
+before archive. Opus costs about 1.7x Sonnet at list price (see "Model tier is 5x, not 60x";
+its 5x is Opus vs Haiku), accepted because verify runs per change or attempt, not per file.
+OpenCode is out of scope: it pins its own map in `opencode/opencode.json`.
 
 ### `routing.json` is the single source of model and effort routing
 
