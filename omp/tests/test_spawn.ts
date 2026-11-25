@@ -30,7 +30,7 @@ const setup = (over: Record<string, any> = {}, opts: Parameters<typeof makePi>[0
 const within = <T>(p: Promise<T>, ms = 2000): Promise<T> =>
   Promise.race([p, new Promise<never>((_, rej) => setTimeout(() => rej(new Error(`still pending after ${ms} ms`)), ms))])
 
-assert.deepEqual({ ...TIER_ROLE }, { haiku: "@smol", sonnet: "@task", opus: "@slow" })
+assert.deepEqual({ ...TIER_ROLE }, { haiku: "@smol", sonnet: "@task", opus: "@slow", fable: "@fable" })
 
 // ---- tier routing ---------------------------------------------------------------------------------------------
 
@@ -67,6 +67,12 @@ const spawn = (patterns: unknown, over: Record<string, any> = {}) => ({
   })
   // An eval agent() spawn follows the same rule.
   assert.equal((await fire("before_subagent_spawn", spawn(["sonnet"], { invocationKind: "eval" }), ctx)).model, "@task")
+  // fable maps to a custom role, which omp gives no default: the bare word follows the role, so a consumer who
+  // has not bound `fable` still gets the model the word fuzzy-matches.
+  assert.deepEqual(await fire("before_subagent_spawn", spawn(["fable"]), ctx), {
+    model: ["@fable", "fable"],
+    note: "ecomono: fable tier -> @fable",
+  })
 }
 
 {
