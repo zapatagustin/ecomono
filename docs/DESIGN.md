@@ -382,8 +382,8 @@ Anthropic aliases.
 
 On omp the selection is native: `modelRoles.<role>` accepts a list, and the first
 authenticated entry wins when a session or subagent starts. `omp/roles-snippet.ts` prints
-that binding from `candidates` and `TIER_ROLE`; the consumer pastes it, and ecomono never
-writes `config.yml`. This reverses "ecomono ships no model ids" (omp target > Open questions,
+that binding from `candidates` and `TIER_ROLE`; the consumer merges it into the keys already
+in `config.yml`, and ecomono never writes that file. This reverses "ecomono ships no model ids" (omp target > Open questions,
 resolved). The ids now sit in one reviewed table, at the price of going stale:
 `check-routing-drift.sh` validates their shape only.
 

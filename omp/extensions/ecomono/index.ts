@@ -1165,9 +1165,10 @@ export function ecomono(o: { repo: string; hooksDir?: string; timeoutMs?: number
         const tier = pattern.toLowerCase()
         if (Object.hasOwn(TIER_ROLE, tier)) {
           const role = TIER_ROLE[tier as keyof typeof TIER_ROLE]
-          // An unbound custom role matches no model and omp moves to the next pattern (18.22.0,
-          // config/model-resolver.ts:1270-1272 and 1741-1751), so the bare word after it keeps the fuzzy match a
-          // consumer without that role had before; a bound role wins because it comes first.
+          // An unbound custom role matches no model and omp moves to the next pattern (omp 18.22.0:
+          // resolveConfiguredRolePattern keeps an unknown alias as a literal, and resolveModelOverride skips a
+          // pattern that matches nothing), so the bare word after it keeps the fuzzy match a consumer without that
+          // role had before; a bound role wins because it comes first.
           return { model: tier === "fable" ? [role, tier] : role, note: `ecomono: ${tier} tier -> ${role}` }
         }
         if (!event.modelRole && ctx?.model && pattern === `${ctx.model.provider}/${ctx.model.id}`) {
