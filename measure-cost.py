@@ -49,7 +49,14 @@ CTX_HIGH = 200_000        # context tokens above which a main-thread turn counts
 COLD_MIN_CTX = 50_000     # a cold resume needs at least this much context ...
 COLD_CR_SHARE = 0.10      # ... and cache_read below this share of it
 VERDICTS = ("APPROVED", "ESCALATED", "PASS", "FAIL")
-VERDICT_TEXT = re.compile(r"JUDGMENT:\s*(APPROVED|ESCALATED)|\b(PASS|FAIL)\b")
+# Text verdicts come only from an explicit marker line, never from a bare word in prose.
+VERDICT_TEXT = re.compile(r"^\W*(?:VERDICT|JUDGMENT):\s*\W*(CLEAN|ISSUES|APPROVED|ESCALATED|PASS|FAIL)\b", re.M)
+# ecomono: text verdicts come from marker lines, keyed severity lines and a `No findings.` line only;
+# free-prose finals and unkeyed headings stay unknown. Upgrade path: a required final verdict line
+# in the reviewer agent definitions.
+SEVERITY_TEXT = re.compile(r"^[\s>*+-]*(?:\d+[.)]\s*)?\**severity\**:\**\s*(?:BLOCKER|CRITICAL|WARNING|SUGGESTION)\b",
+                           re.M | re.I)
+NO_FINDINGS_TEXT = re.compile(r"^[\s*_-]*No findings\.", re.M | re.I)
 
 
 # USD per million tokens: (input, output, cache write 5m, cache write 1h, cache read).
@@ -310,7 +317,7 @@ def scan(root, lo, hi, idx):
                                    "blocks": {}, "effort": j.get("effort"), "adv": False,
                                    "adv_cfg": bool(j.get("advisorModel"))}
                 order.append(mid)
-            rec["adv"] = rec["adv"] or advisor_used(j, m["usage"])
+            rec["adv"] = rec["adv"] or advisor_used(j, m.get("usage") or {})
             for b in m.get("content") or []:
                 if isinstance(b, dict):
                     rec["blocks"][json.dumps(b, sort_keys=True)] = b
@@ -631,16 +638,20 @@ def limits(agents):
                 fam or "all", len(cs), statistics.median(cs), quantile(cs, .9), max(cs),
                 statistics.median(ts) / 1e6, quantile(ts, .9) / 1e6, max(ts) / 1e6))
     events = collections.defaultdict(collections.Counter)
-    hit = collections.Counter()
+    hit, outside = collections.Counter(), 0
     for a in agents:
         for ts, kind in a["limits"]:
             events[iso_week(ts)][kind] += 1
+            if kind != "five_hour":
+                continue
             t = parse_ts(ts)
             i = max((i for i, w in enumerate(wins) if w["start"] <= t), default=None)
-            if i is not None:
+            if i is not None and t < wins[i]["start"] + datetime.timedelta(hours=WINDOW_HOURS):
                 hit[i] += 1
-    print("limit events per ISO week (rateLimitType): total %d in %d windows" % (
-        sum(sum(c.values()) for c in events.values()), len(hit)))
+            else:
+                outside += 1
+    print("limit events per ISO week (rateLimitType): total %d; five_hour in %d windows, %d outside any window" % (
+        sum(sum(c.values()) for c in events.values()), len(hit), outside))
     for w in sorted(events):
         print("  %s  %s" % (w, "  ".join("%s %d" % kv for kv in events[w].most_common())))
     hit_usd = [sum(wins[i]["usd"].values()) for i in hit]
@@ -648,7 +659,8 @@ def limits(agents):
     if hit_usd and rest:
         print("window USD median: with a limit event $%.2f, without $%.2f" % (
             statistics.median(hit_usd), statistics.median(rest)))
-    return {"windows": len(wins), "events": {w: dict(c) for w, c in events.items()}}
+    return {"windows": len(wins), "hit": len(hit), "outside": outside,
+            "events": {w: dict(c) for w, c in events.items()}}
 
 
 def context(agents):
@@ -735,9 +747,10 @@ def normalize_verdict(v):
 def verdict_of(a):
     """Verdict word from structured output (a verdict/passed field), else the last text, else unknown.
 
-    ecomono: text detection takes the last uppercase JUDGMENT:/PASS/FAIL token in the last text
-    message, so prose quoting those words can misread, and a field named otherwise is unknown.
-    The unknown share is printed so a wrong scorecard shows. Upgrade path: one marker line per role.
+    ecomono: text detection takes the last `VERDICT:`/`JUDGMENT:` marker line of the last text
+    message; without one, a keyed `Severity:` finding line counts as ISSUES and a `No findings.`
+    line as CLEAN. Any other phrasing, and a field named otherwise, is unknown. The unknown share is printed so a wrong scorecard shows.
+    Upgrade path: one marker line per role.
     """
     found = None
     for m in a["msgs"]:
@@ -752,7 +765,9 @@ def verdict_of(a):
         text = " ".join(b.get("text", "") for b in m["blocks"].values() if b.get("type") == "text")
         if text.strip():
             hits = VERDICT_TEXT.findall(text)
-            return next((x or y for x, y in reversed(hits) if x or y), "unknown")
+            if hits:
+                return hits[-1]
+            return "ISSUES" if SEVERITY_TEXT.search(text) else "CLEAN" if NO_FINDINGS_TEXT.search(text) else "unknown"
     return "unknown"
 
 
@@ -858,6 +873,23 @@ def self_test_meters():
         assert oc["verdicts"] == {"APPROVED": 1, "FAIL": 1, "unknown": 1}, oc["verdicts"]
         assert oc["advisor_msgs"] == 1 and oc["advisor_cfg"] == 1, oc
         assert "unknown" in out.getvalue() and "five_hour" in out.getvalue()
+        txt = lambda t: {"msgs": [{"blocks": {"0": {"type": "text", "text": t}}}]}
+        for text, want_v in (("x\nVERDICT: CLEAN — No issues found.", "CLEAN"),
+                             ("1. a\n   Severity: WARNING (real)", "ISSUES"),
+                             ("1. Severity: WARNING (real)", "ISSUES"),
+                             ("- **Severity**: WARNING (real)", "ISSUES"),
+                             ("- severity: BLOCKER", "ISSUES"),
+                             ("1. **severity: WARNING** — x", "ISSUES"),
+                             ("No findings.\n\nChecked the diff.", "CLEAN"),
+                             ("Severity: WARNING\nVERDICT: CLEAN", "CLEAN"),
+                             ("**1. WARNING (real)**\nWARNING: disk is full", "unknown"),
+                             ("ran tests: 3 PASS, 1 FAIL", "unknown")):
+            assert verdict_of(txt(text)) == want_v, text
+        mk = lambda t: {"ts": t, "model": son, "usage": {"input_tokens": 1, "output_tokens": 1}}
+        with redirect_stdout(io.StringIO()):
+            lw = limits([{"msgs": [mk(day + "10:00:00Z")], "limits": [
+                (day + "16:00:00Z", "five_hour"), (day + "11:00:00Z", "seven_day")]}])
+        assert lw["hit"] == 0 and lw["outside"] == 1, lw
 
     # Events outside --from/--to but inside a wider --base/--new hull must not reach the sections.
     with tempfile.TemporaryDirectory() as d:
@@ -1021,7 +1053,7 @@ def parse_args(argv=None):
     ap.add_argument("--base", nargs=2, type=date_arg, default=(ago(30), ago(8)), metavar=("FROM", "TO"))
     ap.add_argument("--new", nargs=2, type=date_arg, default=(ago(7), ago(0)), metavar=("FROM", "TO"))
     ap.add_argument("--from", dest="lo", type=date_arg, default=ago(30),
-                    help="window start (composition, models, reach)")
+                    help="window start (composition, models, reach; opt-in limits, context, floor, outcomes)")
     ap.add_argument("--to", dest="hi", type=date_arg, default=ago(0), help="window end, inclusive")
     ap.add_argument("--top", type=int, default=12)
     # METERS are opt-in: the default run's output stays as it was.
@@ -1057,7 +1089,7 @@ def main():
             reach(agents)
         for name, fn in zip(METERS, (limits, context, floor, outcomes)):
             if name in want:
-                fn(agents)
+                fn(agents, a.top) if fn is outcomes else fn(agents)
 
 
 if __name__ == "__main__":

@@ -700,7 +700,8 @@ from a token count alone — cache state dominates the result.
 
 `measure-cost.py` at the repo root does this over every transcript, subagents and workflow agents
 included: `python3 measure-cost.py` reports the last 30 days, `--from/--to` and `--base/--new`
-set the windows, `--sections` picks among bucket totals, composition, models, priced and reach.
+set the windows, `--sections` picks among bucket totals, composition, models, priced and reach, plus the opt-in
+`limits`, `context`, `floor` and `outcomes` (not in the default run).
 It prints two views, and they disagree on purpose. W is the fixed-weight proxy above. The priced
 view uses the list prices in its `PRICES` table, where a cache read costs 0.05x input on Opus and
 Sonnet and 0.025x on Fable, not 0.1x. Measured over 2026-10-18..2026-11-24, cache reads are 54% of
