@@ -27,8 +27,11 @@ out="$model"
 [ "$r7" != "-" ] && out="$out \033[2m→$(date -d "@$r7" +'%a %H:%M')\033[0m"
 if [ "$ctx" != "-" ]; then
   # Same threshold as context-handoff.sh; red "!" marks the point a new session is advisable.
+  # total_input_tokens is the live context size, not a session total (statusline docs, "Context window fields").
+  limit=${ECOMONO_HANDOFF_TOKENS:-200000}
+  case "$limit" in ''|*[!0-9]*) limit=200000 ;; esac
   out="$out \033[2m|\033[0m ctx $((ctx / 1000))k"
-  [ "$ctx" -ge "${ECOMONO_HANDOFF_TOKENS:-200000}" ] && out="$out \033[31m!\033[0m"
+  [ "$ctx" -ge "$limit" ] && out="$out \033[31m!\033[0m"
 fi
 
 echo -e "$out"

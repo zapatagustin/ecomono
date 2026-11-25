@@ -42,7 +42,7 @@ LEGACY_BUCKETS = ("main", "sub", "review", "workflow")  # legacy section splits 
 NUDGES = [("dale", r"\bdale\b"), ("continua", r"contin[uú]a"),
           ("queda", r"queda algo"), ("como va", r"c[oó]mo va")]
 # Strings for the reach section: first two live only in CLAUDE.md, the last only in the style.
-CLAUDE_MD_PROBES = ("Lazy senior dev. Lazy = efficient", "Re-read context is ~50% of session cost")
+CLAUDE_MD_PROBES = ("Lazy senior dev. Lazy = efficient", "injection is paid on *every* later turn")
 STYLE_PROBE = "Voz mentor comprimida"
 WINDOW_HOURS = 5          # usage-limit window length
 CTX_HIGH = 200_000        # context tokens above which a main-thread turn counts as "long context"

@@ -8,7 +8,8 @@
 #
 # Context size = last assistant line with `message.usage` in the transcript:
 # input_tokens + cache_read_input_tokens + cache_creation_input_tokens (the same sum the status
-# line reports). Only the tail of the transcript is read.
+# line reports). Synthetic assistant lines (API error, interrupt) carry all-zero usage and are
+# skipped. Only the tail of the transcript is read.
 #
 # ecomono: the tail is a fixed 1 MB; a single assistant line larger than that (huge inline tool
 # output) reads as "no usage" and stays silent. Upgrade path: read the tail by line count.
@@ -18,8 +19,11 @@ set -uo pipefail
 command -v jq >/dev/null 2>&1 || exit 0
 
 payload=$(cat)
-read -r sid tp agent < <(printf '%s' "$payload" \
-  | jq -r '[(.session_id // ""), (.transcript_path // ""), (.agent_id // "")] | @tsv' 2>/dev/null) || exit 0
+# Tab-split, each field prefixed with "x": tab is whitespace to `read`, so an empty field would
+# collapse and shift the next one; a space inside a value must not split it either.
+IFS=$'\t' read -r sid tp agent < <(printf '%s' "$payload" \
+  | jq -r '["x" + (.session_id // ""), "x" + (.transcript_path // ""), "x" + (.agent_id // "")] | @tsv' 2>/dev/null) || exit 0
+sid=${sid#x}; tp=${tp#x}; agent=${agent#x}
 # A subagent's context dies on return; only the main thread is worth a handoff.
 [ -n "$agent" ] && exit 0
 sid=${sid//[^A-Za-z0-9_-]/}
@@ -31,7 +35,8 @@ step=50000
 
 tokens=$(tail -c 1000000 "$tp" 2>/dev/null | jq -R -r '
   fromjson? | select(.type == "assistant" and .message.usage != null) | .message.usage
-  | (.input_tokens // 0) + (.cache_read_input_tokens // 0) + (.cache_creation_input_tokens // 0)' 2>/dev/null | tail -n 1)
+  | (.input_tokens // 0) + (.cache_read_input_tokens // 0) + (.cache_creation_input_tokens // 0)
+  | select(. > 0)' 2>/dev/null | tail -n 1)
 case "$tokens" in ''|*[!0-9]*) exit 0 ;; esac
 [ "$tokens" -ge "$limit" ] || exit 0
 

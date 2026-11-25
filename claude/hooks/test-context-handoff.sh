@@ -30,6 +30,9 @@ sl_lo=$(printf '%s' '{"model":{"display_name":"Opus"},"context_window":{"total_i
 case "$sl_lo" in *120k*) ok "statusline shows context below threshold" ;; *) bad "statusline low" "got: $sl_lo" ;; esac
 case "$sl_lo" in *'!'*) bad "statusline marker" "marker below threshold" ;; *) ok "no marker below threshold" ;; esac
 case "$sl_ctx" in *'!'*) ok "marker past threshold" ;; *) bad "statusline marker" "none at 250k" ;; esac
+sl_err=$(printf '%s' '{"model":{"display_name":"Opus"},"context_window":{"total_input_tokens":250000}}' | ECOMONO_HANDOFF_TOKENS=200k bash "$sl" 2>&1 >"$tmp/sl_out"); sl_bad=$(cat "$tmp/sl_out")
+[ -z "$sl_err" ] && ok "invalid ECOMONO_HANDOFF_TOKENS: statusline writes nothing to stderr" || bad "statusline stderr" "got: $sl_err"
+case "$sl_bad" in *'!'*) ok "invalid ECOMONO_HANDOFF_TOKENS falls back to 200000 in statusline" ;; *) bad "statusline fallback" "no marker at 250k: $sl_bad" ;; esac
 
 # transcript <file> <input> <cache_read> <cache_create>: a tail-heavy fake transcript.
 transcript() {
@@ -78,6 +81,16 @@ out=$(ECOMONO_HANDOFF_TOKENS=100000 run s5 "$tmp/t190"); [ -n "$out" ] && ok "EC
 # subagent skip
 silent "subagent call is skipped" s6 "$tmp/t250" ',"agent_id":"a1"'
 out=$(run s7 "$tmp/t250" ',"agent_id":""'); [ -n "$out" ] && ok "empty agent_id is the main thread" || bad "agent_id empty" "silent"
+
+# a space in a value must not shift fields; an empty field must not either
+mkdir "$tmp/with space"; cp "$tmp/t250" "$tmp/with space/t250"
+out=$(run s13 "$tmp/with space/t250"); [ -n "$out" ] && ok "transcript path with a space still notifies" || bad "space in path" "silent"
+silent "subagent call is skipped with a spaced path" s13b "$tmp/with space/t250" ',"agent_id":"a1"'
+
+# a synthetic assistant line (API error, interrupt) has all-zero usage: skip it
+transcript "$tmp/tsyn" 10 200000 49990
+echo '{"type":"assistant","message":{"model":"<synthetic>","usage":{"input_tokens":0,"cache_read_input_tokens":0,"cache_creation_input_tokens":0}}}' >> "$tmp/tsyn"
+out=$(run s14 "$tmp/tsyn"); [ -n "$out" ] && ok "trailing synthetic zero-usage line is skipped" || bad "synthetic line" "silent"
 
 # fail open: exit 0 and no output
 silent "missing transcript fails open" s8 "$tmp/nope"
