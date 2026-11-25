@@ -1,15 +1,16 @@
 #!/usr/bin/env bash
-# Claude Code statusline: model + plan usage (5h/7d windows).
+# Claude Code statusline: model + plan usage (5h/7d windows) + context tokens.
 # Reads the statusline JSON contract from stdin; rate_limits fields are
 # absent on API-key auth and before the session's first API response.
 set -euo pipefail
 
-IFS=$'\t' read -r model p5 r5 p7 r7 < <(jq -r '
+IFS=$'\t' read -r model p5 r5 p7 r7 ctx < <(jq -r '
   [(.model.display_name // "?"),
    (.rate_limits.five_hour.used_percentage // "-"),
    (.rate_limits.five_hour.resets_at // "-"),
    (.rate_limits.seven_day.used_percentage // "-"),
-   (.rate_limits.seven_day.resets_at // "-")] | @tsv')
+   (.rate_limits.seven_day.resets_at // "-"),
+   (.context_window.total_input_tokens // "-")] | @tsv')
 
 # ANSI: green <50, yellow <80, red >=80
 pct() {
@@ -24,5 +25,10 @@ out="$model"
 [ "$r5" != "-" ] && out="$out \033[2m→$(date -d "@$r5" +%H:%M)\033[0m"
 [ "$p7" != "-" ] && out="$out \033[2m|\033[0m 7d $(pct "$p7")"
 [ "$r7" != "-" ] && out="$out \033[2m→$(date -d "@$r7" +'%a %H:%M')\033[0m"
+if [ "$ctx" != "-" ]; then
+  # Same threshold as context-handoff.sh; red "!" marks the point a new session is advisable.
+  out="$out \033[2m|\033[0m ctx $((ctx / 1000))k"
+  [ "$ctx" -ge "${ECOMONO_HANDOFF_TOKENS:-200000}" ] && out="$out \033[31m!\033[0m"
+fi
 
 echo -e "$out"

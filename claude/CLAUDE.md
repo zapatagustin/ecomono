@@ -69,7 +69,8 @@ Multiple skills can apply at once. Match by file context (extensions, paths) and
 
 ## Context discipline
 
-Re-read context is ~50% of session cost, and an injection is paid on *every* later turn, not
+At list prices cache reads are about a third of session cost (34% measured), and turns above
+200k context hold about 65% of main-thread cost. An injection is paid on *every* later turn, not
 once. Before pulling anything into the main thread: will I need it verbatim later?
 
 Cost is only half of it. Superseded content — a traceback from before the fix, a rejected
@@ -90,9 +91,10 @@ misleads, however small it is. Say a hypothesis is dead and stop re-reading it.
   plan, tdd, debug, cut, review) shape the whole turn → inline.
 - Review and adversarial checks need a context that never saw the work — delegate them even when
   the diff is small; independent judgement is the point, not token saving.
-- Isolate with a subagent, not with `/clear`. Both give a fresh context, but a subagent returns
-  a median 434 tok while `/clear` re-pays the whole per-session structural block (~8k tok) and
-  discards the prompt cache. Reserve `/clear` for a real change of task.
+- Past 200k context (the hook says so, every 50k) tell the user at once; never compact to keep
+  going. Hand off: summary that points back (session id + transcript path), new session, old one
+  read only through `ecomono-explore`. Isolate with a subagent, not with `/clear`: a subagent
+  returns a median 434 tok while `/clear` re-pays the ~8k tok structural block and the cache.
 - Measurements, bulk listings and generated tables → write them to a file and report the
   conclusion. This applies to my own output too: everything printed into the thread is re-read
   on every later turn.

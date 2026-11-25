@@ -134,10 +134,17 @@
           {
             "type": "command",
             "command": "node \"$HOME/.claude/hooks/ecomono-skill-registry.js\" --quiet --cwd \"${CLAUDE_PROJECT_DIR:-$PWD}\" || true"
+          },
+          {
+            "type": "command",
+            "command": "$HOME/.claude/hooks/context-handoff.sh"
           }
         ]
       }
     ]
+  },
+  "env": {
+    "CLAUDE_CODE_SUBAGENT_EFFORT": "medium"
   },
   "enabledPlugins": {},
   "outputStyle": "Ecomono",
