@@ -3,7 +3,9 @@
 //
 //   bun omp/roles-snippet.ts
 //
-// Paste the output into ~/.omp/agent/config.yml; ecomono never writes that file. Source: `candidates` in
+// Merge the output into ~/.omp/agent/config.yml; ecomono never writes that file. Merge, do not paste: if the
+// file already has `modelRoles`, `retry` or `contextPromotion` (`/model` writes `modelRoles`), add these entries
+// under the existing key, or the file ends up with a duplicate top-level key. Source: `candidates` in
 // claude/hooks/routing.json (rung -> ordered `provider/id` selectors) and TIER_ROLE (rung -> omp role).
 
 import { readFileSync } from "node:fs"
@@ -42,6 +44,7 @@ export function renderRolesSnippet(candidates: Record<string, string[]>, tierRol
 if (import.meta.main) {
   try {
     const routing = JSON.parse(readFileSync(join(REPO, "claude/hooks/routing.json"), "utf8"))
+    process.stdout.write("# Merge into the keys already in ~/.omp/agent/config.yml; a second copy of a key breaks it.\n")
     process.stdout.write(renderRolesSnippet(routing.candidates ?? {}, TIER_ROLE))
   } catch (e) {
     console.error(`roles-snippet: ${e instanceof Error ? e.message : e}`)

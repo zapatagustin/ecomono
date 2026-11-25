@@ -115,8 +115,11 @@ rerouted to `@task`, so bind it through a role alias such as `@slow` instead.
 
 `claude/hooks/routing.json` lists under `candidates` the models each rung may run on:
 ordered `provider/id` selectors, across providers. `bun omp/roles-snippet.ts` prints them
-as omp settings, one `modelRoles` list per role plus three settings, to paste into
-`~/.omp/agent/config.yml`; ecomono never writes that file. What the binding does, read from
+as omp settings, one `modelRoles` list per role plus three settings, to merge into
+`~/.omp/agent/config.yml`; ecomono never writes that file. Merge, do not paste: if the file
+already has `modelRoles`, `retry` or `contextPromotion` (`/model` writes `modelRoles`), add
+the entries under the existing key, since a second copy of a top-level key is a parse error
+or a silent override. What the binding does, read from
 the omp 18.22.0 source and not exercised against live providers:
 
 - When a session or subagent starts, omp takes the first selector of the role's list whose
