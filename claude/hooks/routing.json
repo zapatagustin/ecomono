@@ -1,5 +1,11 @@
 {
   "ladder": ["haiku", "sonnet", "opus", "fable"],
+  "candidates": {
+    "haiku":  ["anthropic/claude-haiku-5-5", "opencode-go/deepseek-v4.1-flash"],
+    "sonnet": ["openai-codex/gpt-6.1-terra", "anthropic/claude-sonnet-5-5"],
+    "opus":   ["anthropic/claude-opus-5-5", "openai-codex/gpt-6-astra"],
+    "fable":  ["anthropic/claude-fable-5-2"]
+  },
   "roles": {
     "read":   {"model": "sonnet", "effort": "low",    "maxTurns": 60, "omitClaudeMd": true, "for": "exploration, search, bulk reading"},
     "review": {"model": "sonnet", "effort": "high",   "maxTurns": 45, "for": "judges and review lenses"},
