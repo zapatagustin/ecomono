@@ -353,11 +353,21 @@ it is designed. Read the served model from the transcript, never from the alias.
 ### Decision: gate retries escalate, verify runs on Opus
 
 A same-model retry repeats its own blind spot, so a gate FAIL re-runs the phase one tier up
-(`haiku` → `sonnet` → `opus`) via an explicit `model` on the `Agent` call. Phases already on
-Opus are the ceiling and re-run on Opus. `ecomono-sdd-verify` runs on Opus as final validation
+(`haiku → sonnet → opus → fable`) via an explicit `model` on the `Agent` call. A phase that
+fails on Opus re-runs once on Fable, the last rung. `ecomono-sdd-verify` runs on Opus as final validation
 before archive. Opus costs about 1.7x Sonnet at list price (see "Model tier is 5x, not 60x";
 its 5x is Opus vs Haiku), accepted because verify runs per change or attempt, not per file.
 Claude Code only: OpenCode pins its own map in `opencode/opencode.json`.
+
+### `routing.json` is the single source of model and effort routing
+
+`claude/hooks/routing.json` holds the tier ladder, the roles (model, effort, and where it
+applies `maxTurns` / `omitClaudeMd`) and which role each agent plays. The agent frontmatter,
+the orchestrator's model-assignments table and tier-up ladder, and the final verdict line the
+review agents and `ecomono-sdd-verify` owe are copies of it, and `check-routing-drift.sh`
+fails with one `DRIFT:` line per mismatch (fixtures in `test-routing-drift.sh`). Change the
+table first, then the copies. The verdict line (`VERDICT: CLEAN|ISSUES`, `PASS|FAIL`) exists
+so the outcomes meter in `measure-cost.py` stops reading reviewer finals as `unknown`.
 
 ### What saves tokens: context isolation
 

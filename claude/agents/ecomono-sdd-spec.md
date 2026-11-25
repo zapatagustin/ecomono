@@ -4,6 +4,7 @@ description: >
   Write specifications with requirements and scenarios. Use when a proposal is approved and the
   change needs formal requirements (delta specs) captured before implementation.
 model: sonnet
+effort: medium
 tools: Read, Edit, Write, Grep, Glob, mcp__ecomono-memory__mem_search, mcp__ecomono-memory__mem_get_observation, mcp__ecomono-memory__mem_save, mcp__ecomono-memory__mem_judge
 ---
 

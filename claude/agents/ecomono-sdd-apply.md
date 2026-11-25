@@ -5,6 +5,7 @@ description: >
   should begin. Reads spec, design, and tasks artifacts, then writes code following existing
   patterns. Marks tasks complete as it goes.
 model: sonnet
+effort: medium
 tools: Read, Edit, Write, Glob, Grep, Bash, mcp__ecomono-memory__mem_search, mcp__ecomono-memory__mem_get_observation, mcp__ecomono-memory__mem_save, mcp__ecomono-memory__mem_judge, mcp__ecomono-memory__mem_update
 ---
 

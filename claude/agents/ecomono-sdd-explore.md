@@ -5,6 +5,9 @@ description: >
   a feature, investigate the codebase, understand current architecture, compare approaches, or
   clarify requirements — before any proposal or spec is written.
 model: sonnet
+effort: low
+maxTurns: 60
+omitClaudeMd: true
 tools: Read, Grep, Glob, WebFetch, WebSearch, mcp__ecomono-memory__mem_search, mcp__ecomono-memory__mem_get_observation, mcp__ecomono-memory__mem_save, mcp__ecomono-memory__mem_judge
 ---
 

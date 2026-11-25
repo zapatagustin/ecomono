@@ -5,6 +5,7 @@ description: >
   "iniciar sdd", or wants to bootstrap SDD persistence (ecomono-memory, or none if the backend is
   unavailable) for the first time in a project. Detects tech stack and writes the skill registry.
 model: sonnet
+effort: medium
 tools: Read, Edit, Write, Glob, Grep, Bash, mcp__ecomono-memory__mem_search, mcp__ecomono-memory__mem_get_observation, mcp__ecomono-memory__mem_save, mcp__ecomono-memory__mem_judge, mcp__ecomono-memory__mem_update
 ---
 

@@ -5,6 +5,7 @@ description: >
   needs to be closed — merges delta specs into main specs and persists the final archive
   report. Completes the SDD cycle.
 model: sonnet
+effort: medium
 tools: Read, mcp__ecomono-memory__mem_search, mcp__ecomono-memory__mem_get_observation, mcp__ecomono-memory__mem_save, mcp__ecomono-memory__mem_judge
 ---
 

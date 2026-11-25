@@ -5,6 +5,8 @@ description: >
   Triggered by the orchestrator when ecomono-judgment is invoked. Reviews code for
   correctness, edge cases, security, performance, and project standards.
 model: sonnet
+effort: high
+maxTurns: 45
 tools: Read, Glob, Grep, Bash, mcp__ecomono-memory__mem_search, mcp__ecomono-memory__mem_get_observation
 ---
 
@@ -19,3 +21,4 @@ provided in the delegate prompt exactly.
 - Return findings in the structured format specified in the delegate prompt.
 - At the end, include: **Skill Resolution**: {paths-injected|fallback-registry|fallback-path|none} — {details}. Report `paths-injected` whenever the prompt named exact files to review against, wherever the delegator found them; `fallback-registry` if you loaded the registry yourself; `fallback-path` if what you got was an explicit path outside the registry; `none` only if you were handed nothing and had to invent your own bar. The value describes what the delegator gave you, not how well you worked.
 - Close with `## Key Learnings`: durable, non-obvious facts about this codebase that outlive this review — a convention, a trap, a boundary. One line each, or `None`. You cannot write memory; this section is the only part of what you learned that survives you. Not a recap of the findings.
+- End your final message with exactly one last line, after Skill Resolution and Key Learnings: `VERDICT: CLEAN` when you confirm no CRITICAL or WARNING, else `VERDICT: ISSUES`. The delegate prompt's `— No issues found.` suffix on the clean line is fine.

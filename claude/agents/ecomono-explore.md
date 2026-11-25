@@ -6,6 +6,9 @@ description: >
   prior context — it maps the code and returns conclusions, so the file bodies never enter the
   main thread. Locates and summarizes; it does not review, audit, or edit.
 model: sonnet
+effort: low
+maxTurns: 60
+omitClaudeMd: true
 tools: Read, Grep, Glob, Bash
 ---
 

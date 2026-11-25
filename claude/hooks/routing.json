@@ -1,0 +1,21 @@
+{
+  "ladder": ["haiku", "sonnet", "opus", "fable"],
+  "roles": {
+    "read":   {"model": "sonnet", "effort": "low",    "maxTurns": 60, "omitClaudeMd": true, "for": "exploration, search, bulk reading"},
+    "review": {"model": "sonnet", "effort": "high",   "maxTurns": 45, "for": "judges and review lenses"},
+    "write":  {"model": "sonnet", "effort": "medium", "for": "implementation and fixes from a written spec"},
+    "plan":   {"model": "sonnet", "effort": "medium", "for": "spec, tasks, init, archive"},
+    "design": {"model": "opus",   "effort": "high",   "for": "proposal, design, verification"},
+    "lead":   {"model": "fable",  "effort": "high",   "for": "the main session, and the last rung when opus fails a gate"}
+  },
+  "agents": {
+    "ecomono-explore": "read", "ecomono-sdd-explore": "read",
+    "ecomono-judge-a": "review", "ecomono-judge-b": "review",
+    "ecomono-r1-risk": "review", "ecomono-r2-readability": "review",
+    "ecomono-r3-reliability": "review", "ecomono-r4-resilience": "review",
+    "ecomono-judge-fix": "write", "ecomono-sdd-apply": "write",
+    "ecomono-sdd-spec": "plan", "ecomono-sdd-tasks": "plan",
+    "ecomono-sdd-init": "plan", "ecomono-sdd-archive": "plan",
+    "ecomono-sdd-propose": "design", "ecomono-sdd-design": "design", "ecomono-sdd-verify": "design"
+  }
+}
