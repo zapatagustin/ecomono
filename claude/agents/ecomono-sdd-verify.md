@@ -44,4 +44,4 @@ Return a structured result with these fields:
 - `skill_resolution`: `paths-injected` | `fallback-registry` | `fallback-path` | `none`, per `~/.claude/skills/ecomono-sdd-shared/sdd-phase-common.md` §D
 - `key_learnings`: durable, non-obvious facts that outlive this change, or `None`, per the same §D
 
-After the result envelope, end your final message with exactly one last line: `VERDICT: PASS` when you found no CRITICAL, else `VERDICT: FAIL`.
+After the result envelope, end your final message with exactly one last line: `VERDICT: FAIL` when `status` is `blocked` or `partial`, or when you found a CRITICAL; otherwise `VERDICT: PASS`. This line records the verification outcome, not the orchestrator's gate result.
