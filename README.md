@@ -133,7 +133,16 @@ the omp 18.22.0 source and not exercised against live providers:
 - A usage limit ends the run, and the next spawn of that rung picks the same provider
   again: its credential still counts as authenticated. The rung fails until the limit
   resets or you reorder the list.
-- A rung with no authenticated candidate fails at its first prompt with `No model selected`.
+- A subagent whose rung has no usable candidate is not reliably stopped. When omp knows the
+  candidates' models but has a working credential for none, it runs the subagent on the
+  parent session's model: silently if those providers were never logged into, with a
+  warning in its log if their stored credentials stopped working. The subagent fails only
+  when the parent has no usable credential either, or when omp knows none of the ids
+  (stale ids): then it has no model and its first prompt fails with `No model selected`.
+- The `fable` rung tries the bare word `fable` after its candidates and before any of the
+  above, so it can land on any authenticated model whose id contains that word.
+- The main session has no parent to fall back on: omp picks a default model it can
+  authenticate, or starts with none and fails at the first prompt with `No model selected`.
 - The ids are a snapshot and go stale; the drift check validates their shape only.
   `omp models --json` lists the selectors your logins expose.
 
